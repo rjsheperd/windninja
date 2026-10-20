@@ -1,0 +1,237 @@
+#+TITLE: WebGPU momentum solver: findings and next steps
+#+DATE: 2026-10-20
+
+* Summary
+- OpenFOAM does a narrow job for WindNinja. It runs a steady, neutral,
+  incompressible RANS solve (RNG k-ε) on a terrain-following hex mesh of
+  25k–100k cells. The solve is driven by one free-stream speed, direction and
+  height plus z0, and returns u, v and k on a surface at the output height.
+  Everything else is plumbing.
+- That job sits behind a seam that is easy to cut. The base class =ninja=
+  expects =VelocityGrid=, =AngleGrid= and =TurbulenceGrid= to be filled, plus
+  an optional 3-D resample onto WindNinja's own mass-solver =Mesh=.
+- [[https://github.com/LennartPaduch/WebLBM][WebLBM]] is not a usable basis.
+  It is 2-D only (D2Q9), has no turbulence or wall model, takes one uniform
+  inlet velocity, can't import terrain, and can't read results back from the GPU.
+- Recommendation: a GPU *structured terrain-following RANS* solver. It would use
+  the same equations and BCs as today, so OpenFOAM stays the reference to test
+  against. Host it natively via Dawn/wgpu-native, with WGSL kernels that could
+  later run in a browser.
+
+* How WindNinja relies on OpenFOAM
+** Process orchestration (=src/ninja/ninjafoam.cpp=)
+- About 10 external executables run via =CPLSpawn=:
+  - blockMesh
+  - moveDynamicMesh (=foamRun -solver movingMesh= on v11)
+  - topoSet
+  - refineMesh
+  - renumberMesh
+  - applyInit
+  - decomposePar
+  - simpleFoam (=foamRun -solver incompressibleFluid= on v11)
+  - reconstructPar
+  - surface sampling
+- MPI is launched with =mpiexec -np N= when =numberCPUs > 1=. hwloc counts the
+  physical cores.
+- Case files are generated from text templates (=data/ninjafoam/{2.2.0,9,11}=)
+  using =$key$= substitution.
+- About 15 if/else branches switch on the =WM_PROJECT_VERSION= string.
+- Divergence handling: a retry loop (=SIMPLEFOAM_NTRIES=) smooths the DEM and
+  remeshes when the solve diverges or sampling fails.
+- Case reuse: =existing_case_directory= skips meshing. It is exposed in the
+  CLI, the GUI picker and the C API.
+
+** Meshing
+Meshing took about 25% of runtime on Big Butte (4.5 s of 18 s on OF-11, 2 CPUs).
+- =SetBlockMeshParametersFromDem= places a uniform hex block above the highest
+  terrain point. It has at least 11 layers, and its top is at
+  max(10% of the extent, 1.1 × relief).
+- =moveDynamicMesh= pulls the bottom of the block down onto the terrain:
+  - motion solver =displacementSBRStress=;
+  - =surfaceDisplacement= on =minZ=, projected along +z onto the DEM STL.
+- =topoSet= + =refineMesh= split near-ground cells =nRoundsRefinement= times.
+  =renumberMesh= then renumbers the cells.
+- Cell budget: coarse/medium/fine = 25k/50k/100k (=ninja.cpp:3911=).
+
+** Physics (=data/ninjafoam/11=)
+- Steady incompressible RANS with RNG k-ε (Cmu 0.085), solved with SIMPLE.
+- Linear solvers: GAMG for p, Gauss-Seidel smoothers for U, k and ε.
+- 300 iterations (the CLI/GUI default).
+- ν = 1.589e-5, ρ = 1.1614.
+- Neutral only: no buoyancy (C3 = 0) and no Coriolis.
+
+** Boundary conditions (custom C++ library, =src/ninjafoam/<ver>=)
+- Inlet U: =logProfileVelocityInlet=, with u* = U∞·κ/ln(h_in/z0) and
+  U(z) = u*/κ·ln(z/z0).
+- Inlet k and ε: log-profile forms, with ε = u*³/(κ(z+z0)).
+- Ground: =nutkAtmRoughWallFunction= (rough wall, z0) and =kqRWallFunction=.
+- Outlets: =pressureInletOutletVelocity=. =SetInlets= picks the inlet sides
+  from the wind direction.
+- =applyInit= fills the whole domain with the same log law, using wall distance.
+
+** Inputs actually used
+- The resampled DEM.
+- z0 and Rd (from the vegetation type).
+- One speed, one direction, the input height and the output height.
+- Weather-model and gridded initialization collapse to the domain mean first
+  (=wxModelInitialization.cpp:1130-1145=). The =foam*Initialization= classes
+  only seed the optional diurnal mass-solver pass that runs afterwards.
+
+** Outputs
+- U and k are sampled on =<dem>_out.stl=, the DEM lifted to the output height.
+  The raw samples are gridded (=SampleCloudGrid=) into =VelocityGrid=,
+  =AngleGrid= and =TurbulenceGrid= (√(2k/3)).
+- Optional, for VTK or turbulence output: probes onto a WindNinja =Mesh=
+  (=GenerateAndSampleMassMesh=) produce the 3-D VTK and =colMaxGrid=.
+- Diurnal: a separate mass-solver =diurnal_ninja= pass runs on the foam grids.
+
+** Coupling to the rest of WindNinja
+- =class NinjaFoam : public ninja= overrides =simulate_wind=, =identify()=
+  ("ninjafoam"), =set_numberCPUs= and =set_meshResolution=. Callers branch on
+  the =identify()= string.
+- =ninjaArmy= creates it when =momentumFlag= is set, for the domain-average and
+  wx armies. The point army rejects it.
+- Foam-only fields in =WindNinjaInputs=: =nIterations=, =meshCount=,
+  =ninjafoamMeshChoice=, =existingCaseDirectory=, =foamVelocity/AngleGrid= and
+  others.
+- CLI: =src/ninja/cli.cpp:361-366=.
+- C API: =NinjaSetNumberOfIterations=, =NinjaSetMeshCount=,
+  =NinjaSetExistingCaseDirectory=.
+- GUI: the momentum checkbox and the case picker, which is keyed on
+  =constant/triSurface/*.stl=.
+- Build: hwloc is required, the =NINJAFOAM= define is set, and the Windows
+  installer ships a cross-compiled OpenFOAM-2.2.x tree.
+- Feature restrictions with the momentum solver: no point initialization, no
+  non-neutral stability, no friction velocity and no dust emissions.
+
+* WebLBM evaluation (@ 427ed87, MIT)
+| Need for WindNinja                 | WebLBM                                     |
+|------------------------------------+--------------------------------------------|
+| 3-D                                | D2Q9 only (=src/LBM.ts:40= =#Q = 9=)       |
+| Turbulence at ABL Re (~1e8)        | none; BGK collision; low Re only           |
+| Rough-wall model (z0)              | none; staircase bounce-back mask           |
+| Terrain input                      | procedural presets only, no heightmap/STL  |
+| Log-profile inlet                  | one global =uInx/uIny= (=step.wgsl:98=)    |
+| Results back to CPU                | no =mapAsync= / buffer copy anywhere       |
+| Precision                          | f16 storage required (=shader-f16=)        |
+| Embedding API / tests / validation | none (browser demo, 1 contributor)         |
+Useful only as a reference for an f16 esoteric-pull streaming kernel in WGSL.
+
+* Why not LBM in general
+- It is a different model. The momentum solver was validated as steady RANS
+  (=doc/forthofer_thesis.pdf=). LBM over terrain at 30–100 m means transient LES
+  plus a wall model, run to a statistically steady state and then averaged.
+  That is new physics, needs new validation, and takes thousands of steps.
+- Uniform cubic cells make the near-ground vertical resolution equal the
+  horizontal resolution, unless multi-block refinement is added.
+- Staircase terrain distorts slope-driven speed-up, which is the main thing
+  WindNinja predicts.
+- Reconsider if the goal becomes gusts, transients or interactive browser
+  visuals. FluidX3D (D3Q19, LES, STL import) would be the starting point; it is
+  unverified.
+
+* Recommended design
+** A. Cut the seam (worth doing even without WebGPU)
+#+begin_src c++
+struct MomentumProblem {
+    const Elevation& dem;          // resampled to mesh resolution
+    double z0, rd;                 // later: per-cell roughness grid
+    double speed, direction;       // inflow at inputHeight (m AGL)
+    double inputHeight, outputHeight;
+    int    cellBudget, iterations, nThreads;
+    const Mesh* samplePoints;      // optional 3-D sampling (VTK/colMax)
+};
+struct MomentumResult {
+    AsciiGrid<double> u, v, k;     // at outputHeight AGL
+    std::optional<Volume> u3, v3, w3, k3;
+};
+class MomentumBackend {
+  public:
+    virtual ~MomentumBackend() = default;
+    virtual MomentumResult solve(const MomentumProblem&, ninjaComClass*) = 0;
+};
+// OpenFoamBackend (today's code), WebGpuRansBackend (new)
+#+end_src
+- =NinjaFoam= becomes =NinjaMomentum : ninja=. It keeps the inputs, output
+  grids, writers and the diurnal hand-off, and delegates the solve to a backend.
+- OpenFOAM stays as the reference backend for regression comparison.
+- Replace =identify() == "ninjafoam"= checks with capability queries.
+
+** B. GPU RANS backend
+- Grid: reuse WindNinja's structured (i,j,k) terrain-following =Mesh=
+  (vertical growth 1.3). This drops the blockMesh, moveDynamicMesh, topoSet and
+  refineMesh chain as well as the STL round trip.
+- Discretisation: cell-centred finite volume on a curvilinear grid, collocated,
+  with Rhie-Chow interpolation.
+- Steady solve: pseudo-compressibility with local time stepping and geometric
+  multigrid. This avoids a global pressure Poisson solve each iteration and maps
+  to one kernel per stage.
+- Turbulence: RNG k-ε. The BC formulas port directly from
+  =src/ninjafoam/11/{inletBC,wallBC}=.
+- Memory: 100k cells × ~30 floats ≈ 12 MB. 10M cells ≈ 1.2 GB.
+- Host: Dawn or wgpu-native via the C =webgpu.h= API, called from C++. The same
+  WGSL kernels could run in a browser build.
+- Precision: WGSL has no f64. Use local coordinates (UTM minus the domain
+  origin) and f32 residuals. Today's 1e-6 relative tolerances are near the f32
+  floor.
+
+** Rough effort (one experienced developer; low confidence)
+| Phase                                                     | Estimate |
+|-----------------------------------------------------------+----------|
+| Seam refactor + golden-case harness vs OpenFOAM           | 1–2 wk   |
+| CPU reference structured RANS (C++)                       | 4–8 wk   |
+| Port kernels to WGSL/Dawn, multigrid on GPU               | 3–6 wk   |
+| Validation (Big Butte, Askervein/Bolund) and robustness   | 4+ wk    |
+| Packaging (Dawn on Win/macOS/Linux), CLI/GUI/C-API wiring | 1–2 wk   |
+
+** Payoff
+- Removes OpenFOAM, MPI and hwloc on all platforms. That means no case-sensitive
+  volumes on macOS, no cross-compiled 2.2.x on Windows, no template sets or
+  version branches, and no process spawns.
+- Meshing becomes near-free.
+- The solve is likely faster on a discrete GPU. This is unmeasured: the problems
+  are small, so launch overhead matters.
+
+** Risks
+- Convergence with f32 only.
+- Robustness on steep terrain; today's DEM-smoothing retry loop suggests
+  OpenFOAM struggles there too.
+- Grid skew on cliffs.
+- Machines without a usable GPU. Dawn's SwiftShader fallback is slow, so keep
+  OpenFOAM or the mass solver as a fallback.
+- Validation burden: results must match the validated OpenFOAM solution closely
+  enough for operational use.
+
+* Next steps
+** TODO Re-enable momentum-solver tests
+=autotest/test_foam.cpp= is commented out of the build (=autotest/CMakeLists.txt:70-73=),
+so the momentum solver currently has no automated coverage. This is a
+prerequisite for any refactor.
+** TODO Golden-case harness
+Capture OpenFOAM-11 outputs (u, v, k grids) for a small set of DEMs:
+- Big Butte, a coarse and a medium mesh;
+- several wind directions;
+- one steep case.
+Store them with tolerances so any new backend can be compared automatically.
+** TODO Cut the =MomentumBackend= seam
+Move today's code behind =OpenFoamBackend= with no behaviour change. Verify
+against the golden cases.
+** TODO Spike: CPU structured RANS on the mass-solver =Mesh=
+Make it the smallest end-to-end version: pseudo-compressibility plus k-ε plus
+the log-law BCs on Big Butte. Compare against OpenFOAM to decide go/no-go
+before any GPU work.
+** TODO Spike: Dawn/wgpu-native in the WindNinja build
+Prove one WGSL compute kernel runs from C++ with readback on macOS, Linux and
+Windows. Measure dispatch overhead at 100k cells.
+** TODO Decide on browser scope
+A browser build needs WindNinja's core (GDAL, etc.) in WASM, or a solver-only
+web component that takes a DEM. Pick one before committing kernel APIs.
+** TODO Separate issues found along the way
+- Iteration default mismatch: the core uses 1000, the CLI/GUI use 300, and the
+  GUI hard-codes 300 (=mainWindow.cpp:1061-1071=).
+- Version-string dispatch is repeated about 15× in =ninjafoam.cpp=, with
+  unchecked =VSIFOpenL=. An unknown OpenFOAM version (e.g. ESI =v2606=)
+  segfaults in =writeBlockMesh= (=ninjafoam.cpp:1217-1231=).
+- =identify()= string comparisons are used to switch behaviour.
+- CMake: =libninja.a= is linked by path instead of by target. This breaks
+  macOS linking of the CLI and tests (shapelib, libomp).
