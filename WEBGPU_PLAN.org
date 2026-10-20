@@ -1,0 +1,422 @@
+#+TITLE: WebGPU momentum solver: implementation plan
+#+DATE: 2026-10-20
+#+TODO: TODO IN-PROGRESS BLOCKED | DONE CANCELLED
+
+Companion to [[file:WEBGPU.org][WEBGPU.org]] (findings and rationale). This file turns
+those findings into phases, tasks, subtasks and tests.
+
+* Conventions
+- *Tests*:
+  - Unit tests are Boost.Test cases in =autotest/= and are added to =test_main=.
+  - Each case is registered with =add_test(<suite>_<case> ... --run_test=<suite>/<case>)=,
+    matching the existing =autotest/CMakeLists.txt= style.
+  - CLI integration tests are =.cfg= files under =autotest/config/pass/=.
+- *Golden comparison*: compare to the OpenFOAM-11 reference outputs from
+  Phase 0. The metrics are:
+  - speed: RMSE and max abs diff, in m/s;
+  - direction: circular mean abs diff, in degrees;
+  - k: relative RMSE.
+- *Tolerances*: placeholder values are marked =TBD=. They need sign-off from
+  the WindNinja science team before Phase 2 ends.
+- *Gates*: =GATE= headings are go/no-go decisions. Don't start the next phase
+  until the gate is recorded as DONE or CANCELLED, with a note.
+
+* Phase 0: Safety net (tests and reference data)
+Goal: lock in today's OpenFOAM behaviour so every later change is measurable.
+
+** TODO 0.1 Re-enable the momentum-solver unit test
+- [ ] Uncomment =test_foam.cpp= in =autotest/CMakeLists.txt:70-73= and the
+      =sample_cloud_1= registration (=:309-311=).
+- [ ] Fix =sample_cloud_1= if it no longer builds or passes (it has been
+      disabled for an unknown time).
+- [ ] Skip (not fail) when no OpenFOAM is on =PATH=, so CI without OpenFOAM
+      stays green.
+*** Tests
+- =ninjafoam_sample_cloud_1= passes with OpenFOAM-11 on Linux CI and macOS.
+- With OpenFOAM absent, ctest reports the test as skipped (via a =SKIP_RETURN_CODE=
+  ctest property), not as a failure.
+
+** TODO 0.2 Momentum-solver CLI smoke tests
+- [ ] Add =autotest/config/pass/momentum_bigbutte_coarse.cfg= (domain average,
+      coarse mesh, 2 CPUs, 300 iterations).
+- [ ] Add =momentum_bigbutte_diurnal.cfg=, based on
+      =data/cli_momentumSolver_diurnal.cfg=.
+- [ ] Gate both behind =NINJAFOAM AND RUN_CFG_TESTS=.
+*** Tests
+- Both configs exit 0 and write =*_vel.asc= / =*_ang.asc=.
+- The outputs are within range: speed in [0, 3 × input], no NaN or no-data
+  inside the domain.
+
+** TODO 0.3 Golden-case dataset
+- [ ] Pick the cases:
+  - [ ] Big Butte small: coarse and medium meshes; 270°, 0°, 135°; 10 mph.
+  - [ ] One steep-terrain DEM that triggers the DEM-smoothing retry today.
+  - [ ] One flat DEM (analytic log-law check).
+- [ ] Write a script (=scripts/make_momentum_golden.sh=) that runs each case
+      with OpenFOAM-11. It saves u, v and k grids at the output height, plus
+      the mass-mesh 3-D sample (VTK), plus metadata: OpenFOAM version, commit,
+      mesh count, iterations, final residuals.
+- [ ] Store the outputs under =autotest/golden/momentum/= (small ASCII grids),
+      or as a fetched artifact if they're too big for git.
+*** Tests
+- Running the script twice gives identical results (within 1e-6 m/s) on the
+  same machine.
+- Linux vs macOS OpenFOAM-11 results agree within =TBD= (this sets the noise
+  floor for later tolerances).
+
+** TODO 0.4 Golden comparison tool
+- [ ] Write =autotest/momentum_compare.{h,cpp}=: load two grid sets and
+      compute the metrics from Conventions.
+- [ ] Add a CLI wrapper (=compare_momentum=) for use from ctest and by hand.
+*** Tests
+- =momentum_compare_identity=: comparing a grid to itself gives 0 for every
+  metric.
+- =momentum_compare_known_offset=: a +1 m/s shift gives RMSE 1. A 10°
+  rotation gives a direction diff of 10° (including the 355° vs 5° wrap case).
+
+** TODO GATE 0: tolerances agreed
+- Speed RMSE, max speed diff, direction diff and k relative RMSE limits are
+  signed off.
+- The noise floor from 0.3 is recorded.
+
+* Phase 1: Cut the =MomentumBackend= seam (no behaviour change)
+Goal: OpenFOAM becomes one implementation behind an interface.
+
+** TODO 1.1 Define the interface
+- [ ] Add =src/ninja/momentum_backend.h= with =MomentumProblem=,
+      =MomentumResult= and the abstract =MomentumBackend= (see WEBGPU.org §A).
+- [ ] Add a =Volume= type for the optional 3-D fields (or reuse
+      =wn_3dScalarField= on the mass =Mesh=).
+- [ ] Route progress and cancel through the existing =ninjaComClass= and
+      =checkCancel=.
+*** Tests
+- =momentum_backend_problem_from_inputs=: building a =MomentumProblem= from a
+  =WindNinjaInputs= maps speed, direction, heights, z0, Rd and cell budget.
+  Units are converted to SI.
+
+** TODO 1.2 Extract =OpenFoamBackend=
+- [ ] Move the case generation, spawn and sampling code out of
+      =ninjafoam.cpp= into =openfoam_backend.cpp=, unchanged.
+- [ ] Keep case reuse (=existing_case_directory=) as an OpenFOAM-specific
+      option on the backend.
+*** Tests
+- The Phase 0 golden cases match their pre-refactor outputs *exactly* (bitwise
+  ASCII grids).
+- The 0.1 and 0.2 tests still pass.
+
+** TODO 1.3 Rename and slim the WindNinja-facing class
+- [ ] Rename =NinjaFoam= to =NinjaMomentum : ninja=. It owns the inputs, the
+      output grids, the writers and the diurnal hand-off, and delegates the
+      solve.
+- [ ] Keep =identify()= returning ="ninjafoam"= for now (callers depend on it).
+*** Tests
+- The full ctest suite is green. The momentum cfg tests from 0.2 are unchanged.
+
+** TODO 1.4 Replace =identify()= string checks
+- [ ] List every =identify() == "ninjafoam"= / =="ninja"= site
+      (=ninja.cpp=, =ninjaArmy.cpp=).
+- [ ] Replace each with a capability query (=hasTurbulenceOutput()=,
+      =supportsFrictionVelocity()=, ...).
+*** Tests
+- KMZ / turbulence / colMax output for momentum runs is unchanged (golden
+  cases, plus a file-list diff of the output directory).
+
+** TODO 1.5 Backend selection option
+- [ ] Add a =WindNinjaInputs::momentumBackend= enum (=openfoam=, =webgpu=,
+      later =cpu=).
+- [ ] Add a CLI option =momentum_backend= (default =openfoam=).
+- [ ] Add a C API =NinjaSetMomentumBackend=. Leave the GUI alone until Phase 5.
+- [ ] Return a clear error if the selected backend wasn't compiled in.
+*** Tests
+- =cli_momentum_backend_default= reports openfoam.
+- =cli_momentum_backend_unavailable= exits non-zero with the expected message
+  when built without WebGPU.
+- The C API test (=autotest/api=) sets and reads back the backend.
+
+** TODO 1.6 Fix the found defects (separate small PRs)
+- [ ] Unknown OpenFOAM version: fail loudly instead of segfaulting
+      (=ninjafoam.cpp:1217-1231=). Check every =VSIFOpenL=.
+- [ ] Use one iteration default for the core, CLI and GUI.
+- [ ] CMake: link the =ninja= target instead of =libninja.a= by path
+      (=src/cli=, =autotest=), so macOS needs no extra flags.
+*** Tests
+- =ninjafoam_unknown_version=: setting =WM_PROJECT_VERSION=v9999= makes
+  =simulate_wind= throw a =std::runtime_error= naming the version.
+- A macOS configure and build with no extra =CMAKE_*_FLAGS= succeeds and runs
+  the suite (update =scripts/build_deps_macos.sh= to drop the flags).
+
+* Phase 2: CPU reference structured RANS (=CpuRansBackend=)
+Goal: prove the numerics on the CPU, where debugging is cheap, before any GPU
+work. This also becomes the oracle for the GPU kernels.
+
+** TODO 2.1 Grid and metrics on the mass-solver =Mesh=
+- [ ] Build a =Mesh= from the =MomentumProblem= (=buildStandardMesh=). Pick
+      layers and vertical growth to hit the cell budget.
+- [ ] Compute the cell-centred finite-volume metrics: cell volumes, face area
+      vectors and the transformation Jacobian. Use local coordinates (UTM
+      minus the domain origin).
+- [ ] Compute wall distance for each cell (needed by the wall functions and
+      the log-law initialisation).
+*** Tests
+- =rans_metrics_flat_box=: on a flat DEM, the volumes sum to the box volume
+  and face areas match Δx·Δy (1e-12 relative).
+- =rans_metrics_closed_surface=: for each cell, the face area vectors sum to
+  zero (geometric conservation law) on a terrain mesh.
+- =rans_metrics_sine_hill=: the total volume matches analytic integration of a
+  sinusoidal hill, within discretisation error.
+
+** TODO 2.2 Laminar incompressible solver (pseudo-compressibility)
+- [ ] Use the artificial-compressibility formulation with local pseudo time
+      stepping.
+- [ ] Use second-order upwind convection, central diffusion, and Rhie-Chow
+      style pressure dissipation.
+- [ ] Add boundary conditions: velocity inlet, pressure outlet, slip top, no
+      slip / wall.
+*** Tests
+- =rans_mms_laminar=: a manufactured solution on a curvilinear grid shows the
+  observed order of accuracy at least 1.8 for u and at least 1.5 for p, over 3
+  grid levels.
+- =rans_lid_cavity_re100=: centreline velocities are within 2% of the Ghia
+  et al. (1982) reference.
+- =rans_converges_residual=: the residuals fall 5 orders of magnitude within
+  =TBD= iterations on the cavity.
+
+** TODO 2.3 RNG k-ε with atmospheric wall functions
+- [ ] Add the transport equations for k and ε with the RNG coefficients from
+      =data/ninjafoam/11/constant/momentumTransport=.
+- [ ] Port the rough-wall function from
+      =src/ninjafoam/11/wallBC/nutkAtmRoughWallFunction=.
+- [ ] Port the log-profile inlets for U, k and ε from
+      =src/ninjafoam/11/inletBC=, and the log-law initialisation from
+      =applyInit=.
+- [ ] Assign inlet and outlet sides by wind direction, as =SetInlets= does today.
+*** Tests
+- =rans_flat_terrain_log_law=: over a flat DEM the profile stays log-law along
+  the whole fetch (homogeneous ABL), with speed at 10 m AGL within 2% of
+  analytic at inlet, middle and outlet.
+- =rans_wall_function_ustar=: on flat terrain, the recovered u* matches
+  U∞κ/ln(h/z0) within 1%.
+- =rans_bc_port_matches_openfoam=: the inlet U, k and ε face values match the
+  OpenFOAM BC code at the same heights (1e-10 relative; it's the same formula).
+
+** TODO 2.4 Terrain cases against golden data
+- [ ] Run the =CpuRansBackend= on every Phase 0 golden case.
+- [ ] Sample the output height with the existing grid code (bilinear in the
+      vertical between layers).
+- [ ] Fill the optional 3-D fields on the mass =Mesh= (direct, no probing
+      needed).
+*** Tests
+- =momentum_cpu_golden_bigbutte_270_coarse= and the other golden cases are
+  within the GATE 0 tolerances.
+- =momentum_cpu_no_nan=: no NaN or Inf on the steep case. If it diverges,
+  report it as a solver failure; don't write output.
+
+** TODO 2.5 Robustness on steep terrain
+- [ ] Measure grid skew and aspect ratio (=Mesh::get_equiangle_skew= and
+      =Mesh::get_aspect_ratio= already exist).
+- [ ] Add mitigation options: vertical smoothing of the coordinate surfaces,
+      CFL ramp-up, and DEM smoothing retry (parity with today's
+      =SIMPLEFOAM_NTRIES=).
+*** Tests
+- =momentum_cpu_steep_converges=: the steep golden case converges without a
+  retry, or with the same number of retries as OpenFOAM.
+
+** TODO GATE 2: go / no-go on the RANS approach
+- Go if the CPU backend meets the tolerances on all golden cases, and its
+  runtime is no worse than 2× OpenFOAM on the same CPU.
+- Record the decision and the measured numbers here. No-go options: improve the
+  numerics, or stop and keep OpenFOAM (the Phase 1 seam still pays off).
+
+* Phase 3: WebGPU infrastructure
+Goal: a WebGPU device, buffers, a kernel and readback from C++ on every
+platform, before porting solver kernels.
+
+** TODO 3.1 Choose and vendor the runtime
+- [ ] Evaluate Dawn vs wgpu-native: build size, prebuilt binaries for Win,
+      macOS and Linux (x64 and arm64), license, and =webgpu.h= API stability.
+- [ ] Add a CMake option =WITH_WEBGPU= (default OFF), with a =find_package= or
+      =FetchContent= recipe.
+- [ ] Record the decision in this file.
+*** Tests
+- CI builds with =WITH_WEBGPU=ON= on Linux, macOS and Windows.
+
+** TODO 3.2 Device and buffer layer (=src/ninja/gpu/=)
+- [ ] Create an RAII wrapper for instance, adapter, device and queue. Request a
+      high-performance adapter, then fall back.
+- [ ] Create a storage buffer helper with upload and readback (staging buffer
+      plus =mapAsync=, waited on synchronously).
+- [ ] Load WGSL from embedded strings (no runtime file lookup).
+- [ ] Turn device-lost and validation errors into C++ exceptions with messages.
+*** Tests
+- =gpu_device_create=: get an adapter and device, or skip with
+  =SKIP_RETURN_CODE= if none is available.
+- =gpu_buffer_roundtrip=: upload 1M floats, read them back, and check they are
+  bit-identical.
+- =gpu_kernel_saxpy=: a WGSL saxpy matches the CPU result within 1 ulp.
+- =gpu_validation_error_throws=: a bad WGSL compile throws, and the message
+  contains the shader line.
+
+** TODO 3.3 Overhead benchmark
+- [ ] Run a dispatch and readback micro-benchmark at 25k, 100k, 1M and 10M
+      elements.
+*** Tests
+- Record the numbers here. If per-dispatch overhead at 100k cells is more
+  than 10% of the estimated per-iteration CPU time, plan kernel fusion in
+  Phase 4.
+
+* Phase 4: GPU solver port (=WebGpuRansBackend=)
+Goal: the same numerics as the =CpuRansBackend=, as WGSL kernels.
+
+** TODO 4.1 Data layout and precision
+- [ ] Use a structure-of-arrays layout for the fields (u, v, w, p, k, ε, ν_t)
+      and the metrics on the (i,j,k) grid.
+- [ ] Use f32 throughout, with coordinates kept local to the domain origin.
+- [ ] Reduce residuals with a pairwise / two-pass sum to limit f32 error.
+*** Tests
+- =gpu_reduction_sum=: summing 10M values matches f64 CPU within 1e-6
+  relative.
+- =cpu_rans_f32_mode=: the CPU backend compiled with float gives golden results
+  within tolerance. This shows f32 is adequate before blaming kernels.
+
+** TODO 4.2 Kernels, one per solver stage
+- [ ] Gradients / reconstruction.
+- [ ] Convective and diffusive fluxes.
+- [ ] Pseudo-compressibility update with local Δτ.
+- [ ] k-ε source terms and the wall-function cells.
+- [ ] Boundary conditions: inlet log profiles, outlets, top, ground.
+- [ ] Residual norms.
+*** Tests
+For each kernel, a =gpu_kernel_<stage>_matches_cpu= test:
+- run one stage on a random field on the Big Butte coarse mesh;
+- compare against =CpuRansBackend= with f32;
+- require max relative diff 1e-5 (=TBD=).
+
+** TODO 4.3 Geometric multigrid
+- [ ] Coarsen the structured grid (2× in i, j and k where possible), with
+      restriction and prolongation kernels.
+- [ ] Use a V-cycle around the pseudo-time smoother.
+*** Tests
+- =gpu_multigrid_poisson=: an analytic Poisson problem converges at a rate
+  that doesn't depend on grid size (rate within 10% across 3 grid sizes).
+- =gpu_multigrid_speedup=: the cavity reaches the 2.2 residual target in at
+  least 3× fewer fine-grid sweeps than single-grid.
+
+** TODO 4.4 End-to-end GPU backend
+- [ ] Host loop: iterate until converged or out of iterations, read back
+      residuals every N steps, and honour =checkCancel=.
+- [ ] Read back the output-height sample and the optional 3-D fields.
+*** Tests
+- =momentum_gpu_golden_*=: all golden cases are within the GATE 0 tolerances
+  of OpenFOAM, *and* within a tighter tolerance of the CPU backend.
+- =momentum_gpu_cancel=: cancelling mid-run returns promptly (under 1 s) and
+  leaks no GPU memory (device memory is stable over 10 cancelled runs).
+- =momentum_gpu_deterministic=: two runs on the same device are bitwise
+  identical. If not, document the non-determinism and use a tolerance.
+
+** TODO GATE 4: GPU backend fit for integration
+- Golden cases pass on at least one GPU from each vendor available to the team
+  (Apple, NVIDIA, AMD, Intel).
+- Runtime beats OpenFOAM on the 100k-cell case on a laptop discrete or
+  integrated GPU.
+
+* Phase 5: Integration and UX
+Goal: users can choose the GPU backend everywhere the momentum solver appears
+today.
+
+** TODO 5.1 CLI, C API and GUI wiring
+- [ ] Support =momentum_backend = webgpu=, with =cpu= as the fallback.
+- [ ] GUI: a backend selector in the momentum solver panel. Hide the OpenFOAM
+      case-directory picker when it doesn't apply. Let the processor count
+      control the CPU backend only.
+- [ ] Lift the hwloc / =countNumCores= dependency when OpenFOAM isn't selected.
+*** Tests
+- =cli_momentum_webgpu_bigbutte.cfg= passes in =autotest/config/pass/=.
+- The C API test runs one domain-average momentum run with the WebGPU backend.
+- Manual GUI checklist (record results here): select backend, run, cancel, and
+  re-run with different directions.
+
+** TODO 5.2 Feature parity
+- [ ] Diurnal hand-off (=diurnal_ninja= on the momentum grids).
+- [ ] Turbulence output and colMax.
+- [ ] VTK output, written directly from the native 3-D fields.
+- [ ] Weather-model and gridded initialization (domain-mean inflow, same as
+      today).
+- [ ] Multiple runs in an army.
+*** Tests
+- =momentum_gpu_diurnal=: the diurnal cfg passes, and its outputs are within
+  tolerance of OpenFOAM plus diurnal.
+- =momentum_gpu_turbulence_kmz=: the KMZ contains the turbulence and colMax
+  layers.
+- =momentum_gpu_army_3_runs=: three directions in one army give three output
+  sets, with no cross-run state leakage (run order doesn't change the results).
+
+** TODO 5.3 Fallback behaviour
+- [ ] No adapter, device lost, or out of memory → a clear message, then fall
+      back to the CPU backend (or OpenFOAM if configured). Never fail silently.
+*** Tests
+- =momentum_gpu_fallback_no_adapter=: with an env var forcing no adapter, the
+  run completes with the CPU backend and logs a warning.
+- =momentum_gpu_oom=: a forced allocation failure is reported with the
+  requested size, then falls back.
+
+* Phase 6: Validation and performance
+Goal: evidence that the GPU backend is fit for operational use.
+
+** TODO 6.1 Field-data validation
+- [ ] Get the observation datasets used in prior WindNinja validation (Big
+      Butte, Askervein; Bolund if available). Ask the team for the canonical
+      copies.
+- [ ] Report speed-up ratios and direction error at the station locations, for
+      OpenFOAM vs GPU vs observations.
+*** Tests
+- =validation_bigbutte_stations=: the GPU station errors are no worse than
+  OpenFOAM's by more than =TBD=. This runs as a slow test (=RUN_SLOW_TESTS=).
+
+** TODO 6.2 Performance matrix
+- [ ] Measure wall time for each mesh choice (coarse/medium/fine plus 1M
+      cells) × backend (OpenFOAM, CPU, GPU) × hardware (Apple silicon, NVIDIA,
+      Intel iGPU).
+- [ ] Record the table here and in the release notes.
+*** Tests
+- A perf regression check in CI (nightly, =scripts/nightlyTests.py=): GPU
+  runtime on the reference runner stays within 20% of the recorded baseline.
+
+** TODO 6.3 Robustness sweep
+- [ ] Run 50 or more DEMs (steep, flat, coastal, large extents) × 8 directions.
+*** Tests
+- No crashes. Every divergence is reported as a failure, and the convergence
+  rate is at least the OpenFOAM rate on the same set.
+
+* Phase 7: Packaging and release
+** TODO 7.1 Distribution
+- [ ] Bundle Dawn or wgpu-native in the Windows installer, a macOS app bundle
+      and Linux packages.
+- [ ] Update the dependency scripts: =scripts/build_deps_macos.sh= (OpenFOAM
+      becomes optional) and the Ubuntu scripts.
+*** Tests
+- A clean-VM install on each platform, followed by a WebGPU momentum run.
+
+** TODO 7.2 Documentation
+- [ ] Add a user guide section: choosing a backend, GPU requirements, and the
+      fallback.
+- [ ] Add developer notes: kernel layout and how to add a test case to the
+      golden set.
+
+** TODO GATE 7: OpenFOAM's future
+- Decide: keep OpenFOAM as an optional reference backend, or deprecate it (and
+  drop the =data/ninjafoam= templates, the BC library and the hwloc requirement).
+
+* Out of scope / later
+- Browser build. It needs either WindNinja core in WASM (GDAL etc.) or a
+  solver-only web component. Decide after GATE 4, and keep the WGSL free of
+  native-only assumptions so either stays possible.
+- LBM / LES transient solver (see WEBGPU.org, "Why not LBM").
+- Non-neutral stability, Coriolis, or spatially varying inflow. These become
+  possible once the solver is in-house, but need separate validation.
+
+* Open questions (need answers from the team)
+- Are the tolerances in GATE 0 acceptable to the science team? Who signs off?
+- Which validation datasets are canonical, and where do they live?
+- Which GPUs do target users (fire behaviour analysts, IMTs) actually have?
+- Dawn vs wgpu-native: does either conflict with the installer or licensing
+  constraints?
