@@ -24,17 +24,28 @@ those findings into phases, tasks, subtasks and tests.
 * Phase 0: Safety net (tests and reference data)
 Goal: lock in today's OpenFOAM behaviour so every later change is measurable.
 
-** TODO 0.1 Re-enable the momentum-solver unit test
-- [ ] Uncomment =test_foam.cpp= in =autotest/CMakeLists.txt:70-73= and the
-      =sample_cloud_1= registration (=:309-311=).
-- [ ] Fix =sample_cloud_1= if it no longer builds or passes (it has been
-      disabled for an unknown time).
-- [ ] Skip (not fail) when no OpenFOAM is on =PATH=, so CI without OpenFOAM
-      stays green.
+** DONE 0.1 Re-enable the momentum-solver unit test [6/6]
+Note (2026-10-20): =sample_cloud_1= exercises =SampleCloud()=, which is dead
+code (its only call is commented out at =ninjafoam.cpp:2720=) and needs an
+existing case directory. Replaced it with OpenFOAM-free characterisation tests
+of the helpers Phase 1 will move. The OpenFOAM-gated skip moved to 0.2.
+Also added hwloc to =autotest= link libs (same as =src/cli=); the proper
+target-based fix is still 1.6. Result: 6 cases, 39 assertions, full suite
+66/66 on macOS arm64.
+- [X] Expose =NinjaFoam= helpers under =NINJA_BUILD_TESTING= (same pattern as
+      =ninjafoam.h:238=).
+- [X] Replace =sample_cloud_1= with characterisation tests:
+      =ComputeDirection=, =SetInlets=, =ReplaceKey= / =ReplaceKeys=.
+- [X] Re-enable =test_foam.cpp= in =autotest/CMakeLists.txt= and register each case.
+- [X] Add tests
+- [X] Tests pass
+- [X] Documentation updates (SKIP: no user-facing change; rationale is in the note above)
 *** Tests
-- =ninjafoam_sample_cloud_1= passes with OpenFOAM-11 on Linux CI and macOS.
-- With OpenFOAM absent, ctest reports the test as skipped (via a =SKIP_RETURN_CODE=
-  ctest property), not as a failure.
+- =ninjafoam_compute_direction_*= and =ninjafoam_set_inlets_*= cover every
+  axis and quadrant branch.
+- =ninjafoam_replace_key*= pins today's =ReplaceKey= / =ReplaceKeys= behaviour,
+  including the return value.
+- All of them run without OpenFOAM installed.
 
 ** TODO 0.2 Momentum-solver CLI smoke tests
 - [ ] Add =autotest/config/pass/momentum_bigbutte_coarse.cfg= (domain average,
@@ -42,6 +53,8 @@ Goal: lock in today's OpenFOAM behaviour so every later change is measurable.
 - [ ] Add =momentum_bigbutte_diurnal.cfg=, based on
       =data/cli_momentumSolver_diurnal.cfg=.
 - [ ] Gate both behind =NINJAFOAM AND RUN_CFG_TESTS=.
+- [ ] Skip (not fail) when no OpenFOAM is on =PATH= (=SKIP_RETURN_CODE= /
+      =SKIP_REGULAR_EXPRESSION=), so CI without OpenFOAM stays green.
 *** Tests
 - Both configs exit 0 and write =*_vel.asc= / =*_ang.asc=.
 - The outputs are within range: speed in [0, 3 × input], no NaN or no-data
@@ -413,6 +426,11 @@ Goal: evidence that the GPU backend is fit for operational use.
 - LBM / LES transient solver (see WEBGPU.org, "Why not LBM").
 - Non-neutral stability, Coriolis, or spatially varying inflow. These become
   possible once the solver is in-house, but need separate validation.
+
+* Inbox
+** TODO =ReplaceKeys= can loop up to INT_MAX times
+If the replacement value contains the key (e.g. =ReplaceKeys(s, "a", "aa")=),
+each pass re-finds the key from the start of the string. Found during 0.1.
 
 * Open questions (need answers from the team)
 - Are the tolerances in GATE 0 acceptable to the science team? Who signs off?

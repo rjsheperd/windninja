@@ -87,7 +87,9 @@ public:
     static int GenerateFoamDirectory(std::string demName);
     static void SetFoamPath(const char *pszPath);
 
+#ifndef NINJA_BUILD_TESTING
 private:
+#endif
     std::string foamVersion;
     
     static const char *pszFoamPath;

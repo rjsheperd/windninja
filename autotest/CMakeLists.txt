@@ -28,6 +28,12 @@ set(LINK_LIBS ${NETCDF_LIBRARIES_C}
               ${CURL_LIBRARIES}
               ${Boost_LIBRARIES})
 
+if(NINJAFOAM)
+    if(NOT WIN32)
+        set(LINK_LIBS ${LINK_LIBS}
+                      ${HWLOC_LIBRARY})
+    endif()
+endif(NINJAFOAM)
 
 if(WIN32 OR APPLE)
     set(LINK_LIBS ${LINK_LIBS}
@@ -68,8 +74,8 @@ if(WITH_NOMADS_SUPPORT)
 endif(WITH_NOMADS_SUPPORT)
 
 if(NINJAFOAM)
-    #SET(TEST_SOURCES ${TEST_SOURCES}
-    #                 test_foam.cpp)
+    set(TEST_SOURCES ${TEST_SOURCES}
+                     test_foam.cpp)
 endif(NINJAFOAM)
 
 add_executable(test_main ${TEST_SOURCES})
@@ -307,8 +313,18 @@ if(WITH_NOMADS_SUPPORT)
 endif(WITH_NOMADS_SUPPORT)
 
 if(NINJAFOAM)
-    #add_test(sample_cloud_1
-    #         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/sample_cloud_1)
+    add_test(ninjafoam_compute_direction_axes
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/compute_direction_axes)
+    add_test(ninjafoam_compute_direction_quadrants
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/compute_direction_quadrants)
+    add_test(ninjafoam_set_inlets_axes
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/set_inlets_axes)
+    add_test(ninjafoam_set_inlets_quadrants
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/set_inlets_quadrants)
+    add_test(ninjafoam_replace_key
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/replace_key)
+    add_test(ninjafoam_replace_keys
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/replace_keys)
     add_test(stl_1
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=stl/stl_1)
     add_test(stl_2
