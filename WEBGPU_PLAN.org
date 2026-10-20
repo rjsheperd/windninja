@@ -47,14 +47,24 @@ target-based fix is still 1.6. Result: 6 cases, 39 assertions, full suite
   including the return value.
 - All of them run without OpenFOAM installed.
 
-** TODO 0.2 Momentum-solver CLI smoke tests
-- [ ] Add =autotest/config/pass/momentum_bigbutte_coarse.cfg= (domain average,
-      coarse mesh, 2 CPUs, 300 iterations).
-- [ ] Add =momentum_bigbutte_diurnal.cfg=, based on
+** DONE 0.2 Momentum-solver CLI smoke tests [7/7]
+Note: these live in =autotest/config/momentum/=, not =pass/=. =pass/= is
+globbed for every =RUN_CFG_TESTS= build and only checks the exit code.
+Result (macOS arm64, OpenFOAM-11): both pass (18.6 s, 17.2 s) and report
+"Skipped" without an OpenFOAM env. The checker was negative-tested against
+out-of-range, no-data, NaN and truncated grids. GitHub CI doesn't source the
+OpenFOAM bashrc before ctest, so these skip there.
+- [X] Add =autotest/config/momentum/momentum_bigbutte_coarse.cfg= (domain
+      average, coarse mesh, 2 CPUs, 300 iterations).
+- [X] Add =momentum_bigbutte_diurnal.cfg=, based on
       =data/cli_momentumSolver_diurnal.cfg=.
-- [ ] Gate both behind =NINJAFOAM AND RUN_CFG_TESTS=.
-- [ ] Skip (not fail) when no OpenFOAM is on =PATH= (=SKIP_RETURN_CODE= /
-      =SKIP_REGULAR_EXPRESSION=), so CI without OpenFOAM stays green.
+- [X] Add =run_momentum_cfg.py=: exit 77 (skip) when =WM_PROJECT_VERSION= is
+      unset, run the CLI, then check the outputs.
+- [X] Register the tests in =autotest/CMakeLists.txt= behind
+      =NINJAFOAM AND RUN_CFG_TESTS=, with =SKIP_RETURN_CODE 77=.
+- [X] Add tests
+- [X] Tests pass
+- [X] Documentation updates
 *** Tests
 - Both configs exit 0 and write =*_vel.asc= / =*_ang.asc=.
 - The outputs are within range: speed in [0, 3 × input], no NaN or no-data
@@ -431,6 +441,11 @@ Goal: evidence that the GPU backend is fit for operational use.
 ** TODO =ReplaceKeys= can loop up to INT_MAX times
 If the replacement value contains the key (e.g. =ReplaceKeys(s, "a", "aa")=),
 each pass re-finds the key from the start of the string. Found during 0.1.
+
+** TODO =RUN_CFG_TESTS= configure fails where only =python3= exists
+=autotest/CMakeLists.txt:353= runs =pef.py= with a bare =python=, which stock
+macOS lacks, so =ELEV_FILE= is empty and =string(STRIP)= errors. Use
+=find_package(Python3)= / =${Python3_EXECUTABLE}=. Found during 0.2.
 
 * Open questions (need answers from the team)
 - Are the tolerances in GATE 0 acceptable to the science team? Who signs off?

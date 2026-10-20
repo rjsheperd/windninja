@@ -365,3 +365,27 @@ if(RUN_CFG_TESTS)
     endforeach(cfgtest ${cfgtests})
 endif(RUN_CFG_TESTS)
 
+# Momentum solver cfg tests: run the CLI and sanity-check the ascii output.
+# Skipped (exit 77) unless an OpenFOAM environment is loaded.
+if(RUN_CFG_TESTS AND NINJAFOAM)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    file(GLOB momentumtests ${PROJECT_SOURCE_DIR}/autotest/config/momentum/*.cfg)
+    foreach(cfgtest ${momentumtests})
+        get_filename_component(base ${cfgtest} NAME_WE)
+        set(testdir ${PROJECT_BINARY_DIR}/autotest/config/momentum/${base})
+        file(MAKE_DIRECTORY ${testdir})
+        file(COPY ${cfgtest} DESTINATION ${testdir})
+        file(STRINGS ${cfgtest} elev_line REGEX "^elevation_file")
+        string(REGEX REPLACE "^elevation_file *= *([^ ]+).*" "\\1" elev_file "${elev_line}")
+        file(COPY ${PROJECT_SOURCE_DIR}/data/${elev_file} DESTINATION ${testdir})
+        add_test(NAME cfg_${base}
+                 COMMAND ${Python3_EXECUTABLE}
+                         ${PROJECT_SOURCE_DIR}/autotest/config/momentum/run_momentum_cfg.py
+                         ${PROJECT_BINARY_DIR}/src/cli/WindNinja_cli ${testdir}/${base}.cfg
+                 WORKING_DIRECTORY ${testdir})
+        set_tests_properties(cfg_${base} PROPERTIES
+                             ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data"
+                             SKIP_RETURN_CODE 77)
+    endforeach(cfgtest ${momentumtests})
+endif(RUN_CFG_TESTS AND NINJAFOAM)
+
