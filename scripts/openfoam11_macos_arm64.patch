@@ -1,0 +1,66 @@
+diff --git a/src/OSspecific/POSIX/signals/sigFpe.C b/src/OSspecific/POSIX/signals/sigFpe.C
+index ae9099d9..c8ea563c 100644
+--- a/src/OSspecific/POSIX/signals/sigFpe.C
++++ b/src/OSspecific/POSIX/signals/sigFpe.C
+@@ -38,7 +38,11 @@ License
+ #endif
+ 
+ #if defined(darwin64)
++#if defined(__x86_64__)
+ #include <xmmintrin.h>
++#else
++#include <fenv.h>
++#endif
+ #include <sys/mman.h>
+ #include <unistd.h>
+ #endif
+@@ -212,8 +216,17 @@ void Foam::sigFpe::set(const bool verbose)
+         );
+         #endif  // LINUX_GNUC
+         #if defined(darwin64)
++        #if defined(__x86_64__)
+         _mm_setcsr(_MM_MASK_MASK &~
+                    (_MM_MASK_OVERFLOW|_MM_MASK_INVALID|_MM_MASK_DIV_ZERO));
++        #else
++        // arm64: enable FP traps via FPCR (traps arrive as SIGILL, not SIGFPE)
++        fenv_t fenv;
++        fegetenv(&fenv);
++        fenv.__fpcr |= __fpcr_trap_invalid|__fpcr_trap_divbyzero
++                     | __fpcr_trap_overflow;
++        fesetenv(&fenv);
++        #endif
+         #endif
+ 
+         struct sigaction newAction;
+diff --git a/wmake/rules/darwin64Clang/c b/wmake/rules/darwin64Clang/c
+index 3ce40f20..b124c5ee 100644
+--- a/wmake/rules/darwin64Clang/c
++++ b/wmake/rules/darwin64Clang/c
+@@ -2,7 +2,7 @@ SUFFIXES += .c
+ 
+ cWARN        = -Wall
+ 
+-cc          = xcrun cc -arch x86_64
++cc          = xcrun cc -arch $(shell uname -m)
+ 
+ include $(RULES)/c$(WM_COMPILE_OPTION)
+ 
+diff --git a/wmake/rules/darwin64Clang/c++ b/wmake/rules/darwin64Clang/c++
+index ebdb9eb2..885625f3 100644
+--- a/wmake/rules/darwin64Clang/c++
++++ b/wmake/rules/darwin64Clang/c++
+@@ -6,11 +6,12 @@ SUFFIXES += .cpp
+ c++WARN     = -Wall -Wextra -Wno-unused-parameter -Wno-overloaded-virtual \
+               -Wno-unused-variable -Wno-unused-local-typedef -Wno-invalid-offsetof \
+ 	      -Wno-deprecated-register -Wno-undefined-var-template \
+-	      -Wno-unqualified-std-cast-call
++	      -Wno-unqualified-std-cast-call \
++	      -Wno-missing-template-arg-list-after-template-kw
+ 
+ c++LESSWARN = -Wno-shift-negative-value
+ 
+-CC          = xcrun c++ -arch x86_64 -std=c++14
++CC          = xcrun c++ -arch $(shell uname -m) -std=c++14
+ 
+ include $(RULES)/c++$(WM_COMPILE_OPTION)
+ 
