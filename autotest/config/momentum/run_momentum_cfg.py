@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.8"
+# ///
 """Run a momentum-solver cfg with WindNinja_cli and sanity-check its output.
 
 usage: run_momentum_cfg.py WindNinja_cli cfg_file

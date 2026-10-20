@@ -23,7 +23,9 @@ Momentum solver tests
 
 Files in the `momentum` folder ending with `.cfg` are momentum solver runs.
 They are only added when both `RUN_CFG_TESTS` and `NINJAFOAM` are on.  Each
-is run through `momentum/run_momentum_cfg.py`, which runs `WindNinja_cli` and
+is run through `momentum/run_momentum_cfg.py` (with `uv run --script`, so
+[uv](https://docs.astral.sh/uv/) must be on `PATH` when configuring; otherwise
+the tests are not added), which runs `WindNinja_cli` and
 then checks the `*_vel.asc` and `*_ang.asc` output: no NaN or no-data values,
 speeds between 0 and 3 times `input_speed` (so set `output_speed_units` to
 match `input_speed_units`), and angles between 0 and 360.

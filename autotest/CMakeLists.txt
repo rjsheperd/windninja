@@ -368,7 +368,11 @@ endif(RUN_CFG_TESTS)
 # Momentum solver cfg tests: run the CLI and sanity-check the ascii output.
 # Skipped (exit 77) unless an OpenFOAM environment is loaded.
 if(RUN_CFG_TESTS AND NINJAFOAM)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    find_program(UV_EXECUTABLE uv)
+endif()
+if(RUN_CFG_TESTS AND NINJAFOAM AND NOT UV_EXECUTABLE)
+    message(WARNING "uv not found; momentum solver cfg tests will not be added")
+elseif(RUN_CFG_TESTS AND NINJAFOAM)
     file(GLOB momentumtests ${PROJECT_SOURCE_DIR}/autotest/config/momentum/*.cfg)
     foreach(cfgtest ${momentumtests})
         get_filename_component(base ${cfgtest} NAME_WE)
@@ -379,7 +383,7 @@ if(RUN_CFG_TESTS AND NINJAFOAM)
         string(REGEX REPLACE "^elevation_file *= *([^ ]+).*" "\\1" elev_file "${elev_line}")
         file(COPY ${PROJECT_SOURCE_DIR}/data/${elev_file} DESTINATION ${testdir})
         add_test(NAME cfg_${base}
-                 COMMAND ${Python3_EXECUTABLE}
+                 COMMAND ${UV_EXECUTABLE} run --script
                          ${PROJECT_SOURCE_DIR}/autotest/config/momentum/run_momentum_cfg.py
                          ${PROJECT_BINARY_DIR}/src/cli/WindNinja_cli ${testdir}/${base}.cfg
                  WORKING_DIRECTORY ${testdir})
@@ -387,5 +391,5 @@ if(RUN_CFG_TESTS AND NINJAFOAM)
                              ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data"
                              SKIP_RETURN_CODE 77)
     endforeach(cfgtest ${momentumtests})
-endif(RUN_CFG_TESTS AND NINJAFOAM)
+endif()
 

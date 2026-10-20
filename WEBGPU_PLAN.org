@@ -58,7 +58,7 @@ OpenFOAM bashrc before ctest, so these skip there.
       average, coarse mesh, 2 CPUs, 300 iterations).
 - [X] Add =momentum_bigbutte_diurnal.cfg=, based on
       =data/cli_momentumSolver_diurnal.cfg=.
-- [X] Add =run_momentum_cfg.py=: exit 77 (skip) when =WM_PROJECT_VERSION= is
+- [X] Add =run_momentum_cfg.py= (run with =uv run --script=): exit 77 (skip) when =WM_PROJECT_VERSION= is
       unset, run the CLI, then check the outputs.
 - [X] Register the tests in =autotest/CMakeLists.txt= behind
       =NINJAFOAM AND RUN_CFG_TESTS=, with =SKIP_RETURN_CODE 77=.
@@ -444,8 +444,9 @@ each pass re-finds the key from the start of the string. Found during 0.1.
 
 ** TODO =RUN_CFG_TESTS= configure fails where only =python3= exists
 =autotest/CMakeLists.txt:353= runs =pef.py= with a bare =python=, which stock
-macOS lacks, so =ELEV_FILE= is empty and =string(STRIP)= errors. Use
-=find_package(Python3)= / =${Python3_EXECUTABLE}=. Found during 0.2.
+macOS lacks, so =ELEV_FILE= is empty and =string(STRIP)= errors. Run it with
+=uv run --script= like the momentum tests (or parse with =file(STRINGS)=).
+Found during 0.2.
 
 * Open questions (need answers from the team)
 - Are the tolerances in GATE 0 acceptable to the science team? Who signs off?
