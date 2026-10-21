@@ -365,6 +365,8 @@ add_test(rans_solver_freestream
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/freestream)
 add_test(rans_solver_mms_laminar
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/mms_laminar)
+add_test(rans_solver_lid_cavity_re100
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/lid_cavity_re100)
 add_test(momentum_compare_identity
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/identity)
 add_test(momentum_compare_identity_golden_case

@@ -208,4 +208,103 @@ BOOST_AUTO_TEST_CASE( mms_laminar )
     }
 }
 
+/*
+** Ghia, Ghia & Shin (1982), J. Comput. Phys. 48, 387-411, Re = 100: Table I
+** (u on the vertical centreline) and Table II (v on the horizontal
+** centreline).  Positions are the 129-point grid nodes (k/128).  Values match
+** two independent transcriptions (gist.github.com/ivan-pi and
+** github.com/sujaldave/2DLidDrivenCavityBenchmark); not checked against the
+** printed paper.
+*/
+static const double GHIA_U[17][2] = {
+    {1.0000000, 1.00000}, {0.9765625, 0.84123}, {0.9687500, 0.78871}, {0.9609375, 0.73722},
+    {0.9531250, 0.68717}, {0.8515625, 0.23151}, {0.7343750, 0.00332}, {0.6171875, -0.13641},
+    {0.5000000, -0.20581}, {0.4531250, -0.21090}, {0.2812500, -0.15662}, {0.1718750, -0.10150},
+    {0.1015625, -0.06434}, {0.0703125, -0.04775}, {0.0625000, -0.04192}, {0.0546875, -0.03717},
+    {0.0000000, 0.00000}};
+static const double GHIA_V[17][2] = {
+    {1.0000000, 0.00000}, {0.9687500, -0.05906}, {0.9609375, -0.07391}, {0.9531250, -0.08864},
+    {0.9453125, -0.10313}, {0.9062500, -0.16914}, {0.8593750, -0.22445}, {0.8046875, -0.24533},
+    {0.5000000, 0.05454}, {0.2343750, 0.17527}, {0.2265625, 0.17507}, {0.1562500, 0.16077},
+    {0.0937500, 0.12317}, {0.0781250, 0.10890}, {0.0703125, 0.10091}, {0.0625000, 0.09233},
+    {0.0000000, 0.00000}};
+
+/*
+** Lid-driven cavity in the x-z plane: lid at the top moving at +1, no-slip
+** walls elsewhere, slip sides in y (one cell, so the flow is 2-D).
+*/
+static RansSolver Cavity(const RansGrid &g, double nu)
+{
+    RansSolver s(g, nu, 1.0);
+    RansSolver::Boundary wall = {RansSolver::Boundary::wall, 0, 0, 0, 0, RansSolver::StateFunction()};
+    RansSolver::Boundary lid = {RansSolver::Boundary::wall, 0, 1, 0, 0, RansSolver::StateFunction()};
+    RansSolver::Boundary slip = {RansSolver::Boundary::slip, 0, 0, 0, 0, RansSolver::StateFunction()};
+    s.setBoundary(RansSolver::xMin, wall);
+    s.setBoundary(RansSolver::xMax, wall);
+    s.setBoundary(RansSolver::zMin, wall);
+    s.setBoundary(RansSolver::zMax, lid);
+    s.setBoundary(RansSolver::yMin, slip);
+    s.setBoundary(RansSolver::yMax, slip);
+    s.setUniform(0, 0, 0, 0);
+    return s;
+}
+
+/*
+** Bilinear interpolation of a cell field at (x, z) on a uniform n x 1 x n
+** cavity grid.  The centroids are extended with the wall values at their
+** true positions (x, z = 0 and 1): top for the lid row, 0 on the other walls.
+*/
+static double CavitySample(const std::vector<double> &q, int n, double x, double z, double top)
+{
+    // extended coordinates: 0, (k + 0.5)/n for k < n, 1
+    auto pos = [n](int k) { return k == 0 ? 0.0 : (k == n + 1 ? 1.0 : (k - 0.5) / n); };
+    auto val = [&](int i, int k)
+    {
+        if(k == n + 1) return top;
+        if(i == 0 || i == n + 1 || k == 0) return 0.0;
+        return q[(i - 1) + n * (k - 1)];   // ny = 1
+    };
+    int i0 = 0, k0 = 0;
+    while(i0 < n && pos(i0 + 1) < x) i0++;
+    while(k0 < n && pos(k0 + 1) < z) k0++;
+    double a = (x - pos(i0)) / (pos(i0 + 1) - pos(i0));
+    double b = (z - pos(k0)) / (pos(k0 + 1) - pos(k0));
+    return (1 - a) * (1 - b) * val(i0, k0) + a * (1 - b) * val(i0 + 1, k0) +
+           (1 - a) * b * val(i0, k0 + 1) + a * b * val(i0 + 1, k0 + 1);
+}
+
+BOOST_AUTO_TEST_CASE( lid_cavity_re100 )
+{
+    // Re = U L / nu = 100 on a uniform 32 x 32 grid
+    const int n = 32;
+    RansGrid g = TerrainGrid(n, 1, n, 1.0, 1.0 / n, 1.0, 1.0, [](double, double) { return 0.0; });
+    RansSolver s = Cavity(g, 0.01);
+
+    // residuals relative to each equation's peak (w and p start at exactly 0)
+    RansSolver::Residuals peak = {0, 0, 0, 0}, r;
+    int it = 0, fiveOrders = -1;
+    double worst = 1.0;
+    while(it < 25000 && worst > 1e-6)
+    {
+        r = s.iterate(100, 0.8);
+        it += 100;
+        peak.u = std::max(peak.u, r.u); peak.w = std::max(peak.w, r.w); peak.p = std::max(peak.p, r.p);
+        worst = std::max(std::max(r.u / peak.u, r.w / peak.w), r.p / peak.p);
+        if(fiveOrders < 0 && worst <= 1e-5) fiveOrders = it;
+    }
+    BOOST_TEST_MESSAGE("five orders at " << fiveOrders << ", stopped at " << it << " (" << worst << ")");
+    // measured 12100 on macOS arm64 (2026-10-21)
+    BOOST_CHECK(fiveOrders > 0 && fiveOrders <= 15000);
+
+    // centreline profiles within 2% of the lid speed (measured 0.80% and 0.33%)
+    double eu = 0.0, ev = 0.0;
+    for(const auto &row : GHIA_U)
+        eu = std::max(eu, std::fabs(CavitySample(s.u, n, 0.5, row[0], 1.0) - row[1]));
+    for(const auto &row : GHIA_V)
+        ev = std::max(ev, std::fabs(CavitySample(s.w, n, row[0], 0.5, 0.0) - row[1]));
+    BOOST_TEST_MESSAGE("max |u - ghia| = " << eu << ", max |v - ghia| = " << ev);
+    BOOST_CHECK_LE(eu, 0.02);
+    BOOST_CHECK_LE(ev, 0.02);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
