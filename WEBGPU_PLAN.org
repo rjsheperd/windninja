@@ -495,7 +495,17 @@ parity against OpenFOAM.
 - =rans_bc_port_matches_openfoam=: the inlet U, k and ε face values match the
   OpenFOAM BC code at the same heights (1e-10 relative; it's the same formula).
 
-** BLOCKED GATE 0: tolerances agreed (before 2.4 / GATE 2)
+** DONE GATE 0: tolerances agreed (before 2.4 / GATE 2) — provisional
+Provisional limits (proposed and accepted by the user, 2026-10-21), for
+=compare_momentum CASE GOLDEN 0.25 5 0.25= plus the max check:
+| Metric                 | Limit    | Basis                                                |
+| speed RMSE             | 0.25 m/s | ~5% of a typical 20 ft speed; ~2× the flat-case bias |
+| speed max abs diff     | 1.0 m/s  | local ridge / lee differences from different meshes  |
+| direction mean abs diff| 5°       | terrain steering should agree closely on average     |
+| k relative RMSE        | 0.25     | flat-case k already differs ~10%, mesh-sensitive     |
+Measured basis: flat parity (2.3), |U| +3.0% in the first cell, ≤ 1.1% above
+150 m. Team sign-off and the Linux noise floor are still open; they move to
+GATE 2.
 Moved again (2026-10-21) at the user's direction: start Phase 2 without
 signed-off numbers. 2.1–2.3 are verified against analytic and benchmark
 results, not golden tolerances. Tolerances first decide pass/fail in 2.4 and
@@ -540,6 +550,8 @@ ready: =scripts/make_momentum_golden.sh= and =compare_momentum=.
   retry, or with the same number of retries as OpenFOAM.
 
 ** TODO GATE 2: go / no-go on the RANS approach
+- [ ] Replace GATE 0's provisional tolerances with team-signed-off ones.
+- [ ] Linux OpenFOAM-11 golden run and cross-platform noise floor (from GATE 0).
 - Go if the CPU backend meets the tolerances on all golden cases, and its
   runtime is no worse than 2× OpenFOAM on the same CPU.
 - Record the decision and the measured numbers here. No-go options: improve the
