@@ -29,3 +29,18 @@ Regenerating
 
 The full set takes about 3 minutes on an Apple M-series laptop. Two runs on
 the same machine give bitwise identical grids.
+
+Comparing
+---------
+
+`compare_momentum` (built in `autotest/`) compares a case directory against a
+reference with the same layout:
+
+    compare_momentum CASE_DIR REFERENCE_DIR [MAX_SPEED_RMSE MAX_DIRECTION_DIFF MAX_K_REL_RMSE]
+
+It reports speed RMSE and max |diff| (m/s, from `vel.asc`), mean circular
+direction difference (degrees, from `ang.asc`) and k relative RMSE
+(RMSE / RMS of the reference, from `k.asc`). With limits given it prints
+PASS or FAIL and exits 0 or 1. It exits 2 if the grids can't be read or differ
+in size. The metrics live in `autotest/momentum_compare.{h,cpp}` and are tested
+by the `momentum_compare` suite.

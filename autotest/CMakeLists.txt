@@ -58,6 +58,8 @@ set(TEST_SOURCES test_main.cpp
                  test_ninjaunits.cpp
                  test_stl.cpp
                  test_rmtree.cpp
+                 momentum_compare.cpp
+                 test_momentum_compare.cpp
                  test_utm.cpp)
 if(WITH_LCP_CLIENT)
     set(TEST_SOURCES ${TEST_SOURCES} test_landfireclient.cpp)
@@ -84,6 +86,12 @@ add_dependencies(test_main ninja)
 #ADD_DEPENDENCIES(test_api  ninja)
 
 target_link_libraries(test_main ${LINK_LIBS})
+target_compile_definitions(test_main PRIVATE
+                           WINDNINJA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+# Compare momentum solver output against autotest/golden/momentum
+add_executable(compare_momentum compare_momentum.cpp momentum_compare.cpp)
+target_link_libraries(compare_momentum ${GDAL_LIBRARY})
 
 set(TEST_API FALSE)
 if(TEST_API)
@@ -331,6 +339,24 @@ if(NINJAFOAM)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=stl/stl_2)
 endif(NINJAFOAM)
 
+add_test(momentum_compare_identity
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/identity)
+add_test(momentum_compare_identity_golden_case
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/identity_golden_case)
+add_test(momentum_compare_known_offset
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/known_offset)
+add_test(momentum_compare_known_rotation
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/known_rotation)
+add_test(momentum_compare_circular_difference_wraps
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/circular_difference_wraps)
+add_test(momentum_compare_relative_rmse
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/relative_rmse)
+add_test(momentum_compare_no_data_skipped
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/no_data_skipped)
+add_test(momentum_compare_mismatched_size_throws
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/mismatched_size_throws)
+add_test(momentum_compare_no_valid_cells_throws
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/no_valid_cells_throws)
 add_test(rmtree_1
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rmtree/rmtree_1)
 add_test(rmtree_sym_1

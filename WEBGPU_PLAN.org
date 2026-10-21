@@ -119,10 +119,22 @@ Result (2026-10-20, macOS arm64, OpenFOAM-11, 2m46s for 8 cases, 3.9 MB):
   same machine. Passed (bitwise identical).
 - Linux vs macOS: moved to GATE 0 (no Linux OpenFOAM available here).
 
-** TODO 0.4 Golden comparison tool
-- [ ] Write =autotest/momentum_compare.{h,cpp}=: load two grid sets and
-      compute the metrics from Conventions.
-- [ ] Add a CLI wrapper (=compare_momentum=) for use from ctest and by hand.
+** DONE 0.4 Golden comparison tool [6/6]
+Metric definitions (over cells valid in both grids; a size mismatch is an error):
+- speed: RMSE and max |a − b| in m/s. Source: =vel.asc= (mph, converted).
+- direction: mean circular |a − b| in degrees, with
+  d = |((a − b + 540) mod 360) − 180|. Source: =ang.asc=.
+- k: relative RMSE, RMSE(a − b) / RMS(b), with b the reference. Source: =k.asc=.
+Result: the CLI exits 0 (PASS) on identical golden data and 1 (FAIL) on
+Big Butte coarse 0° vs 270° (speed RMSE 1.67 m/s, direction 80.2°, k rel RMSE
+1.55). It exits 2 on a size mismatch or a missing directory.
+- [X] Write =autotest/momentum_compare.{h,cpp}=: the metrics on plain vectors,
+      plus a GDAL loader for a golden case directory.
+- [X] Add a CLI wrapper (=compare_momentum=) for use from ctest and by hand.
+- [X] Register the =momentum_compare= Boost suite.
+- [X] Add tests (9 cases in the =momentum_compare= suite)
+- [X] Tests pass (full suite 76 passed + 2 skipped of 78)
+- [X] Documentation updates (=autotest/golden/momentum/README.md=, "Comparing")
 *** Tests
 - =momentum_compare_identity=: comparing a grid to itself gives 0 for every
   metric.
