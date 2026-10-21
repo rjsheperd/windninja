@@ -406,7 +406,7 @@ Method (CPU reference, simplest robust choices):
 - =rans_converges_residual=: the residuals fall 5 orders of magnitude within
   =TBD= iterations on the cavity.
 
-** IN-PROGRESS 2.3 RNG k-ε with atmospheric wall functions [6/11]
+** DONE 2.3 RNG k-ε with atmospheric wall functions [11/11]
 Parity record (what OpenFOAM-11 WindNinja actually uses):
 - Inlet U: u* = U∞·0.41/ln(h_in/z0); U = u*/0.41·ln(AGL/z0).
 - Inlet k: u*²/√0.085 (RNG Cμ), constant with height.
@@ -446,9 +446,11 @@ Parity record (what OpenFOAM-11 WindNinja actually uses):
 - [X] Assign inlet and outlet sides by wind direction, as =SetInlets= does today
       (=IsWindInlet= / =ApplyWindBoundaries=; tests check every =SetInlets= case
       and =ComputeDirection=).
-- [ ] Add tests
-- [ ] Tests pass
-- [ ] Documentation updates
+- [X] Add tests (=rans_abl/= ×3, =rans_solver/= wind_direction_matches_ninjafoam,
+      wind_inlets_match_ninjafoam, flat_terrain_parity_openfoam: 0.9 s, a provisional
+      5% per-level bound until GATE 0)
+- [X] Tests pass (full suite 102/102)
+- [X] Documentation updates (=rans_solver.h= scheme description; parity record above)
 *** Flat-terrain findings (2026-10-21) — needs a decision
 Setup: flat 3 km fetch, wind from 270°, z0 0.01, 10 mph at 20 ft, 30 layers to
 1 km (first cell 2.3 m). It converges cleanly (8 orders, 5.6 s) but does *not*
@@ -468,12 +470,23 @@ hold the log law:
   =flat_coarse_270=).
 Decision (2026-10-21, user): replace the analytic 2% / 1% criteria with
 parity against OpenFOAM.
-- [ ] Flat-terrain parity: run OpenFOAM-11 on the flat case and extract a
+- [X] Flat-terrain parity: run OpenFOAM-11 on the flat case and extract a
       mid-domain column (cell centres, U, k, ε, ν_t) and the inlet z0 / u*.
       Run the CPU solver on a grid whose layers match that column, then
-      compare U(z), k(z) and wall u*. A match puts the log-law drift on the
-      model; a mismatch localizes a bug.
-*** Tests
+      compare U(z), k(z) and wall u*.
+      Result: it localized a *bug*. Near the ground the CPU solver gave 2.33 m/s
+      against OpenFOAM's 5.45 m/s at 31 m AGL. A momentum budget showed missing
+      drag ~37× the wall shear: Rusanov dissipation at the artificial-
+      compressibility speed (√β|S|) on *velocity* acts as an artificial
+      viscosity of ~150 m²/s on coarse near-wall cells. Fix: acoustic
+      dissipation on pressure only (the Rhie-Chow role), momentum dissipated at
+      the convective speed |U·S| (like OpenFOAM's linearUpwind). After the fix:
+      |U| within +3.0% of OpenFOAM in the first cell, 2.4% in the second, and
+      ≤ 1.1% above. MMS orders (u 1.82, w 2.00, p 1.89) and Ghia (0.56% / 0.63%)
+      still pass. Note for Phase 4: the GPU kernels must port this dissipation
+      split, not plain Rusanov. OpenFOAM's own column also sits ~2.5% under the
+      log law near the ground, so some drift is the model.
+*** Tests (as planned; the first two were replaced by the OpenFOAM parity test, by user decision)
 - =rans_flat_terrain_log_law=: over a flat DEM the profile stays log-law along
   the whole fetch (homogeneous ABL), with speed at 10 m AGL within 2% of
   analytic at inlet, middle and outlet.

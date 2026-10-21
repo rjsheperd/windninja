@@ -334,9 +334,15 @@ void RansSolver::computeResiduals()
             double lambda = std::max(std::fabs(UL) + std::sqrt(UL * UL + beta * area2),
                                      std::fabs(UR) + std::sqrt(UR * UR + beta * area2));
             f[0] = 0.5 * (fL[0] + fR[0]) - 0.5 * lambda * (pR - pL);
-            f[1] = 0.5 * (fL[1] + fR[1]) - 0.5 * lambda * (uR - uL);
-            f[2] = 0.5 * (fL[2] + fR[2]) - 0.5 * lambda * (vR - vL);
-            f[3] = 0.5 * (fL[3] + fR[3]) - 0.5 * lambda * (wR - wL);
+            // momentum is dissipated at the convective speed only (upwind,
+            // like OpenFOAM's linearUpwind U).  The acoustic speed above
+            // stays on the pressure, where it plays the Rhie-Chow role;
+            // applying it to velocity acts as a large artificial viscosity
+            // on coarse near-wall cells.
+            double lambdaU = std::max(std::fabs(UL), std::fabs(UR));
+            f[1] = 0.5 * (fL[1] + fR[1]) - 0.5 * lambdaU * (uR - uL);
+            f[2] = 0.5 * (fL[2] + fR[2]) - 0.5 * lambdaU * (vR - vL);
+            f[3] = 0.5 * (fL[3] + fR[3]) - 0.5 * lambdaU * (wR - wL);
 
             // averaged gradient corrected along the centroid line
             double ex = g.cx[nb] - g.cx[o], ey = g.cy[nb] - g.cy[o], ez = g.cz[nb] - g.cz[o];
@@ -392,9 +398,10 @@ void RansSolver::computeResiduals()
                 double UI = uI * sx + vI * sy + wI * sz;
                 lambda = std::max(lambda, std::fabs(UI) + std::sqrt(UI * UI + beta * area2));
                 f[0] = 0.5 * (fI[0] + fB[0]) - 0.5 * lambda * (pb - pI);
-                f[1] = 0.5 * (fI[1] + fB[1]) - 0.5 * lambda * (ub - uI);
-                f[2] = 0.5 * (fI[2] + fB[2]) - 0.5 * lambda * (vb - vI);
-                f[3] = 0.5 * (fI[3] + fB[3]) - 0.5 * lambda * (wb - wI);
+                double lambdaU = std::max(std::fabs(Ub), std::fabs(UI));
+                f[1] = 0.5 * (fI[1] + fB[1]) - 0.5 * lambdaU * (ub - uI);
+                f[2] = 0.5 * (fI[2] + fB[2]) - 0.5 * lambdaU * (vb - vI);
+                f[3] = 0.5 * (fI[3] + fB[3]) - 0.5 * lambdaU * (wb - wI);
             }
             else
             {

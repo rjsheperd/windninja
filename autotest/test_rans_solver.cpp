@@ -342,4 +342,59 @@ BOOST_AUTO_TEST_CASE( wind_inlets_match_ninjafoam )
     }
 }
 
+/*
+** OpenFOAM-11 reference for flat_coarse_270 (scripts/make_momentum_golden.sh
+** case: flat 6 km DEM, 10 mph at 20 ft, grass, wind 270 = 271.67 deg in grid
+** coordinates): the mid-domain column's cell-centre heights above ground and
+** |U|, from the converged case (time 351) via foamPostProcess
+** -func writeCellCentres, on macOS arm64, 2026-10-21.
+*/
+static const double OF_FLAT_Z[11] = {30.853, 92.559, 185.298, 309.418, 434.416, 560.671,
+                                     688.608, 818.702, 951.501, 1087.590, 1227.077};
+static const double OF_FLAT_U[11] = {5.4502, 6.2204, 6.8101, 7.2369, 7.4701, 7.6390,
+                                     7.7737, 7.8839, 7.9718, 8.0355, 8.0702};
+
+BOOST_AUTO_TEST_CASE( flat_terrain_parity_openfoam )
+{
+    // layers whose centres match OpenFOAM's column; 59 m horizontal cells
+    std::vector<double> zf(1, 0.0);
+    for(int m = 0; m < 11; m++) zf.push_back(2 * OF_FLAT_Z[m] - zf.back());
+    const int nx = 100, ny = 2, nz = 11;
+    const double dxy = 59.0;
+    std::vector<double> x, y, z;
+    for(int kk = 0; kk <= nz; kk++)
+        for(int j = 0; j <= ny; j++)
+            for(int i = 0; i <= nx; i++)
+            { x.push_back(i * dxy); y.push_back(j * dxy); z.push_back(1000.0 + zf[kk]); }
+    RansGrid g = RansGrid::FromNodes(nx, ny, nz, x, y, z);
+
+    const double nu = 1.58946099535e-05, z0 = 0.01;
+    double ustar = AblFrictionVelocity(4.4704, 6.095999804928006, z0);
+    RansSolver s(g, nu, 25.0);
+    ApplyWindBoundaries(s, ustar, z0, 271.67);
+    InitializeLogProfile(s, ustar, z0, 271.67);
+    RansSolver::Residuals peak = {0, 0, 0, 0}, r;
+    int it = 0;
+    double worst = 1.0;
+    while(it < 20000 && worst > 1e-6)
+    {
+        r = s.iterate(500, 0.5);
+        it += 500;
+        peak.u = std::max(peak.u, r.u); peak.k = std::max(peak.k, r.k);
+        worst = std::max(r.u / peak.u, r.k / peak.k);
+    }
+    BOOST_TEST_MESSAGE("converged to " << worst << " in " << it << " iterations");
+    BOOST_CHECK_LE(worst, 1e-6);
+
+    // provisional per-level bound until GATE 0 sets tolerances (measured:
+    // +3.5% in the first cell, within 0.6% above 150 m)
+    for(int kk = 0; kk < nz; kk++)
+    {
+        int c = g.cell(nx / 2, ny / 2, kk);
+        double ratio = std::hypot(s.u[c], s.v[c]) / OF_FLAT_U[kk];
+        BOOST_TEST_MESSAGE("z=" << OF_FLAT_Z[kk] << " U/U_openfoam=" << ratio);
+        BOOST_CHECK_SMALL(ratio - 1.0, 0.05);
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

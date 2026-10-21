@@ -47,10 +47,13 @@ struct RansTurbulenceModel
 **   dp/dtau + beta div(u)               = 0
 **   du/dtau + div(u u) + grad(p)        = nu lap(u) + source
 **
-** with kinematic pressure p.  Cell-centred finite volume: Rusanov flux on
-** linearly reconstructed face states (second order), Green-Gauss gradients,
-** corrected face gradients for the viscous terms, and explicit pseudo-time
-** steps with a local time step.
+** with kinematic pressure p.  Cell-centred finite volume on linearly
+** reconstructed face states (second order) with Green-Gauss gradients.  The
+** face flux is central plus dissipation: pressure gets the artificial-
+** compressibility wave speed (the Rhie-Chow role), momentum only the
+** convective speed |U.S| (upwind, like OpenFOAM's linearUpwind U).  Viscous
+** terms use corrected face gradients.  Explicit pseudo-time steps with a local
+** time step.
 */
 class RansSolver
 {
