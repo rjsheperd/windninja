@@ -906,6 +906,14 @@ during 1.2.
 success. Each sampling retry leaves a quiet handler pushed, which may hide later
 GDAL errors. Preserved as-is in 1.2. Found during 1.2.
 
+** TODO Routine local test runs trip the NOMADS rate limit
+Each full ctest run fires ~18 live =nomads_*= downloads. Repeated runs during
+this work got =nomads.ncep.noaa.gov= to answer "Over Rate Limit" (2026-10-21),
+and all those tests then fail (confirmed with a build without WebGPU, so the
+cause is the server). Exclude =nomads_*= from routine runs (=-E nomads_=) and
+run them only when NOMADS code changes. Consider a ctest label or
+=RUN_NETWORK_TESTS= option. Found during 3.1.
+
 * Open questions (need answers from the team)
 - Are the tolerances in GATE 0 acceptable to the science team? Who signs off?
 - Which validation datasets are canonical, and where do they live?
