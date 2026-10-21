@@ -3921,6 +3921,40 @@ void ninja::set_MeshCount(WindNinjaInputs::eNinjafoamMeshChoice meshChoice)
     }
 }
 
+void ninja::set_momentumBackend(WindNinjaInputs::eMomentumBackend backend)
+{
+    if(backend != WindNinjaInputs::openFoamBackend)
+    {
+        throw std::invalid_argument( "momentum_backend '" + get_momentumBackendName(backend) +
+                                     "' is not available in this build of WindNinja" );
+    }
+    input.momentumBackend = backend;
+}
+
+WindNinjaInputs::eMomentumBackend ninja::get_eMomentumBackend(std::string backend)
+{
+    if(backend == "openfoam"){
+        return WindNinjaInputs::openFoamBackend;
+    }
+    else if(backend == "webgpu"){
+        return WindNinjaInputs::webGpuBackend;
+    }
+    else{
+        throw std::invalid_argument( "Invalid momentum_backend '" + backend +
+                                     "'\nchoices are: 'openfoam' or 'webgpu'" );
+    }
+}
+
+std::string ninja::get_momentumBackendName(WindNinjaInputs::eMomentumBackend backend)
+{
+    switch(backend)
+    {
+        case WindNinjaInputs::openFoamBackend: return "openfoam";
+        case WindNinjaInputs::webGpuBackend: return "webgpu";
+    }
+    return "unknown";
+}
+
 WindNinjaInputs::eNinjafoamMeshChoice ninja::get_eNinjafoamMeshChoice(std::string meshChoice)
 {
     if(meshChoice == "coarse"){

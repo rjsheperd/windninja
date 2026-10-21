@@ -28,7 +28,13 @@
 #ifdef NINJAFOAM
 
 #include "momentum_backend.h"
+#include "ninja.h"
+#include "windninja.h"
 #include "WindNinjaInputs.h"
+
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
 
 #include <boost/test/unit_test.hpp>
 
@@ -63,6 +69,64 @@ BOOST_AUTO_TEST_CASE( problem_from_inputs )
     BOOST_CHECK_EQUAL(p.cellBudget, 25000);
     BOOST_CHECK_EQUAL(p.iterations, 300);
     BOOST_CHECK_EQUAL(p.nThreads, 2);
+}
+
+BOOST_AUTO_TEST_CASE( backend_default_openfoam )
+{
+    WindNinjaInputs input;
+    BOOST_CHECK_EQUAL(input.momentumBackend, WindNinjaInputs::openFoamBackend);
+    WindNinjaInputs copy(input);
+    BOOST_CHECK_EQUAL(copy.momentumBackend, WindNinjaInputs::openFoamBackend);
+}
+
+BOOST_AUTO_TEST_CASE( backend_names )
+{
+    BOOST_CHECK_EQUAL(ninja::get_eMomentumBackend("openfoam"), WindNinjaInputs::openFoamBackend);
+    BOOST_CHECK_EQUAL(ninja::get_eMomentumBackend("webgpu"), WindNinjaInputs::webGpuBackend);
+    BOOST_CHECK_THROW(ninja::get_eMomentumBackend("bogus"), std::invalid_argument);
+    BOOST_CHECK_EQUAL(ninja::get_momentumBackendName(WindNinjaInputs::openFoamBackend), "openfoam");
+    BOOST_CHECK_EQUAL(ninja::get_momentumBackendName(WindNinjaInputs::webGpuBackend), "webgpu");
+}
+
+BOOST_AUTO_TEST_CASE( backend_unavailable_throws )
+{
+    ninja n;
+    BOOST_CHECK_NO_THROW(n.set_momentumBackend(WindNinjaInputs::openFoamBackend));
+    // no WebGPU backend is compiled in yet
+    BOOST_CHECK_THROW(n.set_momentumBackend(WindNinjaInputs::webGpuBackend), std::invalid_argument);
+    BOOST_CHECK_EQUAL(n.input.momentumBackend, WindNinjaInputs::openFoamBackend);
+}
+
+static std::string GetBackend(NinjaArmyH *army, int nIndex)
+{
+    const char *name = NinjaGetMomentumBackend(army, nIndex, NULL);
+    std::string s = name ? name : "(null)";
+    free((void *)name);
+    return s;
+}
+
+BOOST_AUTO_TEST_CASE( c_api_set_get_backend )
+{
+    BOOST_REQUIRE_EQUAL(NinjaInit("C-API autotest", NULL), NINJA_SUCCESS);
+    NinjaArmyH *army = NinjaInitializeArmy();
+    BOOST_REQUIRE(army != NULL);
+    const double speed[] = {5.0};
+    const double direction[] = {270.0};
+    BOOST_REQUIRE_EQUAL(NinjaMakeDomainAverageArmy(army, 1, true, speed, "mps", direction, NULL),
+                        NINJA_SUCCESS);
+
+    BOOST_CHECK_EQUAL(GetBackend(army, 0), "openfoam");
+    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, "openfoam", NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, "webgpu", NULL), NINJA_E_INVALID);
+    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, "bogus", NULL), NINJA_E_INVALID);
+    BOOST_CHECK_EQUAL(GetBackend(army, 0), "openfoam");
+
+    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, NULL, NULL), NINJA_E_NULL_PTR);
+    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(NULL, 0, "openfoam", NULL), NINJA_E_NULL_PTR);
+    BOOST_CHECK(NinjaGetMomentumBackend(NULL, 0, NULL) == NULL);
+    BOOST_CHECK_EQUAL(GetBackend(army, 5), "");
+
+    BOOST_CHECK_EQUAL(NinjaDestroyArmy(army, NULL), NINJA_SUCCESS);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

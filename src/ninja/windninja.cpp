@@ -1341,6 +1341,46 @@ WINDNINJADLL_EXPORT NinjaErr NinjaSetExistingCaseDirectory(NinjaArmyH * army, co
     return reinterpret_cast<ninjaArmy*>( army )->setExistingCaseDirectory
         ( nIndex, std::string( directory ), options );
 }
+
+/**
+ * \brief Set the CFD backend used by the momentum solver.
+ *
+ * \param army An opaque handle to a valid ninjaArmy.
+ * \param nIndex The run to apply the setting to.
+ * \param backend "openfoam" or "webgpu".
+ *
+ * \return NINJA_SUCCESS on success, NINJA_E_INVALID if the backend is unknown
+ *         or not available in this build, NINJA_E_NULL_PTR on a NULL argument.
+ */
+WINDNINJADLL_EXPORT NinjaErr NinjaSetMomentumBackend(NinjaArmyH * army, const int nIndex, const char * backend, char ** options)
+{
+    if( NULL == army || NULL == backend )
+    {
+        return NINJA_E_NULL_PTR;
+    }
+
+    return reinterpret_cast<ninjaArmy*>( army )->setMomentumBackend
+        ( nIndex, std::string( backend ), options );
+}
+
+/**
+ * \brief Get the name of the CFD backend used by the momentum solver.
+ *
+ * \param army An opaque handle to a valid ninjaArmy.
+ * \param nIndex The run to query.
+ *
+ * \return A newly allocated string the caller must free, or NULL if army is
+ *         NULL.  Empty for an invalid index.
+ */
+WINDNINJADLL_EXPORT const char * NinjaGetMomentumBackend(NinjaArmyH * army, const int nIndex, char ** options)
+{
+    if( NULL == army )
+    {
+        return NULL;
+    }
+
+    return strdup( reinterpret_cast<ninjaArmy*>( army )->getMomentumBackendString( nIndex ).c_str() );
+}
 #endif //NINJAFOAM
 
 /*-----------------------------------------------------------------------------

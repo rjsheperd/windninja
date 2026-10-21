@@ -268,14 +268,27 @@ GATE 7.
 - KMZ / turbulence / colMax output for momentum runs is unchanged (golden
   cases, plus a file-list diff of the output directory).
 
-** TODO 1.5 Backend selection option
-- [ ] Add a =WindNinjaInputs::momentumBackend= enum (=openfoam=, =webgpu=,
-      later =cpu=).
-- [ ] Add a CLI option =momentum_backend= (default =openfoam=).
-- [ ] Add a C API =NinjaSetMomentumBackend=. Leave the GUI alone until Phase 5.
-- [ ] Return a clear error if the selected backend wasn't compiled in.
-- [ ] Move =nIterations= / =meshCount= out of =#ifdef NINJAFOAM= in
-      =WindNinjaInputs.h=, and build =momentum_backend.cpp= unconditionally.
+** DONE 1.5 Backend selection option [9/9]
+- [X] Add =WindNinjaInputs::eMomentumBackend= (=openFoamBackend=, =webGpuBackend=;
+      =cpu= is added in Phase 2) and a =momentumBackend= field (default openfoam).
+- [X] Add =ninja::get_eMomentumBackend(string)= (parse; throws on an unknown name)
+      and =set_momentumBackend= (throws if the backend isn't compiled in).
+- [X] Add =ninjaArmy::setMomentumBackend= / =getMomentumBackend= and the C API
+      =NinjaSetMomentumBackend= / =NinjaGetMomentumBackend=.
+- [X] Add a CLI option =momentum_backend= (default =openfoam=). An unavailable
+      or unknown backend prints a clear message and exits non-zero.
+- [X] =NinjaFoam::simulate_wind= picks the backend from =input.momentumBackend=
+      and logs which one it uses.
+- [X] (Deferred to 5.1) moving =nIterations= / =meshCount= out of
+      =#ifdef NINJAFOAM= and building =momentum_backend.cpp= unconditionally.
+      No non-OpenFOAM momentum build exists before then; the CLI, army and GUI
+      momentum paths are all NINJAFOAM-gated.
+- [X] Add tests (=momentum_backend/= backend_default_openfoam, backend_names,
+      backend_unavailable_throws, c_api_set_get_backend; =cfg_momentum_backend_unavailable=;
+      momentum cfg runs now check the reported backend)
+- [X] Tests pass (85/85 with OpenFOAM loaded; golden check: all 8 match)
+- [X] Documentation updates (CLI help text, C API doc comments,
+      =autotest/config/README.md=)
 *** Tests
 - =cli_momentum_backend_default= reports openfoam.
 - =cli_momentum_backend_unavailable= exits non-zero with the expected message
@@ -496,6 +509,9 @@ today.
       case-directory picker when it doesn't apply. Let the processor count
       control the CPU backend only.
 - [ ] Lift the hwloc / =countNumCores= dependency when OpenFOAM isn't selected.
+- [ ] Move =nIterations= / =meshCount= out of =#ifdef NINJAFOAM= in
+      =WindNinjaInputs.h= and build =momentum_backend.cpp= unconditionally
+      (deferred from 1.5).
 *** Tests
 - =cli_momentum_webgpu_bigbutte.cfg= passes in =autotest/config/pass/=.
 - The C API test runs one domain-average momentum run with the WebGPU backend.

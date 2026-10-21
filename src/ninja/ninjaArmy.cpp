@@ -1522,6 +1522,19 @@ int ninjaArmy::setWriteTurbulenceFlag( const int nIndex, const bool flag, char *
 {
     IF_VALID_INDEX_TRY( nIndex, ninjas, ninjas[ nIndex ]->set_writeTurbulenceFlag( flag ) );
 }
+int ninjaArmy::setMomentumBackend( const int nIndex, const std::string backend, char ** papszOptions )
+{
+    IF_VALID_INDEX_TRY( nIndex, ninjas,
+            ninjas[ nIndex ]->set_momentumBackend( ninja::get_eMomentumBackend( backend ) ) );
+}
+std::string ninjaArmy::getMomentumBackendString( const int nIndex, char ** papszOptions )
+{
+    IF_VALID_INDEX( nIndex, ninjas )
+    {
+        return ninja::get_momentumBackendName( ninjas[ nIndex ]->input.momentumBackend );
+    }
+    return "";
+}
 #endif
 /*-----------------------------------------------------------------------------
  *  Forecast Model Methods

@@ -338,6 +338,14 @@ if(NINJAFOAM)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/is_momentum_solver)
     add_test(momentum_backend_problem_from_inputs
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/problem_from_inputs)
+    add_test(momentum_backend_backend_default_openfoam
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_default_openfoam)
+    add_test(momentum_backend_backend_names
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_names)
+    add_test(momentum_backend_backend_unavailable_throws
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_unavailable_throws)
+    add_test(momentum_backend_c_api_set_get_backend
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/c_api_set_get_backend)
     add_test(stl_1
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=stl/stl_1)
     add_test(stl_2
@@ -422,5 +430,21 @@ elseif(RUN_CFG_TESTS AND NINJAFOAM)
                              ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data"
                              SKIP_RETURN_CODE 77)
     endforeach(cfgtest ${momentumtests})
+endif()
+
+# Asking for a momentum backend that isn't built in must fail cleanly, before
+# any solve (so it doesn't need OpenFOAM).
+if(RUN_CFG_TESTS AND NINJAFOAM)
+    set(testdir ${PROJECT_BINARY_DIR}/autotest/config/momentum_backend_unavailable)
+    file(MAKE_DIRECTORY ${testdir})
+    file(COPY ${PROJECT_SOURCE_DIR}/autotest/config/momentum_backend_unavailable.cfg
+              ${PROJECT_SOURCE_DIR}/data/big_butte_small.tif
+         DESTINATION ${testdir})
+    add_test(NAME cfg_momentum_backend_unavailable
+             COMMAND ${PROJECT_BINARY_DIR}/src/cli/WindNinja_cli momentum_backend_unavailable.cfg
+             WORKING_DIRECTORY ${testdir})
+    set_tests_properties(cfg_momentum_backend_unavailable PROPERTIES
+                         ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data"
+                         PASS_REGULAR_EXPRESSION "'momentum_backend' of webgpu is not valid or not available in this build")
 endif()
 

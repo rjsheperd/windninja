@@ -361,6 +361,7 @@ int windNinjaCLI(int argc, char* argv[])
                 #ifdef NINJAFOAM
                 ("existing_case_directory", po::value<std::string>(), "path to an existing OpenFOAM case directory")
                 ("momentum_flag", po::value<bool>()->default_value(false), "use momentum solver (true, false)")
+                ("momentum_backend", po::value<std::string>()->default_value("openfoam"), "CFD backend for the momentum solver (openfoam, webgpu)")
                 ("number_of_iterations", po::value<int>()->default_value(300), "number of iterations for momentum solver")
                 ("mesh_count", po::value<int>(), "number of cells in the mesh")
                 ("turbulence_output_flag", po::value<bool>()->default_value(false), "write turbulence output (true, false)")
@@ -1597,6 +1598,12 @@ int windNinjaCLI(int argc, char* argv[])
                 conflicting_options(vm, "mesh_choice", "mesh_resolution");
                 conflicting_options(vm, "mesh_choice", "existing_case_directory");
                 conflicting_options(vm, "mesh_resolution", "existing_case_directory");
+                if( windsim.setMomentumBackend( i_, vm["momentum_backend"].as<std::string>() ) != 0 ){
+                    cout << "'momentum_backend' of " << vm["momentum_backend"].as<std::string>()
+                        << " is not valid or not available in this build.\n" \
+                        << "Choices are: openfoam, webgpu.\n";
+                    return -1;
+                }
                 if(vm.count("number_of_iterations")){
                     windsim.setNumberOfIterations( i_, vm["number_of_iterations"].as<int>() );
                 }

@@ -73,6 +73,11 @@ public:
         fine
     };
 
+    enum eMomentumBackend{
+        openFoamBackend,
+        webGpuBackend
+    };
+
     enum ePDFBaseMap {
         TOPOFIRE,
         HILLSHADE
@@ -298,6 +303,7 @@ public:
     int nIterations; //number of iterations for a ninjafoam simulation
     int meshCount; //mesh count for a ninjafoam simulation
     eNinjafoamMeshChoice ninjafoamMeshChoice; // fine, medium, coarse
+    eMomentumBackend momentumBackend; //CFD solver used by the momentum solver
     std::string existingCaseDirectory; //path to exisitng case for a ninjafoam run
     std::string stlFile; //path/filename of an STL file
     AsciiGrid<double> foamVelocityGrid; //output velocity grid from ninjafoam

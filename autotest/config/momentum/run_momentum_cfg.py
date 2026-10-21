@@ -62,9 +62,16 @@ def main(cli, cfg_file):
     for stale in glob.glob("*_vel.asc") + glob.glob("*_ang.asc"):
         os.remove(stale)
 
-    rc = subprocess.call([cli, cfg_file])
-    if rc != 0:
-        print("WindNinja_cli exited with %d" % rc)
+    run = subprocess.run([cli, cfg_file], stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, universal_newlines=True)
+    print(run.stdout)
+    if run.returncode != 0:
+        print("WindNinja_cli exited with %d" % run.returncode)
+        return 1
+
+    backend = cfg_value(cfg_file, "momentum_backend") or "openfoam"
+    if "Momentum solver backend: %s" % backend not in run.stdout:
+        print("run did not report momentum solver backend %r" % backend)
         return 1
 
     speed = float(cfg_value(cfg_file, "input_speed"))

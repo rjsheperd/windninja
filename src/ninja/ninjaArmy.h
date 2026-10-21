@@ -371,6 +371,24 @@ public:
     int setExistingCaseDirectory( const int nIndex, const std::string directory, char ** papszOptions=NULL );
 
     /**
+    * \brief Set the CFD backend used by the momentum solver
+    *
+    * \param nIndex index of a ninja
+    * \param backend 'openfoam' or 'webgpu'
+    * \return errval Returns NINJA_SUCCESS upon success, NINJA_E_INVALID if the
+    *         backend is unknown or not available in this build
+    */
+    int setMomentumBackend( const int nIndex, const std::string backend, char ** papszOptions=NULL );
+
+    /**
+    * \brief Get the name of the CFD backend used by the momentum solver
+    *
+    * \param nIndex index of a ninja
+    * \return the backend name, or an empty string for an invalid index
+    */
+    std::string getMomentumBackendString( const int nIndex, char ** papszOptions=NULL );
+
+    /**
     * \brief Set the flag to write turbulence output from a NinjaFOAM run
     *
     * \param nIndex index of a ninja

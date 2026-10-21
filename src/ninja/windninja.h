@@ -264,6 +264,12 @@ typedef int  NinjaErr;
 
     WINDNINJADLL_EXPORT NinjaErr NinjaSetExistingCaseDirectory
         ( NinjaArmyH * army, const int nIndex, const char * directory, char ** options );
+
+    WINDNINJADLL_EXPORT NinjaErr NinjaSetMomentumBackend
+        ( NinjaArmyH * army, const int nIndex, const char * backend, char ** options );
+
+    WINDNINJADLL_EXPORT const char * NinjaGetMomentumBackend
+        ( NinjaArmyH * army, const int nIndex, char ** options );
 #endif //NINJAFOAM
 
     /*-----------------------------------------------------------------------------

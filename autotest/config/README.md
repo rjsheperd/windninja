@@ -29,6 +29,12 @@ the tests are not added), which runs `WindNinja_cli` and
 then checks the `*_vel.asc` and `*_ang.asc` output: no NaN or no-data values,
 speeds between 0 and 3 times `input_speed` (so set `output_speed_units` to
 match `input_speed_units`), and angles between 0 and 360.
+It also checks the run reported the expected backend ("Momentum solver
+backend: <name>", from `momentum_backend`, default `openfoam`).
+
+`momentum_backend_unavailable.cfg` asks for a backend that isn't built in
+(`webgpu`) and must be rejected with a clear message before any solve, so that
+test doesn't need OpenFOAM.
 
 The tests need an OpenFOAM environment (`source <openfoam>/etc/bashrc` before
 running `ctest`).  Without one (`WM_PROJECT_VERSION` unset) they are reported

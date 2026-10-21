@@ -280,6 +280,13 @@ bool NinjaFoam::simulate_wind()
     input.meshCount = atoi(CPLGetConfigOption("NINJAFOAM_MESH_COUNT", CPLSPrintf("%d",input.meshCount)));
     input.nIterations = atoi(CPLGetConfigOption("NINJAFOAM_ITERATIONS", CPLSPrintf("%d",input.nIterations)));
 
+    if(input.momentumBackend != WindNinjaInputs::openFoamBackend)
+    {
+        throw std::runtime_error("momentum backend '" + get_momentumBackendName(input.momentumBackend) +
+                                 "' is not available in this build of WindNinja");
+    }
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Momentum solver backend: %s",
+                        get_momentumBackendName(input.momentumBackend).c_str());
     OpenFoamBackend openFoam(*this);
     MomentumBackend &backend = openFoam;
     MomentumResult result;
