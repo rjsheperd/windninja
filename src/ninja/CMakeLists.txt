@@ -165,6 +165,11 @@ if(NINJAFOAM)
 endif(NINJAFOAM)
 
 
+# added before NINJA_INCLUDES so the GPU layer stays free of core includes
+if(WITH_WEBGPU)
+    add_subdirectory(gpu)
+endif(WITH_WEBGPU)
+
 include_directories(${NINJA_INCLUDES})
 
 if(WIN32)

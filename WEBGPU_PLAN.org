@@ -673,17 +673,38 @@ Rules: write host code against the C =webgpu.h= API (stable). Don't use
 - CI builds with =WITH_WEBGPU=ON= on Linux, macOS and Windows.
 - An Emscripten build of the 3.4 module links.
 
-** TODO 3.2 Device and buffer layer (=src/ninja/gpu/=)
-- [ ] Create an RAII wrapper for instance, adapter, device and queue. Request a
-      high-performance adapter, then fall back.
-- [ ] Create a storage buffer helper with upload and readback (staging buffer
+** DONE 3.2 Device and buffer layer (=src/ninja/gpu/=)
+- [X] Create an RAII wrapper for instance, adapter, device and queue. Request a
+      high-performance adapter, then fall back. (=gpu::Context= in
+      =src/ninja/gpu/gpu_context.h=; =gpu::Unavailable= when there is none.)
+- [X] Create a storage buffer helper with upload and readback (staging buffer
       plus =mapAsync=). Readback must be *asynchronous-capable*: a WASM module
       can't block on the GPU in a browser. The native host may wait
       (=wgpuInstanceWaitAny=); the browser build yields (Emscripten JSPI or
       Asyncify, or a step-and-callback loop). Design the solver host loop for
       both from the start.
-- [ ] Load WGSL from embedded strings (no runtime file lookup).
-- [ ] Turn device-lost and validation errors into C++ exceptions with messages.
+      Done as =gpu::Buffer= (storage or uniform). Every GPU wait goes through
+      =Context::wait()= (=wgpuInstanceWaitAny=, =WaitAnyOnly= callbacks), so
+      the browser build needs JSPI/Asyncify at that one point only; checked in
+      3.4. =download()= creates a staging buffer per call; 3.3 decides whether
+      to keep one.
+- [X] Load WGSL from embedded strings (no runtime file lookup):
+      =src/ninja/gpu/gpu_kernels.h=.
+- [X] Turn device-lost and validation errors into C++ exceptions with messages:
+      error scopes around buffer, shader and pipeline creation; uncaptured
+      errors and device loss are thrown from the next =Context::wait()=. WGSL
+      errors use the compilation info (=line L:C: message=).
+- [X] Build it as its own static library (=ninja_gpu=) that depends only on
+      Dawn, so the 3.4 WASM module can reuse it without WindNinja core.
+- [X] Add tests: =gpu/device_create=, =buffer_roundtrip=, =kernel_saxpy= and
+      =validation_error_throws= in =autotest/test_gpu.cpp=. Without an adapter
+      they print =SKIP: no WebGPU adapter=, which ctest's
+      =SKIP_REGULAR_EXPRESSION= reports as skipped (Boost.Test can't return
+      =SKIP_RETURN_CODE= per case).
+- [X] Tests pass: all five =gpu_*= tests pass on macOS arm64 (Apple M3 Max,
+      Metal), and so do the 34 =rans_= / =momentum_compare= / =foam_= tests.
+      Mutation check: a saxpy bound off by one fails (1.1e8 ulp).
+- [X] Documentation updates: =src/ninja/gpu/README.org= and header comments.
 *** Tests
 - =gpu_device_create=: get an adapter and device, or skip with
   =SKIP_RETURN_CODE= if none is available.

@@ -85,7 +85,7 @@ add_dependencies(test_main ninja)
 
 target_link_libraries(test_main ${LINK_LIBS})
 if(WITH_WEBGPU)
-    target_link_libraries(test_main dawn::webgpu_dawn)
+    target_link_libraries(test_main ninja_gpu)
 endif(WITH_WEBGPU)
 target_compile_definitions(test_main PRIVATE
                            WINDNINJA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -397,6 +397,14 @@ add_test(rans_solver_multigrid_matches_single_grid_turbulent
 if(WITH_WEBGPU)
     add_test(gpu_dawn_instance
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=gpu/dawn_instance)
+    foreach(gputest device_create buffer_roundtrip kernel_saxpy
+                    validation_error_throws)
+        add_test(gpu_${gputest}
+                 ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=gpu/${gputest})
+        # machines without a WebGPU adapter skip rather than fail
+        set_tests_properties(gpu_${gputest} PROPERTIES
+                             SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
+    endforeach(gputest)
 endif(WITH_WEBGPU)
 add_test(momentum_compare_identity
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/identity)

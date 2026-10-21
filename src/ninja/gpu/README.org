@@ -1,0 +1,29 @@
+#+TITLE: WebGPU layer (=ninja_gpu=)
+
+A thin RAII layer over the C =webgpu.h= API for the WebGPU momentum solver
+(see =WEBGPU_PLAN.org=, Phase 3). Natively it runs on Dawn; in a browser
+the same code builds with Emscripten's =emdawnwebgpu= port.
+
+* Contents
+- =gpu_context.h/.cpp= :: =gpu::Context= (instance, adapter, device, queue),
+  =gpu::Buffer= (storage or uniform buffer with upload and readback) and
+  =gpu::Kernel= (a WGSL compute pipeline with an automatic layout).
+- =gpu_kernels.h= :: WGSL sources embedded as strings.
+
+* Rules
+- It depends only on Dawn, not on WindNinja core (no GDAL, Boost or
+  =NINJA_INCLUDES=), so the solver-only WebAssembly module can reuse it.
+- Host code uses the C =webgpu.h= API, not Dawn's unstable =webgpu_cpp.h=.
+- Every wait on the GPU goes through =Context::wait()= (=wgpuInstanceWaitAny=).
+  Natively it blocks; a browser build needs Emscripten JSPI or Asyncify there.
+- Errors throw =gpu::Error=; no adapter or device throws =gpu::Unavailable=.
+  WGSL compile errors carry =line L:C:= positions.
+
+* Build and test
+#+begin_src sh
+scripts/fetch_dawn.sh /path/to/dawn      # prints the Dawn_DIR to use
+cmake -DWITH_WEBGPU=ON -DDawn_DIR=... <src>
+ctest -R '^gpu_'
+#+end_src
+On a machine without a WebGPU adapter the =gpu_*= tests print
+=SKIP: no WebGPU adapter= and ctest reports them as skipped.
