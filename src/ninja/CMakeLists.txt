@@ -40,6 +40,7 @@ set(NINJA_SOURCES air.cpp
                   rans_abl.cpp
                   rans_grid.cpp
                   rans_solver.cpp
+                  rans_wind.cpp
                   ascii_grid.cpp
                   Array2D.cpp
                   Aspect.cpp

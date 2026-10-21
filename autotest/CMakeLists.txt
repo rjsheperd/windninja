@@ -374,6 +374,10 @@ add_test(rans_solver_mms_laminar
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/mms_laminar)
 add_test(rans_solver_lid_cavity_re100
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/lid_cavity_re100)
+add_test(rans_solver_wind_direction_matches_ninjafoam
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/wind_direction_matches_ninjafoam)
+add_test(rans_solver_wind_inlets_match_ninjafoam
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/wind_inlets_match_ninjafoam)
 add_test(momentum_compare_identity
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/identity)
 add_test(momentum_compare_identity_golden_case

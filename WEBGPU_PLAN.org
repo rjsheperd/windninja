@@ -406,7 +406,7 @@ Method (CPU reference, simplest robust choices):
 - =rans_converges_residual=: the residuals fall 5 orders of magnitude within
   =TBD= iterations on the cavity.
 
-** IN-PROGRESS 2.3 RNG k-ε with atmospheric wall functions [4/10]
+** BLOCKED 2.3 RNG k-ε with atmospheric wall functions [6/10]
 Parity record (what OpenFOAM-11 WindNinja actually uses):
 - Inlet U: u* = U∞·0.41/ln(h_in/z0); U = u*/0.41·ln(AGL/z0).
 - Inlet k: u*²/√0.085 (RNG Cμ), constant with height.
@@ -441,11 +441,31 @@ Parity record (what OpenFOAM-11 WindNinja actually uses):
 - [X] Log-profile inlet boundary type for U, k, ε along the wind direction
       (=Boundary::logProfileInlet=; face height above ground from =RansGrid=
       =iAgl= / =jAgl=).
-- [ ] Log-law initialisation (=applyInit= equivalent) by wall distance.
-- [ ] Assign inlet and outlet sides by wind direction, as =SetInlets= does today.
+- [X] Log-law initialisation (=applyInit= equivalent) by wall distance
+      (=InitializeLogProfile= in =rans_wind=; k and ε from the inlet formulas).
+- [X] Assign inlet and outlet sides by wind direction, as =SetInlets= does today
+      (=IsWindInlet= / =ApplyWindBoundaries=; tests check every =SetInlets= case
+      and =ComputeDirection=).
 - [ ] Add tests
 - [ ] Tests pass
 - [ ] Documentation updates
+*** Flat-terrain findings (2026-10-21) — needs a decision
+Setup: flat 3 km fetch, wind from 270°, z0 0.01, 10 mph at 20 ft, 30 layers to
+1 km (first cell 2.3 m). It converges cleanly (8 orders, 5.6 s) but does *not*
+hold the log law:
+| C1             | U10 inlet / mid / outlet (÷ log law) | wall u* ÷ inlet u* | k₁ ÷ u*²/√Cμ |
+| 0.92 (WindNinja) | 1.029 / 0.966 / 0.970              | 0.81              | 2.0         |
+| 1.42 (textbook)  | 1.031 / 0.952 / 0.955              | 0.69              | 1.4         |
+- Hypothesis "WindNinja's C1 = 0.92 implies κ ≈ 0.51, so the κ = 0.41 inlet
+  isn't an equilibrium" was *refuted*: textbook C1 is worse.
+- The wall shear implies U ≈ 1.5 m/s at the 1.15 m wall cell (log law: 3.3).
+  Either a bug in the wall treatment, or known k-ε / wall-function behaviour
+  with a thin first cell (y ≈ 115 z0). Not distinguishable without a reference.
+- The planned 2% and 1% criteria assume k-ε holds a homogeneous ABL, which the
+  literature reports it generally doesn't (Richards & Hoxey 1993; Hargreaves &
+  Wright 2007). WindNinja's real first cells are also 59–286 m, not ~2 m.
+- Decisive check: parity with OpenFOAM on a flat case (2.4's golden
+  =flat_coarse_270=).
 *** Tests
 - =rans_flat_terrain_log_law=: over a flat DEM the profile stays log-law along
   the whole fetch (homogeneous ABL), with speed at 10 m AGL within 2% of

@@ -26,6 +26,8 @@
 
 #include "rans_grid.h"
 #include "rans_solver.h"
+#include "rans_abl.h"
+#include "rans_wind.h"
 
 #include <cmath>
 #include <vector>
@@ -305,6 +307,39 @@ BOOST_AUTO_TEST_CASE( lid_cavity_re100 )
     BOOST_TEST_MESSAGE("max |u - ghia| = " << eu << ", max |v - ghia| = " << ev);
     BOOST_CHECK_LE(eu, 0.02);
     BOOST_CHECK_LE(ev, 0.02);
+}
+
+BOOST_AUTO_TEST_CASE( wind_direction_matches_ninjafoam )
+{
+    // NinjaFoam::ComputeDirection: wind from 270 blows toward +x, from 0
+    // toward -y, from 225 toward (+x, +y) / sqrt(2)
+    double dx, dy;
+    WindDirectionVector(270.0, dx, dy);
+    BOOST_CHECK_CLOSE(dx, 1.0, 1e-9); BOOST_CHECK_SMALL(dy, 1e-12);
+    WindDirectionVector(0.0, dx, dy);
+    BOOST_CHECK_SMALL(dx, 1e-12); BOOST_CHECK_CLOSE(dy, -1.0, 1e-9);
+    WindDirectionVector(225.0, dx, dy);
+    BOOST_CHECK_CLOSE(dx, std::sqrt(0.5), 1e-9); BOOST_CHECK_CLOSE(dy, std::sqrt(0.5), 1e-9);
+}
+
+BOOST_AUTO_TEST_CASE( wind_inlets_match_ninjafoam )
+{
+    // NinjaFoam::SetInlets (west = xMin, east = xMax, south = yMin, north = yMax)
+    struct { double dir; bool west, east, south, north; } cases[] = {
+        {270.0, true, false, false, false}, {90.0, false, true, false, false},
+        {0.0, false, false, false, true}, {360.0, false, false, false, true},
+        {180.0, false, false, true, false}, {45.0, false, true, false, true},
+        {135.0, false, true, true, false}, {225.0, true, false, true, false},
+        {315.0, true, false, false, true}};
+    for(const auto &c : cases)
+    {
+        BOOST_CHECK_EQUAL(IsWindInlet(RansSolver::xMin, c.dir), c.west);
+        BOOST_CHECK_EQUAL(IsWindInlet(RansSolver::xMax, c.dir), c.east);
+        BOOST_CHECK_EQUAL(IsWindInlet(RansSolver::yMin, c.dir), c.south);
+        BOOST_CHECK_EQUAL(IsWindInlet(RansSolver::yMax, c.dir), c.north);
+        BOOST_CHECK(!IsWindInlet(RansSolver::zMin, c.dir));
+        BOOST_CHECK(!IsWindInlet(RansSolver::zMax, c.dir));
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
