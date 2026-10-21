@@ -103,8 +103,8 @@ void RansGrid::computeMetrics()
     size_t nI = (size_t)(nx + 1) * ny * nz;
     size_t nJ = (size_t)nx * (ny + 1) * nz;
     size_t nK = (size_t)nx * ny * (nz + 1);
-    for(std::vector<double> *v : {&iSx, &iSy, &iSz, &iFx, &iFy, &iFz}) v->resize(nI);
-    for(std::vector<double> *v : {&jSx, &jSy, &jSz, &jFx, &jFy, &jFz}) v->resize(nJ);
+    for(std::vector<double> *v : {&iSx, &iSy, &iSz, &iFx, &iFy, &iFz, &iAgl}) v->resize(nI);
+    for(std::vector<double> *v : {&jSx, &jSy, &jSz, &jFx, &jFy, &jFz, &jAgl}) v->resize(nJ);
     for(std::vector<double> *v : {&kSx, &kSy, &kSz, &kFx, &kFy, &kFz}) v->resize(nK);
 
     // corners are ordered so the area vector points along +i, +j or +k
@@ -116,6 +116,7 @@ void RansGrid::computeMetrics()
                 QuadAreaVector(*this, node(i, j, k), node(i, j + 1, k),
                                node(i, j + 1, k + 1), node(i, j, k + 1),
                                iSx[f], iSy[f], iSz[f], iFx[f], iFy[f], iFz[f]);
+                iAgl[f] = iFz[f] - 0.5 * (z[node(i, j, 0)] + z[node(i, j + 1, 0)]);
             }
     for(int k = 0; k < nz; k++)
         for(int j = 0; j <= ny; j++)
@@ -125,6 +126,7 @@ void RansGrid::computeMetrics()
                 QuadAreaVector(*this, node(i, j, k), node(i, j, k + 1),
                                node(i + 1, j, k + 1), node(i + 1, j, k),
                                jSx[f], jSy[f], jSz[f], jFx[f], jFy[f], jFz[f]);
+                jAgl[f] = jFz[f] - 0.5 * (z[node(i, j, 0)] + z[node(i + 1, j, 0)]);
             }
     for(int k = 0; k <= nz; k++)
         for(int j = 0; j < ny; j++)

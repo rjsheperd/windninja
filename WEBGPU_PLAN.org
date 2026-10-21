@@ -406,7 +406,7 @@ Method (CPU reference, simplest robust choices):
 - =rans_converges_residual=: the residuals fall 5 orders of magnitude within
   =TBD= iterations on the cavity.
 
-** IN-PROGRESS 2.3 RNG k-ε with atmospheric wall functions [1/10]
+** IN-PROGRESS 2.3 RNG k-ε with atmospheric wall functions [4/10]
 Parity record (what OpenFOAM-11 WindNinja actually uses):
 - Inlet U: u* = U∞·0.41/ln(h_in/z0); U = u*/0.41·ln(AGL/z0).
 - Inlet k: u*²/√0.085 (RNG Cμ), constant with height.
@@ -429,11 +429,18 @@ Parity record (what OpenFOAM-11 WindNinja actually uses):
 - [X] =rans_abl.{h,cpp}=: the inlet U, k, ε and rough-wall ν_t formulas as
       pure functions, with the parity constants above, plus =EpsilonWallFunction=
       and =WallYPlusLam=. Tests: =rans_abl/= (bc_port_matches_openfoam at 1e-10).
-- [ ] Momentum viscous terms with ν_eff = ν + ν_t, plus the ν_t (∇u)ᵀ term
-      (OpenFOAM's divDevSigma). Laminar results unchanged when ν_t = 0.
-- [ ] k and ε transport (RNG production, R term, effective diffusivities),
+- [X] Momentum viscous terms with ν_eff = ν + ν_t, plus the ν_t (∇u)ᵀ term
+      (OpenFOAM's divDevSigma). Laminar results unchanged when ν_t = 0: the MMS
+      orders and Ghia errors are digit-identical after the change.
+- [X] k and ε transport (RNG production, R term, effective diffusivities),
       with BCs per side (inlet profile, zero gradient, wall functions).
-- [ ] Log-profile inlet boundary type for U, k, ε along the wind direction.
+      First-order upwind convection; orthogonal diffusion (OpenFOAM: limited
+      0.5 correction); point-implicit sinks; ⅔ div U terms omitted (they vanish
+      at a converged incompressible state). Verified by the flat-terrain tests
+      below.
+- [X] Log-profile inlet boundary type for U, k, ε along the wind direction
+      (=Boundary::logProfileInlet=; face height above ground from =RansGrid=
+      =iAgl= / =jAgl=).
 - [ ] Log-law initialisation (=applyInit= equivalent) by wall distance.
 - [ ] Assign inlet and outlet sides by wind direction, as =SetInlets= does today.
 - [ ] Add tests

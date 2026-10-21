@@ -32,6 +32,15 @@
 
 #include "rans_grid.h"
 
+/* RNG k-epsilon coefficients, defaulting to WindNinja's momentumTransport.
+** (Outside RansSolver so it can be a default argument there.) */
+struct RansTurbulenceModel
+{
+    double cmu = 0.085, c1 = 0.92, c2 = 1.68;
+    double sigmaK = 0.7179, sigmaEpsilon = 0.7179;
+    double eta0 = 4.38, beta = 0.012;
+};
+
 /*
 ** Steady incompressible flow on a RansGrid by artificial compressibility:
 **
@@ -60,16 +69,25 @@ public:
             slip,            // no normal velocity, no shear
             velocityInlet,   // velocity = (u, v, w), pressure extrapolated
             pressureOutlet,  // pressure = p, velocity extrapolated
-            dirichlet        // everything from state (e.g. an exact solution)
+            dirichlet,       // everything from state (e.g. an exact solution)
+            logProfileInlet  // ABL log profile along direction (u, v, w),
+                             // with ustar and z0; k and epsilon to match
         };
         Type type;
         double p, u, v, w;
         StateFunction state;   // for dirichlet; local coordinates
+        // turbulence: inlet k and epsilon (velocityInlet), log-profile
+        // friction velocity, and wall roughness (a wall with z0 > 0 uses the
+        // rough-wall functions)
+        double k = 0.0, epsilon = 0.0, ustar = 0.0, z0 = 0.0;
     };
+
+    typedef RansTurbulenceModel TurbulenceModel;
 
     struct Residuals
     {
         double p, u, v, w;     // L2 norm over cells of the residual / volume
+        double k = 0.0, epsilon = 0.0;
     };
 
     RansSolver(const RansGrid &grid, double nu, double beta);
@@ -80,6 +98,11 @@ public:
     void setInitial(const StateFunction &state);
     void setUniform(double p, double u, double v, double w);
 
+    /* Solve RNG k-epsilon alongside the flow, starting from uniform k and
+    ** epsilon. */
+    void enableTurbulence(double k0, double epsilon0,
+                          const TurbulenceModel &model = TurbulenceModel());
+
     /* Take n pseudo-time steps; returns the residuals of the last step. */
     Residuals iterate(int n, double cfl);
     Residuals residuals();
@@ -87,6 +110,9 @@ public:
     const RansGrid &grid;
     double nu, beta;
     std::vector<double> p, u, v, w;      // per cell
+    bool turbulent = false;
+    TurbulenceModel model;
+    std::vector<double> k, epsilon, nut; // per cell (turbulent only)
 
 private:
     Boundary bc[6];
@@ -96,6 +122,12 @@ private:
     std::vector<double> gp[3], gu[3], gv[3], gw[3];
     // per-cell residual (flux out minus source) and inverse local time step
     std::vector<double> rp, ru, rv, rw, spectral;
+    // turbulence: flux residuals, and wall-function epsilon / G summed over a
+    // cell's rough-wall faces (nWall of them)
+    std::vector<double> rk, rEps, epsWall, gWall;
+    std::vector<int> nWall;
+
+    double production(int c, double &s2) const;
 
     void computeGradients();
     void computeResiduals();

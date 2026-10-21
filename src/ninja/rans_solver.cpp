@@ -26,6 +26,8 @@
 
 #include "rans_solver.h"
 
+#include "rans_abl.h"
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -33,7 +35,8 @@
 /*
 ** Visit every face once.  f(owner, neighbour, side, sx, sy, sz, fx, fy, fz)
 ** gets the area vector pointing out of owner; neighbour is -1 and side is the
-** block side for boundary faces, and side is -1 for interior faces.
+** block side for boundary faces, and side is -1 for interior faces.  agl is
+** the face centroid's height above the ground (side faces only; 0 on k faces).
 */
 template <typename F>
 static void ForEachFace(const RansGrid &g, F f)
@@ -45,11 +48,11 @@ static void ForEachFace(const RansGrid &g, F f)
                 int n = g.iFace(i, j, k);
                 double sx = g.iSx[n], sy = g.iSy[n], sz = g.iSz[n];
                 if(i == 0)
-                    f(g.cell(0, j, k), -1, RansSolver::xMin, -sx, -sy, -sz, g.iFx[n], g.iFy[n], g.iFz[n]);
+                    f(g.cell(0, j, k), -1, RansSolver::xMin, -sx, -sy, -sz, g.iFx[n], g.iFy[n], g.iFz[n], g.iAgl[n]);
                 else if(i == g.nx)
-                    f(g.cell(i - 1, j, k), -1, RansSolver::xMax, sx, sy, sz, g.iFx[n], g.iFy[n], g.iFz[n]);
+                    f(g.cell(i - 1, j, k), -1, RansSolver::xMax, sx, sy, sz, g.iFx[n], g.iFy[n], g.iFz[n], g.iAgl[n]);
                 else
-                    f(g.cell(i - 1, j, k), g.cell(i, j, k), -1, sx, sy, sz, g.iFx[n], g.iFy[n], g.iFz[n]);
+                    f(g.cell(i - 1, j, k), g.cell(i, j, k), -1, sx, sy, sz, g.iFx[n], g.iFy[n], g.iFz[n], g.iAgl[n]);
             }
     for(int k = 0; k < g.nz; k++)
         for(int j = 0; j <= g.ny; j++)
@@ -58,11 +61,11 @@ static void ForEachFace(const RansGrid &g, F f)
                 int n = g.jFace(i, j, k);
                 double sx = g.jSx[n], sy = g.jSy[n], sz = g.jSz[n];
                 if(j == 0)
-                    f(g.cell(i, 0, k), -1, RansSolver::yMin, -sx, -sy, -sz, g.jFx[n], g.jFy[n], g.jFz[n]);
+                    f(g.cell(i, 0, k), -1, RansSolver::yMin, -sx, -sy, -sz, g.jFx[n], g.jFy[n], g.jFz[n], g.jAgl[n]);
                 else if(j == g.ny)
-                    f(g.cell(i, j - 1, k), -1, RansSolver::yMax, sx, sy, sz, g.jFx[n], g.jFy[n], g.jFz[n]);
+                    f(g.cell(i, j - 1, k), -1, RansSolver::yMax, sx, sy, sz, g.jFx[n], g.jFy[n], g.jFz[n], g.jAgl[n]);
                 else
-                    f(g.cell(i, j - 1, k), g.cell(i, j, k), -1, sx, sy, sz, g.jFx[n], g.jFy[n], g.jFz[n]);
+                    f(g.cell(i, j - 1, k), g.cell(i, j, k), -1, sx, sy, sz, g.jFx[n], g.jFy[n], g.jFz[n], g.jAgl[n]);
             }
     for(int k = 0; k <= g.nz; k++)
         for(int j = 0; j < g.ny; j++)
@@ -71,11 +74,11 @@ static void ForEachFace(const RansGrid &g, F f)
                 int n = g.kFace(i, j, k);
                 double sx = g.kSx[n], sy = g.kSy[n], sz = g.kSz[n];
                 if(k == 0)
-                    f(g.cell(i, j, 0), -1, RansSolver::zMin, -sx, -sy, -sz, g.kFx[n], g.kFy[n], g.kFz[n]);
+                    f(g.cell(i, j, 0), -1, RansSolver::zMin, -sx, -sy, -sz, g.kFx[n], g.kFy[n], g.kFz[n], 0.0);
                 else if(k == g.nz)
-                    f(g.cell(i, j, k - 1), -1, RansSolver::zMax, sx, sy, sz, g.kFx[n], g.kFy[n], g.kFz[n]);
+                    f(g.cell(i, j, k - 1), -1, RansSolver::zMax, sx, sy, sz, g.kFx[n], g.kFy[n], g.kFz[n], 0.0);
                 else
-                    f(g.cell(i, j, k - 1), g.cell(i, j, k), -1, sx, sy, sz, g.kFx[n], g.kFy[n], g.kFz[n]);
+                    f(g.cell(i, j, k - 1), g.cell(i, j, k), -1, sx, sy, sz, g.kFx[n], g.kFy[n], g.kFz[n], 0.0);
             }
 }
 
@@ -113,6 +116,39 @@ void RansSolver::setInitial(const StateFunction &state)
         state(grid.cx[c], grid.cy[c], grid.cz[c], p[c], u[c], v[c], w[c]);
 }
 
+void RansSolver::enableTurbulence(double k0, double epsilon0, const TurbulenceModel &m)
+{
+    if(k0 <= 0.0 || epsilon0 <= 0.0)
+        throw std::invalid_argument("enableTurbulence needs k0 > 0 and epsilon0 > 0");
+    turbulent = true;
+    model = m;
+    size_t n = grid.nCells();
+    k.assign(n, k0);
+    epsilon.assign(n, epsilon0);
+    nut.assign(n, model.cmu * k0 * k0 / epsilon0);
+    for(std::vector<double> *a : {&rk, &rEps, &epsWall, &gWall})
+        a->assign(n, 0.0);
+    nWall.assign(n, 0);
+}
+
+/*
+** Turbulence production G = nut S2 in cell c, with
+** S2 = grad(u) : dev(2 symm(grad(u))) as in OpenFOAM's RNGkEpsilon.
+*/
+double RansSolver::production(int c, double &s2) const
+{
+    const std::vector<double> *gs[3] = {gu, gv, gw};
+    double sum = 0.0, trace = 0.0;
+    for(int i = 0; i < 3; i++)
+    {
+        trace += gs[i][i][c];
+        for(int j = 0; j < 3; j++)
+            sum += gs[i][j][c] * (gs[i][j][c] + gs[j][i][c]);
+    }
+    s2 = sum - 2.0 / 3.0 * trace * trace;
+    return nut[c] * s2;
+}
+
 void RansSolver::setUniform(double p0, double u0, double v0, double w0)
 {
     std::fill(p.begin(), p.end(), p0);
@@ -127,7 +163,7 @@ void RansSolver::setUniform(double p0, double u0, double v0, double w0)
 ** stress acts on it); otherwise the boundary carries no viscous flux.
 */
 static void BoundaryState(const RansSolver::Boundary &b, double nx, double ny, double nz,
-                          double fx, double fy, double fz,
+                          double fx, double fy, double fz, double agl,
                           double pc, double uc, double vc, double wc,
                           double &pb, double &ub, double &vb, double &wb, bool &fixedVelocity)
 {
@@ -153,6 +189,37 @@ static void BoundaryState(const RansSolver::Boundary &b, double nx, double ny, d
             b.state(fx, fy, fz, pb, ub, vb, wb);
             fixedVelocity = true;
             break;
+        case RansSolver::Boundary::logProfileInlet:
+        {
+            double speed = AblInletVelocity(b.ustar, agl, b.z0);
+            pb = pc; ub = speed * b.u; vb = speed * b.v; wb = speed * b.w;
+            fixedVelocity = true;
+            break;
+        }
+    }
+}
+
+/*
+** k and epsilon on a boundary face.  fixed says whether the value is
+** prescribed (diffusive flux into the cell) or zero-gradient.  Walls are
+** zero-gradient here: the wall functions act on the wall cells instead.
+*/
+static void BoundaryTurbulence(const RansSolver::Boundary &b, double agl,
+                               double kc, double ec, double &kb, double &eb, bool &fixed)
+{
+    switch(b.type)
+    {
+        case RansSolver::Boundary::velocityInlet:
+            kb = b.k; eb = b.epsilon; fixed = true;
+            break;
+        case RansSolver::Boundary::logProfileInlet:
+            kb = AblInletK(b.ustar);
+            eb = AblInletEpsilon(b.ustar, agl, b.z0);
+            fixed = true;
+            break;
+        default:
+            kb = kc; eb = ec; fixed = false;
+            break;
     }
 }
 
@@ -164,7 +231,7 @@ void RansSolver::computeGradients()
 
     const RansGrid &g = grid;
     ForEachFace(g, [&](int o, int nb, int side, double sx, double sy, double sz,
-                       double fx, double fy, double fz)
+                       double fx, double fy, double fz, double agl)
     {
         double S[3] = {sx, sy, sz};
         double fp, fu, fv, fw;
@@ -183,7 +250,7 @@ void RansSolver::computeGradients()
         {
             double area = std::sqrt(sx * sx + sy * sy + sz * sz);
             bool fixed;
-            BoundaryState(bc[side], sx / area, sy / area, sz / area, fx, fy, fz,
+            BoundaryState(bc[side], sx / area, sy / area, sz / area, fx, fy, fz, agl,
                           p[o], u[o], v[o], w[o], fp, fu, fv, fw, fixed);
         }
         for(int d = 0; d < 3; d++)
@@ -224,15 +291,28 @@ void RansSolver::computeResiduals()
     std::fill(rv.begin(), rv.end(), 0.0);
     std::fill(rw.begin(), rw.end(), 0.0);
     std::fill(spectral.begin(), spectral.end(), 0.0);
+    if(turbulent)
+    {
+        std::fill(rk.begin(), rk.end(), 0.0);
+        std::fill(rEps.begin(), rEps.end(), 0.0);
+        std::fill(epsWall.begin(), epsWall.end(), 0.0);
+        std::fill(gWall.begin(), gWall.end(), 0.0);
+        std::fill(nWall.begin(), nWall.end(), 0);
+    }
+    const double sigmaMin = std::min(model.sigmaK, model.sigmaEpsilon);
 
     ForEachFace(g, [&](int o, int nb, int side, double sx, double sy, double sz,
-                       double fx, double fy, double fz)
+                       double fx, double fy, double fz, double agl)
     {
         double area2 = sx * sx + sy * sy + sz * sz;
         double area = std::sqrt(area2);
         double f[4];
         double gradU[3][3];   // face velocity gradient: [component][direction]
         bool viscous = true;
+        // turbulence at the face: eddy viscosity, centroid distance and S.e
+        // for orthogonal diffusion, and boundary k / epsilon
+        double nutF = 0.0, dist = 0.0, sDotE = 0.0, kb = 0.0, eb = 0.0;
+        bool fixedTurb = false;
 
         if(nb >= 0)
         {
@@ -276,12 +356,21 @@ void RansSolver::computeResiduals()
             }
             spectral[o] += 0.5 * lambda + nu * area2 / (d * area);
             spectral[nb] += 0.5 * lambda + nu * area2 / (d * area);
+            if(turbulent)
+            {
+                dist = d;
+                sDotE = sx * ex + sy * ey + sz * ez;
+                nutF = 0.5 * (nut[o] + nut[nb]);
+                double extra = nutF / sigmaMin * area2 / (d * area);
+                spectral[o] += extra;
+                spectral[nb] += extra;
+            }
         }
         else
         {
             double pb, ub, vb, wb;
             bool fixedVelocity;
-            BoundaryState(bc[side], sx / area, sy / area, sz / area, fx, fy, fz,
+            BoundaryState(bc[side], sx / area, sy / area, sz / area, fx, fy, fz, agl,
                           p[o], u[o], v[o], w[o], pb, ub, vb, wb, fixedVelocity);
             double Ub = ub * sx + vb * sy + wb * sz;
             double lambda = std::fabs(Ub) + std::sqrt(Ub * Ub + beta * area2);
@@ -328,13 +417,74 @@ void RansSolver::computeResiduals()
                 gradU[m][2] = a[2] + corr * ez;
             }
             spectral[o] += 0.5 * lambda + (viscous ? nu * area2 / (d * area) : 0.0);
+            if(turbulent)
+            {
+                dist = d;
+                sDotE = sx * ex + sy * ey + sz * ez;
+                nutF = nut[o];
+                if(bc[side].type == Boundary::wall && bc[side].z0 > 0.0)
+                {
+                    // rough-wall functions on the wall cell; y is the cell
+                    // centre's normal distance from the wall
+                    double y = std::fabs((g.cx[o] - fx) * sx + (g.cy[o] - fy) * sy +
+                                         (g.cz[o] - fz) * sz) / area;
+                    nutF = std::max(0.0, RoughWallNut(nu, k[o], y, bc[side].z0));
+                    double du = std::sqrt((u[o] - ub) * (u[o] - ub) + (v[o] - vb) * (v[o] - vb) +
+                                          (w[o] - wb) * (w[o] - wb));
+                    double eW, gW;
+                    EpsilonWallFunction(nu, nutF, k[o], y, du / y, eW, gW);
+                    epsWall[o] += eW;
+                    gWall[o] += gW;
+                    nWall[o]++;
+                }
+                BoundaryTurbulence(bc[side], agl, k[o], epsilon[o], kb, eb, fixedTurb);
+                if(viscous || fixedTurb)
+                    spectral[o] += nutF / sigmaMin * area2 / (d * area);
+            }
         }
 
-        if(viscous)
+        if(viscous && !turbulent)
         {
             f[1] -= nu * (gradU[0][0] * sx + gradU[0][1] * sy + gradU[0][2] * sz);
             f[2] -= nu * (gradU[1][0] * sx + gradU[1][1] * sy + gradU[1][2] * sz);
             f[3] -= nu * (gradU[2][0] * sx + gradU[2][1] * sy + gradU[2][2] * sz);
+        }
+        else if(viscous)
+        {
+            // nu_eff grad(u).S plus nu_t grad(u)^T.S (OpenFOAM's divDevSigma;
+            // the trace part vanishes for incompressible flow)
+            double nuEff = nu + nutF;
+            for(int m = 0; m < 3; m++)
+                f[1 + m] -= nuEff * (gradU[m][0] * sx + gradU[m][1] * sy + gradU[m][2] * sz) +
+                            nutF * (gradU[0][m] * sx + gradU[1][m] * sy + gradU[2][m] * sz);
+        }
+
+        if(turbulent)
+        {
+            // k and epsilon: first-order upwind convection on the face mass
+            // flux (as WindNinja's fvSchemes), orthogonal diffusion
+            double F = f[0] / beta;
+            double Dk = nu + nutF / model.sigmaK, De = nu + nutF / model.sigmaEpsilon;
+            if(nb >= 0)
+            {
+                double fk = F * (F > 0 ? k[o] : k[nb]) - Dk * (k[nb] - k[o]) / dist * sDotE;
+                double fe = F * (F > 0 ? epsilon[o] : epsilon[nb]) -
+                            De * (epsilon[nb] - epsilon[o]) / dist * sDotE;
+                rk[o] += fk; rk[nb] -= fk;
+                rEps[o] += fe; rEps[nb] -= fe;
+            }
+            else
+            {
+                double fk = F * (F > 0 ? k[o] : kb);
+                double fe = F * (F > 0 ? epsilon[o] : eb);
+                if(fixedTurb)
+                {
+                    fk -= Dk * (kb - k[o]) / dist * sDotE;
+                    fe -= De * (eb - epsilon[o]) / dist * sDotE;
+                }
+                rk[o] += fk;
+                rEps[o] += fe;
+            }
         }
 
         rp[o] += f[0]; ru[o] += f[1]; rv[o] += f[2]; rw[o] += f[3];
@@ -390,14 +540,48 @@ RansSolver::Residuals RansSolver::iterate(int n, double cfl)
         computeGradients();
         computeResiduals();
         r = norms();
+        double sumK = 0.0, sumE = 0.0;
         for(int c = 0; c < grid.nCells(); c++)
         {
             // local pseudo time step: dtau / V = cfl / spectral radius
-            double k = cfl / spectral[c];
-            p[c] -= k * rp[c];
-            u[c] -= k * ru[c];
-            v[c] -= k * rv[c];
-            w[c] -= k * rw[c];
+            double dt = cfl / spectral[c];
+            if(turbulent)
+            {
+                // point-implicit sinks (as fvm::Sp), so k and epsilon stay
+                // positive; wall cells take G and epsilon from the wall
+                // functions
+                double s2, G = production(c, s2);
+                if(nWall[c] > 0) G = gWall[c] / nWall[c];
+                double V = grid.volume[c], kc = k[c], ec = epsilon[c];
+                double eta = std::sqrt(std::fabs(s2)) * kc / ec;
+                double R = eta * (1.0 - eta / model.eta0) / (model.beta * eta * eta * eta + 1.0);
+                double kSrc = G - ec;
+                double eSrc = (model.c1 - R) * G * ec / kc - model.c2 * ec * ec / kc;
+                double kn = (kc - dt * rk[c] + dt * V * G) / (1.0 + dt * V * ec / kc);
+                double en = (ec - dt * rEps[c] + dt * V * (model.c1 - R) * G * ec / kc) /
+                            (1.0 + dt * V * model.c2 * ec / kc);
+                double resK = rk[c] / V - kSrc, resE = rEps[c] / V - eSrc;
+                if(nWall[c] > 0)
+                {
+                    en = epsWall[c] / nWall[c];
+                    resE = 0.0;
+                }
+                sumK += resK * resK;
+                sumE += resE * resE;
+                k[c] = std::max(kn, 1e-12);
+                epsilon[c] = std::max(en, 1e-12);
+            }
+            p[c] -= dt * rp[c];
+            u[c] -= dt * ru[c];
+            v[c] -= dt * rv[c];
+            w[c] -= dt * rw[c];
+        }
+        if(turbulent)
+        {
+            for(int c = 0; c < grid.nCells(); c++)
+                nut[c] = model.cmu * k[c] * k[c] / epsilon[c];
+            r.k = std::sqrt(sumK / grid.nCells());
+            r.epsilon = std::sqrt(sumE / grid.nCells());
         }
     }
     return r;

@@ -72,6 +72,9 @@ public:
     std::vector<double> iSx, iSy, iSz, iFx, iFy, iFz;   // (nx+1) * ny * nz
     std::vector<double> jSx, jSy, jSz, jFx, jFy, jFz;   // nx * (ny+1) * nz
     std::vector<double> kSx, kSy, kSz, kFx, kFy, kFz;   // nx * ny * (nz+1)
+    // height of i and j face centroids above the ground below them (for
+    // log-profile inlets on the sides)
+    std::vector<double> iAgl, jAgl;
 
     int node(int i, int j, int k) const { return i + (nx + 1) * (j + (ny + 1) * k); }
     int cell(int i, int j, int k) const { return i + nx * (j + ny * k); }
