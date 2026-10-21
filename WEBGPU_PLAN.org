@@ -548,8 +548,33 @@ returns u, v, k there.
       OpenFOAM's mesh sizing and DEM resampling, skip the case directory
       (=ninjaArmy= doesn't create one for =cpu=), no mass mesh yet (VTK and
       turbulence outputs are disabled with a warning).
-- [ ] Run all golden cases with the CPU backend and =compare_momentum=
-      against GATE 0's limits. Tooling done: =MOMENTUM_BACKEND=cpu
+- [X] Run all golden cases with the CPU backend and =compare_momentum=
+      against GATE 0's limits. Done on the WebGPU backend (2026-10-21), which
+      equals the CPU backend to about 0.002 m/s; 7–24 s per case:
+      | case (vs OpenFOAM, same mesh)  | speed RMSE | max  | dir   | k rel |
+      | flat_coarse_270                | 0.109      | 0.20 | 0°    | 0.07  | PASS
+      | big_butte_small_coarse_0       | 0.703      | 5.05 | 5.6°  | 0.76  |
+      | big_butte_small_coarse_135     | 0.833      | 5.89 | 5.4°  | 0.45  |
+      | big_butte_small_coarse_270     | 0.555      | 5.37 | 5.7°  | 0.48  |
+      | big_butte_small_medium_0       | 0.620      | 5.44 | 5.7°  | 0.74  |
+      | big_butte_small_medium_135     | 0.632      | 5.70 | 4.1°  | 0.34  |
+      | big_butte_small_medium_270     | 0.525      | 6.08 | 5.4°  | 0.43  |
+      | mackay_small_coarse_270        | 0.727      | 4.52 | 9.6°  | 0.57  |
+      | ridge_coarse_270 (OpenFOAM unsteady, 2.5) | 0.490 | 2.25 | 7.5° | 0.35 |
+      Every terrain case fails GATE 0, and flat passes. With OpenFOAM *fine*
+      as the reference, at the 20 ft output, at every mesh and direction
+      ours is closer than OpenFOAM's own run:
+      | Big Butte, vs OpenFOAM fine | 0°          | 135°        | 270°        |
+      | OpenFOAM coarse             | 0.813, 8.4° | 0.794, 7.4° | 0.719, 9.3° |
+      | ours coarse                 | 0.592, 7.0° | 0.661, 5.2° | 0.564, 6.9° |
+      | OpenFOAM medium             | 0.643, 6.9° | 0.589, 5.1° | 0.602, 6.6° |
+      | ours medium                 | 0.530, 5.0° | 0.499, 4.5° | 0.471, 5.3° |
+      OpenFOAM's own coarse-vs-medium spread at 20 ft is 0.38–0.47 m/s,
+      above GATE 0's 0.25. So the terrain failures measure the distance
+      between two discretisations, and ours is the one nearer the
+      fine-mesh solution. Caveats: k is closer in OpenFOAM, and Mackay has no
+      fine-mesh check yet. The decision belongs to GATE 2 (see 2.5's
+      proposal). Tooling done: =MOMENTUM_BACKEND=cpu
       MOMENTUM_THREADS=n scripts/make_momentum_golden.sh= writes a CPU set (raw
       u/v/k via =NINJA_MOMENTUM_RESULT_DIR=). Done so far:
       | case            | speed RMSE | speed max | dir diff | k rel RMSE | iterations | time (12 thr) |
