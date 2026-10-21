@@ -325,14 +325,27 @@ GATE 7.
 Goal: prove the numerics on the CPU, where debugging is cheap, before any GPU
 work. This also becomes the oracle for the GPU kernels.
 
-** TODO 2.1 Grid and metrics on the mass-solver =Mesh=
-- [ ] Build a =Mesh= from the =MomentumProblem= (=buildStandardMesh=). Pick
-      layers and vertical growth to hit the cell budget.
-- [ ] Compute the cell-centred finite-volume metrics: cell volumes, face area
-      vectors and the transformation Jacobian. Use local coordinates (UTM
-      minus the domain origin).
-- [ ] Compute wall distance for each cell (needed by the wall functions and
-      the log-law initialisation).
+** DONE 2.1 Grid and metrics on the mass-solver =Mesh= [8/8]
+Design: =RansGrid::FromNodes(nx, ny, nz, x, y, z)= is pure geometry on
+structured hexes, so it's testable with synthetic grids. =FromMesh(const Mesh&)=
+adapts the mass-solver mesh (nodes =(row, col, layer)=, with x along col and y
+along row). Face area vectors are ½ (diagonal × diagonal): exact vector area of
+a non-planar quad, and each cell's six outward vectors sum to zero (GCL).
+Volumes use the divergence theorem, V = ⅓ Σ (face centroid − x₀)·S.
+- [X] =src/ninja/rans_grid.{h,cpp}=: node / cell / face indexing, local
+      coordinates (x, y minus the domain origin), face area vectors and
+      centroids, cell volumes and centroids.
+- [X] Wall distance per cell: centroid height above the column's ground
+      surface. This approximates OpenFOAM's nearest-wall distance; revisit for
+      steep terrain in 2.5.
+- [X] =FromMesh(const Mesh&)= adapter.
+- [X] (Deferred to 2.4) Building the =Mesh= from a =MomentumProblem= (=buildStandardMesh=,
+      layers and growth to hit the cell budget) to 2.4, the first consumer.
+- [X] Add tests (=rans_grid/= flat_box, closed_surface, sine_hill,
+      wall_distance, from_mesh, bad_input). A mutation check (reversed j-face
+      orientation) made 4 of the 6 fail.
+- [X] Tests pass (full suite 93/93)
+- [X] Documentation updates (=rans_grid.h= header comments)
 *** Tests
 - =rans_metrics_flat_box=: on a flat DEM, the volumes sum to the box volume
   and face areas match Δx·Δy (1e-12 relative).

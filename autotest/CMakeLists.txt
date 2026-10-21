@@ -49,6 +49,7 @@ set(TEST_SOURCES test_main.cpp
                  test_rmtree.cpp
                  momentum_compare.cpp
                  test_momentum_compare.cpp
+                 test_rans_grid.cpp
                  test_utm.cpp)
 if(WITH_LCP_CLIENT)
     set(TEST_SOURCES ${TEST_SOURCES} test_landfireclient.cpp)
@@ -347,6 +348,18 @@ if(NINJAFOAM)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=stl/stl_2)
 endif(NINJAFOAM)
 
+add_test(rans_grid_flat_box
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/flat_box)
+add_test(rans_grid_closed_surface
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/closed_surface)
+add_test(rans_grid_sine_hill
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/sine_hill)
+add_test(rans_grid_wall_distance
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/wall_distance)
+add_test(rans_grid_from_mesh
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/from_mesh)
+add_test(rans_grid_bad_input
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/bad_input)
 add_test(momentum_compare_identity
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/identity)
 add_test(momentum_compare_identity_golden_case

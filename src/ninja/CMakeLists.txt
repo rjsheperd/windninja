@@ -37,6 +37,7 @@ if(NINJAFOAM)
 endif(NINJAFOAM)
 
 set(NINJA_SOURCES air.cpp
+                  rans_grid.cpp
                   ascii_grid.cpp
                   Array2D.cpp
                   Aspect.cpp
