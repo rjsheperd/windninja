@@ -42,7 +42,8 @@ class CpuRansBackend : public MomentumBackend
 public:
     int layers = 20;            // cells in the vertical
     double growth = 1.1;        // layer growth above the first layer
-    int maxIterations = 20000;
+    int maxIterations = 5000;   // multigrid cycles
+    int multigridLevels = 6;    // including the fine grid; 1 = single grid
     double tolerance = 1e-5;    // residual drop, relative to each equation's peak
 
     virtual bool solve(const MomentumProblem &problem,

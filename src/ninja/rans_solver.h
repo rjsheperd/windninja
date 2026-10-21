@@ -57,6 +57,8 @@ struct RansTurbulenceModel
 */
 class RansSolver
 {
+    friend class RansMultigrid;
+
 public:
     enum Side { xMin, xMax, yMin, yMax, zMin, zMax };
 
@@ -117,6 +119,12 @@ public:
     bool turbulent = false;
     TurbulenceModel model;
     std::vector<double> k, epsilon, nut; // per cell (turbulent only)
+    // turbulent, but k, epsilon and nut are held fixed (multigrid coarse
+    // levels): they set the eddy viscosity and wall functions only
+    bool frozenTurbulence = false;
+    // per-cell forcing added to the integrated residuals (multigrid coarse
+    // levels); empty for none
+    std::vector<double> forceP, forceU, forceV, forceW;
 
 private:
     Boundary bc[6];

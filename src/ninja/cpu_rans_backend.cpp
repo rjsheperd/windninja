@@ -33,6 +33,7 @@
 
 #include "rans_abl.h"
 #include "rans_grid.h"
+#include "rans_multigrid.h"
 #include "rans_solver.h"
 #include "rans_wind.h"
 
@@ -113,19 +114,22 @@ bool CpuRansBackend::solve(const MomentumProblem &problem,
     RansSolver::Residuals peak, r;
     peak.p = peak.u = peak.v = peak.w = 0.0;
     double worst = 1.0;
+    // FAS multigrid V-cycles (each ~4 fine smoothing steps plus coarse work)
+    RansMultigrid mg(s, multigridLevels);
+    com->ninjaCom(ninjaComClass::ninjaNone, "CPU RANS multigrid: %d levels.", mg.levels());
     int it = 0;
     while(it < maxIterations && worst > tolerance)
     {
         checkCancel();
-        r = s.iterate(200, 0.5);
-        it += 200;
+        r = mg.cycle(0.5);
+        it += 1;
         peak.u = std::max(peak.u, std::max(r.u, r.v));
         peak.k = std::max(peak.k, r.k);
         worst = std::max(std::max(r.u, r.v) / peak.u, r.k / peak.k);
-        if(it % 2000 == 0)
-            com->ninjaCom(ninjaComClass::ninjaNone, "CPU RANS iteration %d, residual %g", it, worst);
+        if(it % 200 == 0)
+            com->ninjaCom(ninjaComClass::ninjaNone, "CPU RANS cycle %d, residual %g", it, worst);
     }
-    com->ninjaCom(ninjaComClass::ninjaNone, "CPU RANS stopped after %d iterations, residual %g.", it, worst);
+    com->ninjaCom(ninjaComClass::ninjaNone, "CPU RANS stopped after %d cycles, residual %g.", it, worst);
 
     // ground-cell values on the DEM grid, as OpenFOAM's 'cell' sampling
     result.u = *problem.dem;

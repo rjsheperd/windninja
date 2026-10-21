@@ -565,6 +565,42 @@ returns u, v, k there.
 - =momentum_cpu_no_nan=: no NaN or Inf on the steep case. If it diverges,
   report it as a solver failure; don't write output.
 
+** DONE 2.4b FAS multigrid for the CPU solver (user request, 2026-10-21) [8/8]
+Why: the explicit solver needs ~20,000 iterations on WindNinja-size grids
+(6 min on 12 threads for flat, vs OpenFOAM's ~20 s), and terrain converges ~10×
+slower still. Phase 4 planned multigrid only for the GPU.
+Design: FAS geometric multigrid around the explicit smoother. Coarse grids by
+node subsampling (keep the last node when a dimension is odd), each a full
+=RansGrid=, so BCs and log inlets work unchanged. State restricted
+volume-weighted, residuals summed over children, forcing
+F_c = Σ R_fine − R_c(I q), correction prolonged piecewise-constant. Turbulence
+(k, ε, ν_t) restricted and frozen on coarse levels; only the fine grid
+transports k and ε.
+- [X] =RansSolver=: per-cell forcing term; frozen-turbulence mode (ν_t and wall
+      functions from given k / ε, no k-ε transport); friend access for the
+      driver.
+- [X] =RansMultigrid= (=rans_multigrid.{h,cpp}=): level hierarchy, restriction,
+      prolongation, V-cycle. Two fixes found by measurement: (1) piecewise-
+      constant prolongation diverged on the cavity, so it's trilinear (¾ parent +
+      ¼ neighbour per direction); (2) the undamped correction then sat in a
+      limit cycle (residual frozen at 0.40), so the correction is damped (default
+      0.6; 0.5–0.6 fastest).
+- [X] =CpuRansBackend= uses multigrid (=multigridLevels=, default 6).
+- [X] Measure the iteration and time savings (cavity, flat parity, a terrain
+      case):
+      | case                        | single grid              | multigrid                         |
+      | cavity 32² (laminar)        | 14,500 its, 5.38 s       | 314 cycles, 0.99 s (5.4×)         |
+      | flat parity (2.2k cells)    | 1,100 its, 0.42 s        | 349 cycles, 1.07 s (slower: small, easy case) |
+      | hill 48×48×16 (turbulent)   | 14.7 s → u 1.7e-4, p 1.5e-3 | 18.6 s → u 5.6e-7, p 5.6e-6 (2–3 orders further) |
+      | Big Butte coarse (real DEM) | 20k its: rel 9.6e-5      | slow pseudo-time transient at any depth (3–5 levels); |
+      |                             |                          | coarse volumes all positive (bad-cell hypothesis refuted) |
+- [X] The multigrid solution equals the single-grid solution (same
+      discretization) to solver tolerance: cavity Ghia identical to 5 digits;
+      turbulent flat max relative u difference 2.5e-10.
+- [X] Add tests (=rans_solver/multigrid_cavity=, =multigrid_matches_single_grid_turbulent=)
+- [X] Tests pass (full suite 105/105)
+- [X] Documentation updates (=rans_multigrid.h= header; damping rationale)
+
 ** TODO 2.5 Robustness on steep terrain
 - [ ] Measure grid skew and aspect ratio (=Mesh::get_equiangle_skew= and
       =Mesh::get_aspect_ratio= already exist).

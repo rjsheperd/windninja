@@ -382,6 +382,10 @@ add_test(rans_solver_wind_inlets_match_ninjafoam
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/wind_inlets_match_ninjafoam)
 add_test(rans_solver_flat_terrain_parity_openfoam
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/flat_terrain_parity_openfoam)
+add_test(rans_solver_multigrid_cavity
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/multigrid_cavity)
+add_test(rans_solver_multigrid_matches_single_grid_turbulent
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/multigrid_matches_single_grid_turbulent)
 add_test(momentum_compare_identity
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/identity)
 add_test(momentum_compare_identity_golden_case

@@ -28,6 +28,7 @@
 #include "rans_solver.h"
 #include "rans_abl.h"
 #include "rans_wind.h"
+#include "rans_multigrid.h"
 
 #include <cmath>
 #include <vector>
@@ -395,6 +396,74 @@ BOOST_AUTO_TEST_CASE( flat_terrain_parity_openfoam )
         BOOST_TEST_MESSAGE("z=" << OF_FLAT_Z[kk] << " U/U_openfoam=" << ratio);
         BOOST_CHECK_SMALL(ratio - 1.0, 0.05);
     }
+}
+
+BOOST_AUTO_TEST_CASE( multigrid_cavity )
+{
+    // FAS multigrid reaches the single-grid cavity solution in far fewer
+    // fine-grid steps (measured: 314 cycles, ~0.99 s vs 14,500 iterations, 5.4 s)
+    const int n = 32;
+    RansGrid g = TerrainGrid(n, 1, n, 1.0, 1.0 / n, 1.0, 1.0, [](double, double) { return 0.0; });
+    RansSolver s = Cavity(g, 0.01);
+    RansMultigrid mg(s);
+    BOOST_CHECK_EQUAL(mg.levels(), 3);
+    RansSolver::Residuals peak = {0, 0, 0, 0}, r;
+    int cycles = 0;
+    double worst = 1.0;
+    while(cycles < 2000 && worst > 1e-6)
+    {
+        r = mg.cycle(0.8);
+        cycles++;
+        peak.u = std::max(peak.u, r.u); peak.w = std::max(peak.w, r.w); peak.p = std::max(peak.p, r.p);
+        worst = std::max(std::max(r.u / peak.u, r.w / peak.w), r.p / peak.p);
+    }
+    BOOST_TEST_MESSAGE("multigrid cavity: " << cycles << " cycles");
+    BOOST_CHECK_LE(cycles, 600);
+    double eu = 0.0, ev = 0.0;
+    for(const auto &row : GHIA_U) eu = std::max(eu, std::fabs(CavitySample(s.u, n, 0.5, row[0], 1.0) - row[1]));
+    for(const auto &row : GHIA_V) ev = std::max(ev, std::fabs(CavitySample(s.w, n, row[0], 0.5, 0.0) - row[1]));
+    // the same discrete solution as single grid (0.0056039 / 0.0063357)
+    BOOST_CHECK_CLOSE(eu, 0.0056039, 0.1);
+    BOOST_CHECK_CLOSE(ev, 0.0063357, 0.1);
+}
+
+BOOST_AUTO_TEST_CASE( multigrid_matches_single_grid_turbulent )
+{
+    // turbulent flat ABL (OpenFOAM-parity grid): multigrid with frozen
+    // coarse-level turbulence converges to the single-grid solution
+    std::vector<double> zf(1, 0.0);
+    for(int m = 0; m < 11; m++) zf.push_back(2 * OF_FLAT_Z[m] - zf.back());
+    const int nx = 100, ny = 2, nz = 11;
+    std::vector<double> x, y, z;
+    for(int kk = 0; kk <= nz; kk++)
+        for(int j = 0; j <= ny; j++)
+            for(int i = 0; i <= nx; i++)
+            { x.push_back(i * 59.0); y.push_back(j * 59.0); z.push_back(1000.0 + zf[kk]); }
+    RansGrid g = RansGrid::FromNodes(nx, ny, nz, x, y, z);
+    double ustar = AblFrictionVelocity(4.4704, 6.095999804928006, 0.01);
+    std::vector<double> u[2];
+    for(int mode = 0; mode < 2; mode++)
+    {
+        RansSolver s(g, 1.58946099535e-05, 25.0);
+        ApplyWindBoundaries(s, ustar, 0.01, 271.67);
+        InitializeLogProfile(s, ustar, 0.01, 271.67);
+        RansMultigrid mg(s);
+        RansSolver::Residuals peak = {0, 0, 0, 0}, r;
+        double worst = 1.0;
+        for(int step = 0; step < 5000 && worst > 1e-8; step++)
+        {
+            r = mode == 0 ? s.iterate(10, 0.5) : mg.cycle(0.5);
+            peak.u = std::max(peak.u, r.u); peak.k = std::max(peak.k, r.k);
+            worst = std::max(r.u / peak.u, r.k / peak.k);
+        }
+        BOOST_CHECK_LE(worst, 1e-8);
+        u[mode] = s.u;
+    }
+    double diff = 0.0;
+    for(size_t c = 0; c < u[0].size(); c++)
+        diff = std::max(diff, std::fabs(u[1][c] - u[0][c]) / std::fabs(u[0][c]));
+    BOOST_TEST_MESSAGE("max relative u difference, multigrid vs single grid: " << diff);
+    BOOST_CHECK_SMALL(diff, 1e-6);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

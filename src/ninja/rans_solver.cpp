@@ -492,7 +492,7 @@ void RansSolver::computeResiduals()
                             nutF * (gradU[0][m] * sx + gradU[1][m] * sy + gradU[2][m] * sz);
         }
 
-        if(turbulent)
+        if(turbulent && !frozenTurbulence)
         {
             // k and epsilon: first-order upwind convection on the face mass
             // flux (as WindNinja's fvSchemes), orthogonal diffusion
@@ -540,6 +540,18 @@ void RansSolver::computeResiduals()
             rw[c] -= s[3] * g.volume[c];
         }
     }
+
+    if(!forceP.empty())
+    {
+        #pragma omp parallel for schedule(static) num_threads(nThreads())
+        for(int c = 0; c < g.nCells(); c++)
+        {
+            rp[c] += forceP[c];
+            ru[c] += forceU[c];
+            rv[c] += forceV[c];
+            rw[c] += forceW[c];
+        }
+    }
 }
 
 RansSolver::Residuals RansSolver::norms() const
@@ -579,7 +591,7 @@ RansSolver::Residuals RansSolver::iterate(int n, double cfl)
         {
             // local pseudo time step: dtau / V = cfl / spectral radius
             double dt = cfl / spectral[c];
-            if(turbulent)
+            if(turbulent && !frozenTurbulence)
             {
                 // point-implicit sinks (as fvm::Sp), so k and epsilon stay
                 // positive; wall cells take G and epsilon from the wall
@@ -610,7 +622,7 @@ RansSolver::Residuals RansSolver::iterate(int n, double cfl)
             v[c] -= dt * rv[c];
             w[c] -= dt * rw[c];
         }
-        if(turbulent)
+        if(turbulent && !frozenTurbulence)
         {
             #pragma omp parallel for schedule(static) num_threads(nThreads())
             for(int c = 0; c < grid.nCells(); c++)
