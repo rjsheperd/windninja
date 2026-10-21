@@ -11,6 +11,12 @@
 #   scripts/fetch_dawn.sh <DEST_DIR>
 #   cmake -DWITH_WEBGPU=ON -DDawn_DIR=<printed path> ...
 #
+#   scripts/fetch_dawn.sh --wasm <DEST_DIR>
+#   emcmake cmake -DEMDAWNWEBGPU_PORT=<printed path> src/ninja/gpu/wasm
+#
+# --wasm fetches the matching emdawnwebgpu package (text only: webgpu.h and
+# the Emscripten port file) for the browser build instead.
+#
 # The package is verified against a pinned SHA-256 before it is extracted.
 
 set -e
@@ -18,11 +24,51 @@ set -e
 TAG=v20261016.190333
 REV=67d4d6e64b0755d638f76549794692badfdbc8ab
 
+WASM=0
+if [ "$1" = "--wasm" ]; then
+    WASM=1
+    shift
+fi
 if [ $# -ne 1 ]; then
-    echo "usage: $0 <DEST_DIR>" 1>&2
+    echo "usage: $0 [--wasm] <DEST_DIR>" 1>&2
     exit 2
 fi
 DEST="$1"
+
+sha256() {
+    if command -v shasum > /dev/null; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        sha256sum "$1" | cut -d' ' -f1
+    fi
+}
+
+if [ $WASM -eq 1 ]; then
+    NAME="emdawnwebgpu_pkg-$TAG"
+    SHA256=ead0f028c7ac4190713fee345c2ab79f4ca042b5d2f08dfd0e4465e915339be7
+    ARCHIVE="$DEST/$NAME.zip"
+    mkdir -p "$DEST"
+    if [ ! -f "$ARCHIVE" ]; then
+        echo "Downloading $NAME..."
+        curl -fsSL -o "$ARCHIVE" \
+            "https://github.com/google/dawn/releases/download/$TAG/$NAME.zip"
+    fi
+    ACTUAL="$(sha256 "$ARCHIVE")"
+    if [ "$ACTUAL" != "$SHA256" ]; then
+        echo "SHA-256 mismatch for $ARCHIVE" 1>&2
+        echo "  expected $SHA256" 1>&2
+        echo "  got      $ACTUAL" 1>&2
+        exit 1
+    fi
+    if [ ! -d "$DEST/$NAME" ]; then
+        mkdir -p "$DEST/$NAME"
+        unzip -q "$ARCHIVE" -d "$DEST/$NAME"
+    fi
+    echo "emdawnwebgpu $TAG is in $DEST/$NAME"
+    echo "Configure the WASM module with:" \
+         "-DEMDAWNWEBGPU_PORT=$DEST/$NAME/emdawnwebgpu_pkg/emdawnwebgpu.port.py"
+    exit 0
+fi
 
 case "$(uname -s)-$(uname -m)" in
     Darwin-arm64)
@@ -52,11 +98,7 @@ if [ ! -f "$ARCHIVE" ]; then
         "https://github.com/google/dawn/releases/download/$TAG/$NAME.tar.gz"
 fi
 
-if command -v shasum > /dev/null; then
-    ACTUAL="$(shasum -a 256 "$ARCHIVE" | cut -d' ' -f1)"
-else
-    ACTUAL="$(sha256sum "$ARCHIVE" | cut -d' ' -f1)"
-fi
+ACTUAL="$(sha256 "$ARCHIVE")"
 if [ "$ACTUAL" != "$SHA256" ]; then
     echo "SHA-256 mismatch for $ARCHIVE" 1>&2
     echo "  expected $SHA256" 1>&2

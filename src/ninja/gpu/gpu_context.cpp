@@ -174,9 +174,12 @@ void Context::open()
     WGPUAdapterInfo info = WGPU_ADAPTER_INFO_INIT;
     if(wgpuAdapterGetInfo(adapter_, &info) == WGPUStatus_Success)
     {
+        // browsers usually report only the vendor and architecture
         adapterName_ = str(info.device);
         if(adapterName_.empty())
             adapterName_ = str(info.description);
+        if(adapterName_.empty())
+            adapterName_ = str(info.vendor) + " " + str(info.architecture);
         wgpuAdapterInfoFreeMembers(info);
     }
 

@@ -1,0 +1,46 @@
+#+TITLE: WebGPU layer in the browser (WebAssembly)
+
+A standalone Emscripten project that builds the =ninja_gpu= sources
+(=../gpu_context.cpp=) with Dawn's emdawnwebgpu port, with nothing from
+WindNinja core. For now it holds one module, =saxpy_wasm=. It runs the
+embedded saxpy kernel, reads the result back, checks that a bad WGSL kernel
+throws with a line number, and prints =RESULT PASS=, =RESULT FAIL ...= or
+=RESULT SKIP ...=.
+
+* Build
+Needs Emscripten 4.0.10 or later (tested with 4.0.23).
+#+begin_src sh
+scripts/fetch_dawn.sh --wasm /path/to/emdawn      # prints EMDAWNWEBGPU_PORT
+emcmake cmake -S src/ninja/gpu/wasm -B build-wasm \
+    -DEMDAWNWEBGPU_PORT=<port.py> -DCMAKE_BUILD_TYPE=Release
+cmake --build build-wasm
+#+end_src
+The port is the local =emdawnwebgpu_pkg= from the same Dawn release as the
+native build (one pinned =webgpu.h=), not Emscripten's built-in remote port.
+
+=GPU_WASM_ASYNC= picks how =gpu::Context::wait()= blocks:
+- =JSPI= (default) :: smaller (56 KB JS + 73 KB wasm, Release), and needs
+  JSPI (Chrome 137+). Emscripten still calls it experimental. It uses
+  =-fwasm-exceptions=: JS-based exceptions add JS frames that JSPI can't
+  suspend through (=SuspendError: trying to suspend JS frames=).
+- =ASYNCIFY= :: any WebGPU browser, larger (64 KB JS + 125 KB wasm), with
+  =-fexceptions=.
+
+* Test
+#+begin_src sh
+src/ninja/gpu/wasm/run_browser_test.sh build-wasm
+#+end_src
+This serves the build directory, opens =index.html= in headless Chromium via
+[[https://github.com/Blockether/spel][spel]] with WebGPU enabled, and exits 0 on
+PASS, 1 on FAIL, or 77 on SKIP (spel missing, or no WebGPU). On macOS it
+passes =--use-angle=metal=; otherwise headless Chromium falls back to
+SwiftShader, which works but runs on the CPU.
+
+* Browser limits
+- By default only 128 MiB per storage-buffer binding and 256 MiB per buffer
+  are guaranteed. One float field of 10M cells is 40 MB, so 100k-cell meshes
+  fit easily; much larger grids need higher adapter limits requested at
+  device creation, or split fields.
+- WGSL has no f64. The solver must be single precision on the GPU (Phase 4
+  already plans for f32).
+- The page must be served over http(s), not =file://=.

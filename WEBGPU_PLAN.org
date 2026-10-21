@@ -667,8 +667,9 @@ Rules: write host code against the C =webgpu.h= API (stable). Don't use
 - [X] Add a CMake option =WITH_WEBGPU= (default OFF): =find_package(Dawn
       CONFIG)=, a =WITH_WEBGPU= define, and =test_main= linked to
       =dawn::webgpu_dawn=. The =gpu/dawn_instance= smoke test passes on macOS arm64.
-- [ ] Emscripten target for the solver-only module (3.4) via
-      =--use-port=emdawnwebgpu=.
+- [X] Emscripten target for the solver-only module (3.4): =src/ninja/gpu/wasm/=
+      with the local emdawnwebgpu port from the same Dawn release
+      (=scripts/fetch_dawn.sh --wasm=).
 *** Tests
 - CI builds with =WITH_WEBGPU=ON= on Linux, macOS and Windows.
 - An Emscripten build of the 3.4 module links.
@@ -764,24 +765,35 @@ Findings:
   than 10% of the estimated per-iteration CPU time, plan kernel fusion in
   Phase 4.
 
-** NEXT 3.4 Solver-only WebAssembly module
+** DONE 3.4 Solver-only WebAssembly module
 The browser target is the GPU solver alone, not WindNinja in WASM (GDAL,
 NetCDF and Boost make that a heavy port). =MomentumProblem= is already the
 boundary: a DEM grid and scalars in, u/v/k grids out. DEM loading stays in
 JavaScript, or a separate GDAL WASM build.
-- [ ] Keep the GPU solver code free of GDAL / WindNinja-core dependencies (a
-      library that takes plain arrays plus the problem scalars).
-- [ ] Emscripten build of a minimal module: device, the 3.2 saxpy kernel,
-      async readback, and a tiny JS harness page.
-- [ ] Note the browser limits: by default only 128 MiB per storage-buffer
+- [X] Keep the GPU solver code free of GDAL / WindNinja-core dependencies (a
+      library that takes plain arrays plus the problem scalars). =ninja_gpu=
+      builds unchanged with Emscripten; Phase 4's solver must stay the same.
+- [X] Emscripten build of a minimal module: device, the 3.2 saxpy kernel,
+      async readback, and a tiny JS harness page (=src/ninja/gpu/wasm/=).
+- [X] Note the browser limits: by default only 128 MiB per storage-buffer
       binding and 256 MiB per buffer are guaranteed, and there's no f64. 100k-cell
       meshes fit; larger grids need higher adapter limits or split fields.
-- [ ] Install Emscripten ≥ 4.0.10 (emsdk or Homebrew) and record the version.
-- [ ] Confirm =Context::wait()= works in the browser build (JSPI, with
-      Asyncify as the fallback for browsers without JSPI).
-- [ ] Add tests
-- [ ] Tests pass
-- [ ] Documentation updates
+      Recorded in =src/ninja/gpu/wasm/README.org=.
+- [X] Install Emscripten ≥ 4.0.10 (emsdk or Homebrew) and record the version:
+      4.0.23, from nix. Set =EM_CACHE= to a writable directory, because the
+      nix store is read-only.
+- [X] Confirm =Context::wait()= works in the browser build (JSPI, with
+      Asyncify as the fallback for browsers without JSPI). Both work, with no
+      host-code change, once JSPI uses =-fwasm-exceptions=. With
+      =-fexceptions=, JSPI fails with =SuspendError: trying to suspend JS
+      frames=, because JS exception trampolines sit on the stack. Release
+      sizes: JSPI 56 KB JS + 73 KB wasm, Asyncify 64 KB + 125 KB.
+- [X] Add tests: the module also checks that a bad WGSL kernel throws with a
+      line number, and =run_browser_test.sh= runs it headless (exit 0, 1 or 77).
+- [X] Tests pass: both variants report PASS in headless Chromium on the Apple
+      Metal adapter (saxpy 0 ulp; =line 3:19: unresolved value=). A build with
+      the =.wasm= removed reports FAIL. Native =gpu_*= tests still pass.
+- [X] Documentation updates: =src/ninja/gpu/wasm/README.org=.
 *** Tests
 - The module runs the saxpy kernel in a headless browser and its readback
   matches (e.g. via the =spel= / Playwright skill).

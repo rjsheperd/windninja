@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>WindNinja WebGPU saxpy</title>
+</head>
+<body>
+<!-- Harness for the 3.4 module: shows its output, and sets data-result on
+     <body> to PASS, FAIL or SKIP once main() reports. -->
+<pre id="out"></pre>
+<script>
+  // (Emscripten's generated JS defines globals named out and err)
+  var harnessOut = document.getElementById('out');
+  function show(line) {
+    harnessOut.textContent += line + '\n';
+    var m = /^RESULT (\w+)/.exec(line);
+    if (m) document.body.dataset.result = m[1];
+  }
+  var Module = {
+    print: show,
+    printErr: show,
+    onAbort: function (what) { show('RESULT FAIL abort: ' + what); }
+  };
+  window.addEventListener('error', function (e) {
+    show('RESULT FAIL ' + e.message);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    show('RESULT FAIL ' + e.reason);
+  });
+  if (!navigator.gpu) show('RESULT SKIP navigator.gpu is missing');
+</script>
+<script src="saxpy_wasm.js"></script>
+</body>
+</html>

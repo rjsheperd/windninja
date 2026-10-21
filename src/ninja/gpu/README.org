@@ -33,3 +33,7 @@ On a machine without a WebGPU adapter the =gpu_*= tests print
 and readback costs at 25k to 10M elements, plus the CPU solver per iteration
 at 100k cells. Results and what they mean for Phase 4 are in
 =WEBGPU_PLAN.org= task 3.3.
+
+* Browser build
+=wasm/= builds this layer for the browser with Emscripten; see
+=wasm/README.org=.
