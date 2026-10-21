@@ -899,12 +899,20 @@ N iterations only.
   localises any precision problem.
 
 ** NEXT 4.2 Kernels, one per solver stage
+Design: the CPU solver scatters each face's contribution to both cells
+(three race-free OpenMP passes). On the GPU that scatter would race, so each
+stage is a *face pass* (one thread per face, writing per-face values to a
+face buffer per direction) followed by a *cell gather* (one thread per cell,
+summing its six faces with signs). No atomics; results are deterministic.
 - [ ] Gradients / reconstruction.
 - [ ] Convective and diffusive fluxes.
 - [ ] Pseudo-compressibility update with local Δτ.
 - [ ] k-ε source terms and the wall-function cells.
 - [ ] Boundary conditions: inlet log profiles, outlets, top, ground.
 - [ ] Residual norms.
+- [ ] Add tests
+- [ ] Tests pass
+- [ ] Documentation updates
 *** Tests
 For each kernel, a =gpu_kernel_<stage>_matches_cpu= test:
 - run one stage on a random field on the Big Butte coarse mesh;
