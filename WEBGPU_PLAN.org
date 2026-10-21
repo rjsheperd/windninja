@@ -141,7 +141,11 @@ Big Butte coarse 0° vs 270° (speed RMSE 1.67 m/s, direction 80.2°, k rel RMSE
 - =momentum_compare_known_offset=: a +1 m/s shift gives RMSE 1. A 10°
   rotation gives a direction diff of 10° (including the 355° vs 5° wrap case).
 
-** TODO GATE 0: tolerances agreed
+** BLOCKED GATE 0: tolerances agreed
+Blocked (2026-10-20): needs (a) tolerance sign-off from the WindNinja science
+team and (b) a Linux OpenFOAM-11 run for the cross-platform noise floor. The
+same-machine noise floor is 0 (bitwise identical, 0.3). Phase 0 tooling is
+ready: =scripts/make_momentum_golden.sh= and =compare_momentum=.
 - [ ] Run =scripts/make_momentum_golden.sh= on Linux (Ubuntu 24.04, OpenFOAM-11)
       and compare it with the macOS set using the 0.4 tool. Record the
       differences here as the cross-platform noise floor (moved from 0.3).
