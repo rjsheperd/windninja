@@ -622,15 +622,31 @@ transports k and ε.
 - [X] Tests pass (full suite 105/105)
 - [X] Documentation updates (=rans_multigrid.h= header; damping rationale)
 
-** TODO 2.5 Robustness on steep terrain
+** NEXT 2.5 Robustness on steep terrain
+User decision (2026-10-21): with Phase 3 done, fix the Big Butte near-wall
+defect (2.4) here *before* Phase 4, so the GPU port copies settled numerics.
+- [ ] Find the near-wall defect: a CPU column on the butte has a stagnant
+      first ~100 m (0.98 vs 6.85 m/s) and k up to 3.5× OpenFOAM's (2.4).
+      Candidates: the wall function on sloped faces (wall distance and
+      tangential velocity relative to the face normal), wall-cell k production
+      (OpenFOAM's =nutkWallFunction= / =epsilonWallFunction= G and ε
+      overrides), and dissipation on sloped faces.
+- [ ] Cheap reproduction: a steep 2-D ridge, small enough to run in seconds
+      on the CPU and in OpenFOAM, which shows the same stagnant layer.
+- [ ] Fix it and re-run =big_butte_small_coarse_270= against GATE 0.
 - [ ] Measure grid skew and aspect ratio (=Mesh::get_equiangle_skew= and
       =Mesh::get_aspect_ratio= already exist).
 - [ ] Add mitigation options: vertical smoothing of the coordinate surfaces,
       CFL ramp-up, and DEM smoothing retry (parity with today's
       =SIMPLEFOAM_NTRIES=).
+- [ ] Add tests
+- [ ] Tests pass
+- [ ] Documentation updates
 *** Tests
 - =momentum_cpu_steep_converges=: the steep golden case converges without a
   retry, or with the same number of retries as OpenFOAM.
+- A unit test that pins the fixed near-wall behaviour on the reproduction
+  case.
 
 ** TODO GATE 2: go / no-go on the RANS approach
 - [ ] Replace GATE 0's provisional tolerances with team-signed-off ones.
@@ -647,7 +663,7 @@ Started 2026-10-21 by user decision, ahead of GATE 2: Phase 3 doesn't depend on
 the numerics. Phase 4 (the kernel port) waits until the 2.4 Big Butte
 question is settled or formally accepted.
 
-** IN-PROGRESS 3.1 Choose and vendor the runtime
+** DONE 3.1 Choose and vendor the runtime
 Decision (2026-10-21, user): *Dawn*. In a browser the page supplies WebGPU;
 C++ compiled with Emscripten reaches it through *emdawnwebgpu*, Dawn's
 maintained fork of Emscripten's original bindings (Emscripten ≥ 4.0.10:
@@ -670,9 +686,14 @@ Rules: write host code against the C =webgpu.h= API (stable). Don't use
 - [X] Emscripten target for the solver-only module (3.4): =src/ninja/gpu/wasm/=
       with the local emdawnwebgpu port from the same Dawn release
       (=scripts/fetch_dawn.sh --wasm=).
+- [-] CI: *deferred by user decision (2026-10-21)*. The repo's only test CI is
+      one Ubuntu job on pushes to master, with no macOS or Windows CI. Local
+      native builds and =run_browser_test.sh= cover it for now; revisit with
+      7.1 (distribution).
 *** Tests
-- CI builds with =WITH_WEBGPU=ON= on Linux, macOS and Windows.
-- An Emscripten build of the 3.4 module links.
+- CI builds with =WITH_WEBGPU=ON= on Linux, macOS and Windows. (Deferred,
+  see above.)
+- An Emscripten build of the 3.4 module links. (Done: 3.4.)
 
 ** DONE 3.2 Device and buffer layer (=src/ninja/gpu/=)
 - [X] Create an RAII wrapper for instance, adapter, device and queue. Request a
