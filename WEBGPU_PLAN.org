@@ -622,7 +622,10 @@ transports k and ε.
 - [X] Tests pass (full suite 105/105)
 - [X] Documentation updates (=rans_multigrid.h= header; damping rationale)
 
-** WAIT 2.5 Robustness on steep terrain
+** NEXT 2.5 Robustness on steep terrain
+Resumed 2026-10-21 (user): with the GPU backend reproducing the CPU to about
+0.002 m/s in about 10 s per case, investigate the steep-terrain gap with GPU
+runs (ridge_coarse_270 and big_butte_small_coarse_270 against OpenFOAM).
 User decision (2026-10-21): with Phase 3 done, fix the Big Butte near-wall
 defect (2.4) here *before* Phase 4, so the GPU port copies settled numerics.
 *Superseded later the same day (user):* get on with the WebGPU work and
@@ -649,6 +652,29 @@ resumes only if the GPU backend fails the golden cases the same way.
       boundary =snGrad= uses the normal distance y (=1/(n·d)=, no
       non-orthogonal correction). Off by (y/d)² on skewed wall cells; (b) the
       ν_t·∇Uᵀ·S term at sloped walls.
+- [X] GPU experiments (2026-10-21, about 25 s per variant on both cases, via
+      a temporary =NINJA_RANS_VARIANT= switch, since removed). Speed RMSE, m/s:
+      | variant                                         | ridge | Big Butte |
+      | baseline                                        | 0.490 | 0.555     |
+      | top outlet without backflow (OpenFOAM's zeroGradient U) | 0.490 | 0.555 |
+      | wall-face gradient along n with normal distance y | 0.486 | 0.555   |
+      | no ν_t ∇Uᵀ at boundary faces                    | 0.480 | 0.559     |
+      | all three                                       | 0.476 | 0.560     |
+      | β × 4 (converged)                               | 0.536 | 0.535     |
+      | β × 16 (not converged: residual 0.03 / 0.23)    | 0.582 | 0.522     |
+      Wall-face treatment and top outlet: *refuted* (under 3%). β: the
+      artificial-compressibility pressure dissipation does leak into the
+      steady answer, by about 5–10% with opposite signs on the two cases.
+      It's real but not the gap; note it for GATE 2.
+- [X] Is the OpenFOAM reference converged? WindNinja runs 300 simpleFoam
+      iterations (p residual about 4e-3). Re-run at 3,000 iterations:
+      - ridge: OpenFOAM itself moves *0.26 m/s RMSE* (max 0.85, 4.0°), and p
+        is still 1.9e-3. The separated lee never settles, so =ridge_coarse_270=
+        isn't a reliable steady reference (its own noise exceeds GATE 0). Keep
+        it as a robustness case, not a tolerance case.
+      - Big Butte: 300 and 3,000 iterations agree to 0.024 m/s. The reference
+        is solid, and the GPU/CPU gap (0.554) is real. *Big Butte is the
+        discriminating case.*
 - [X] Cheap reproduction: a steep 2-D ridge, small enough to run in seconds
       on the CPU and in OpenFOAM, which shows the same stagnant layer.
       Done as golden case =ridge_coarse_270= (=make_momentum_golden.sh=, with
