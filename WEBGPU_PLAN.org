@@ -904,7 +904,19 @@ Design: the CPU solver scatters each face's contribution to both cells
 stage is a *face pass* (one thread per face, writing per-face values to a
 face buffer per direction) followed by a *cell gather* (one thread per cell,
 summing its six faces with signs). No atomics; results are deterministic.
-- [ ] Gradients / reconstruction.
+- [X] Gradients (=gpu::RansSolver::computeGradients=,
+      =src/ninja/gpu/gpu_rans{.h,.cpp,_kernels.h}=). Green-Gauss as the CPU's
+      (inverse-distance face values; boundary states with the outlets'
+      extrapolated velocity). A cell's lower face always contributes −value·S
+      and its upper face +value·S, boundaries included, so the gather has no
+      special cases, and the face pass writes value·S, keeping the gather at 6
+      bindings. Test =gpu/kernel_gradients_matches_cpu=: a 40×12×10 ridge
+      grid at 1,000–2,600 m, wind from 280° (inlets W and N), smooth
+      non-trivial state. Max relative difference 9.6e-7 (tolerance 1e-5).
+      Mutation check: κ 0.41 → 0.40 in the log-profile inlet fails at 0.073.
+      The CPU solver gained public =computeGradients()=, =gradient()= and
+      =boundary()= for these tests.
+- [ ] Reconstruction (the flux stage's linear reconstruction to faces).
 - [ ] Convective and diffusive fluxes.
 - [ ] Pseudo-compressibility update with local Δτ.
 - [ ] k-ε source terms and the wall-function cells.

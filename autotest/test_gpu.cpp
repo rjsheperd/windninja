@@ -15,8 +15,12 @@
 #include "gpu_context.h"
 #include "gpu_grid.h"
 #include "gpu_kernels.h"
+#include "gpu_rans.h"
 #include "gpu_reduce.h"
+#include "rans_abl.h"
 #include "rans_grid.h"
+#include "rans_solver.h"
+#include "rans_wind.h"
 
 namespace {
 
@@ -53,6 +57,94 @@ uint32_t ulps(float a, float b)
 {
     uint32_t ua = bits(a), ub = bits(b);
     return ua > ub ? ua - ub : ub - ua;
+}
+
+gpu::GridView ViewOf(const RansGrid &g)
+{
+    gpu::GridView view;
+    view.nx = g.nx; view.ny = g.ny; view.nz = g.nz;
+    view.volume = g.volume.data();
+    view.cx = g.cx.data(); view.cy = g.cy.data(); view.cz = g.cz.data();
+    view.wallDistance = g.wallDistance.data();
+    const std::vector<double> *s[3][3] = {{&g.iSx, &g.iSy, &g.iSz},
+                                          {&g.jSx, &g.jSy, &g.jSz},
+                                          {&g.kSx, &g.kSy, &g.kSz}};
+    const std::vector<double> *f[3][3] = {{&g.iFx, &g.iFy, &g.iFz},
+                                          {&g.jFx, &g.jFy, &g.jFz},
+                                          {&g.kFx, &g.kFy, &g.kFz}};
+    for(int d = 0; d < 3; d++)
+        for(int m = 0; m < 3; m++)
+        {
+            view.s[d][m] = s[d][m]->data();
+            view.f[d][m] = f[d][m]->data();
+        }
+    view.agl[0] = g.iAgl.data();
+    view.agl[1] = g.jAgl.data();
+    return view;
+}
+
+// A terrain-following grid over a Gaussian ridge (first layer h1, geometric
+// growth), at a realistic elevation.
+RansGrid RidgeGrid(int nx, int ny, int nz)
+{
+    std::vector<double> x, y, z;
+    const double dx = 60.0, h1 = 20.0, growth = 1.15, top = 2600.0;
+    double total = 0.0, h = h1;
+    for(int m = 0; m < nz; m++) { total += h; h *= growth; }
+    for(int k = 0; k <= nz; k++)
+    {
+        double zk = 0.0;
+        h = h1;
+        for(int m = 0; m < k; m++) { zk += h; h *= growth; }
+        for(int j = 0; j <= ny; j++)
+            for(int i = 0; i <= nx; i++)
+            {
+                double px = i * dx, py = j * dx;
+                double r = (px - nx * dx / 2) / 400.0;
+                double gz = 1000.0 + 300.0 * std::exp(-r * r) + 0.02 * py;
+                x.push_back(px);
+                y.push_back(py);
+                z.push_back(gz + (top - gz) * zk / total);
+            }
+    }
+    return RansGrid::FromNodes(nx, ny, nz, x, y, z);
+}
+
+// Copies the CPU solver's boundaries (the wind setup's kinds) to the GPU.
+void CopyBoundaries(const RansSolver &cpu, gpu::RansSolver &g)
+{
+    for(int side = 0; side < 6; side++)
+    {
+        const RansSolver::Boundary &b = cpu.boundary(RansSolver::Side(side));
+        gpu::RansSolver::Boundary gb;
+        switch(b.type)
+        {
+            case RansSolver::Boundary::wall: gb.type = gpu::RansSolver::Boundary::wall; break;
+            case RansSolver::Boundary::slip: gb.type = gpu::RansSolver::Boundary::slip; break;
+            case RansSolver::Boundary::velocityInlet:
+                gb.type = gpu::RansSolver::Boundary::velocityInlet; break;
+            case RansSolver::Boundary::pressureOutlet:
+                gb.type = gpu::RansSolver::Boundary::pressureOutlet; break;
+            case RansSolver::Boundary::logProfileInlet:
+                gb.type = gpu::RansSolver::Boundary::logProfileInlet; break;
+            default: BOOST_FAIL("no GPU version of this boundary kind");
+        }
+        gb.p = b.p; gb.u = b.u; gb.v = b.v; gb.w = b.w;
+        gb.ustar = b.ustar; gb.z0 = b.z0;
+        g.setBoundary(gpu::RansSolver::Side(side), gb);
+    }
+}
+
+// max |a - b| over max |b|
+double RelativeDiff(const std::vector<double> &a, const std::vector<double> &b)
+{
+    double diff = 0.0, scale = 0.0;
+    for(size_t i = 0; i < a.size(); i++)
+    {
+        diff = std::max(diff, std::fabs(a[i] - b[i]));
+        scale = std::max(scale, std::fabs(b[i]));
+    }
+    return scale > 0.0 ? diff / scale : diff;
 }
 
 } // namespace
@@ -212,26 +304,7 @@ BOOST_AUTO_TEST_CASE( grid_pack )
                 z.push_back(2000.0 + 5.0 * i + 50.0 * k * (1 + 0.1 * k));
             }
     RansGrid g = RansGrid::FromNodes(nx, ny, nz, x, y, z);
-    gpu::GridView view;
-    view.nx = g.nx; view.ny = g.ny; view.nz = g.nz;
-    view.volume = g.volume.data();
-    view.cx = g.cx.data(); view.cy = g.cy.data(); view.cz = g.cz.data();
-    view.wallDistance = g.wallDistance.data();
-    const std::vector<double> *s[3][3] = {{&g.iSx, &g.iSy, &g.iSz},
-                                          {&g.jSx, &g.jSy, &g.jSz},
-                                          {&g.kSx, &g.kSy, &g.kSz}};
-    const std::vector<double> *f[3][3] = {{&g.iFx, &g.iFy, &g.iFz},
-                                          {&g.jFx, &g.jFy, &g.jFz},
-                                          {&g.kFx, &g.kFy, &g.kFz}};
-    for(int d = 0; d < 3; d++)
-        for(int m = 0; m < 3; m++)
-        {
-            view.s[d][m] = s[d][m]->data();
-            view.f[d][m] = f[d][m]->data();
-        }
-    view.agl[0] = g.iAgl.data();
-    view.agl[1] = g.jAgl.data();
-    gpu::Grid grid(*c, view);
+    gpu::Grid grid(*c, ViewOf(g));
 
     BOOST_CHECK_EQUAL(grid.nCells, size_t(nx * ny * nz));
     BOOST_CHECK_EQUAL(grid.nFaces[2], size_t(nx * ny * (nz + 1)));
@@ -280,6 +353,47 @@ BOOST_AUTO_TEST_CASE( fields_slots )
     // slots don't overlap
     std::vector<double> v = fields.download(gpu::fieldV);
     BOOST_CHECK(std::all_of(v.begin(), v.end(), [](double x) { return x == 0.0; }));
+}
+
+BOOST_AUTO_TEST_CASE( kernel_gradients_matches_cpu )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    RansGrid g = RidgeGrid(40, 12, 10);
+    // ::RansSolver: this suite is namespace gpu, which has its own
+    ::RansSolver cpu(g, 1.5e-5, 25.0);
+    const double z0 = 0.01, ustar = AblFrictionVelocity(4.47, 6.1, z0);
+    ApplyWindBoundaries(cpu, ustar, z0, 280.0);   // inlets W and N
+    // a smooth, non-trivial state
+    cpu.setInitial([](double x, double y, double z, double &p, double &u,
+                      double &v, double &w)
+    {
+        p = 3.0 * std::sin(x / 500.0) * std::cos(y / 300.0);
+        u = 5.0 + 0.004 * (z - 1000.0) + std::sin(y / 200.0);
+        v = -1.0 + 0.5 * std::cos(x / 350.0 + z / 400.0);
+        w = 0.3 * std::sin(x / 250.0) * std::exp(-(z - 1000.0) / 800.0);
+    });
+    cpu.computeGradients();
+
+    gpu::RansSolver gs(*c, ViewOf(g), cpu.nu, cpu.beta);
+    CopyBoundaries(cpu, gs);
+    gs.fields.upload(gpu::fieldP, cpu.p);
+    gs.fields.upload(gpu::fieldU, cpu.u);
+    gs.fields.upload(gpu::fieldV, cpu.v);
+    gs.fields.upload(gpu::fieldW, cpu.w);
+    gs.computeGradients();
+
+    double worst = 0.0;
+    for(int field = 0; field < 4; field++)
+        for(int d = 0; d < 3; d++)
+        {
+            double r = RelativeDiff(gs.gradient(field, d), cpu.gradient(field, d));
+            worst = std::max(worst, r);
+            BOOST_TEST_MESSAGE("gradient field " << field << " dir " << d << ": " << r);
+        }
+    BOOST_TEST_MESSAGE("worst relative difference " << worst);
+    BOOST_CHECK_LE(worst, 1e-5);   // measured 9.6e-7 on Apple M3 Max
 }
 
 BOOST_AUTO_TEST_SUITE_END()

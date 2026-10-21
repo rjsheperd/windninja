@@ -112,6 +112,13 @@ public:
     Residuals iterate(int n, double cfl);
     Residuals residuals();
 
+    /* Single stages and their results, public so the GPU port's stage
+    ** tests can compare against them.  gradient(field, direction): field
+    ** 0-3 is p, u, v, w; direction 0-2 is x, y, z. */
+    void computeGradients();
+    const std::vector<double> &gradient(int field, int direction) const;
+    const Boundary &boundary(Side side) const { return bc[side]; }
+
     const RansGrid &grid;
     double nu, beta;
     int threads = 0;                     // OpenMP threads; 0 = OpenMP default
@@ -144,7 +151,6 @@ private:
 
     double production(int c, double &s2) const;
 
-    void computeGradients();
     void computeResiduals();
     Residuals norms() const;
 };

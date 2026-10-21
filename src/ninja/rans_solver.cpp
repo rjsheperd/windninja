@@ -317,6 +317,12 @@ void RansSolver::computeGradients()
         }
 }
 
+const std::vector<double> &RansSolver::gradient(int field, int direction) const
+{
+    const std::vector<double> *g[4] = {gp, gu, gv, gw};
+    return g[field][direction];
+}
+
 /* Inviscid flux of the AC system through area vector S for state q. */
 static void InviscidFlux(double beta, double sx, double sy, double sz,
                          double p, double u, double v, double w, double f[4])
