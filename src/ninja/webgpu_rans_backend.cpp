@@ -69,26 +69,51 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
     gpu::RansSolver s(*context, GpuGridView(g), setup.nu, setup.beta);
     CopyToGpu(setup, s);
 
-    gpu::RansSolver::Residuals peak, r;
-    double worst = 1.0;
+    // on divergence, restart from the initial state at half the CFL number
+    // (as OpenFOAM's retries)
+    double runCfl = cfl;
     int it = 0;
-    while(it < maxIterations && worst > tolerance)
+    double worst = 1.0;
+    for(int attempt = 0; ; attempt++)
     {
-        checkCancel();
-        r = s.iterate(checkEvery, 0.5);
-        it += checkEvery;
-        peak.u = std::max(peak.u, std::max(r.u, r.v));
-        peak.k = std::max(peak.k, r.k);
-        worst = std::max(std::max(r.u, r.v) / peak.u, r.k / peak.k);
-        // NaN compares false, so without this a diverged run would stop as
-        // if converged
-        if(!std::isfinite(r.u) || !std::isfinite(r.v) || !std::isfinite(r.k))
-            throw std::runtime_error("WebGPU RANS diverged by step " + std::to_string(it));
-        if(it % 1000 == 0)
-            com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS step %d, residual %g", it, worst);
+        if(attempt > 0)
+            CopyToGpu(setup, s);
+        gpu::RansSolver::Residuals peak, r;
+        worst = 1.0;
+        it = 0;
+        bool diverged = false;
+        while(it < maxIterations && worst > tolerance)
+        {
+            checkCancel();
+            r = s.iterate(checkEvery, runCfl);
+            it += checkEvery;
+            // NaN compares false, so without this a diverged run would stop
+            // as if converged
+            if(!std::isfinite(r.u) || !std::isfinite(r.v) || !std::isfinite(r.k))
+            {
+                diverged = true;
+                break;
+            }
+            peak.u = std::max(peak.u, std::max(r.u, r.v));
+            peak.k = std::max(peak.k, r.k);
+            worst = std::max(std::max(r.u, r.v) / peak.u, r.k / peak.k);
+            if(it % 1000 == 0)
+                com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS step %d, residual %g", it, worst);
+        }
+        if(!diverged)
+            break;
+        if(attempt == maxRetries)
+            throw std::runtime_error("WebGPU RANS diverged by step " + std::to_string(it) +
+                                     " at CFL " + std::to_string(runCfl) + " after " +
+                                     std::to_string(maxRetries) + " retries");
+        com->ninjaCom(ninjaComClass::ninjaWarning,
+                      "WebGPU RANS diverged by step %d at CFL %g; retrying at CFL %g.",
+                      it, runCfl, runCfl / 2.0);
+        runCfl /= 2.0;
     }
-    com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS stopped after %d steps, residual %g.",
-                  it, worst);
+    lastCfl = runCfl;
+    com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS stopped after %d steps at CFL %g, residual %g.",
+                  it, runCfl, worst);
 
     CpuRansBackend::sample(problem, g, s.fields.download(gpu::fieldU),
                            s.fields.download(gpu::fieldV), s.fields.download(gpu::fieldK),

@@ -722,10 +722,15 @@ resumes only if the GPU backend fails the golden cases the same way.
         non-finite residual. Before, NaN compared false, the loop ended as if
         converged, and WindNinja reported a misleading "Error during
         simpleFoam()".
-      Still to do (next):
-      - a CFL back-off on divergence (restart at half CFL, as OpenFOAM's
-        retries);
-      - GPU multigrid (4.3), which a 2M-cell mesh needs to converge.
+      - The WebGPU backend now backs off: on a divergence it restarts from the
+        initial state at half the CFL, up to =maxRetries= (3) times, as
+        OpenFOAM's retries (test =momentum_backend_webgpu_cfl_backoff=: CFL
+        8 → 1 on a small hill; with no retries left it throws). Big Butte fine
+        now completes: it diverges at 0.5, then runs at 0.25 for 20,000 steps
+        in 2 min 43 s (OpenFOAM fine takes 1 min 53 s). It stops unconverged
+        (residual 0.03), at 0.549 m/s from OpenFOAM fine at 20 ft.
+      Still to do: GPU multigrid (4.3), which a 2M-cell mesh needs to
+      converge.
 - [X] Is the OpenFOAM reference converged? WindNinja runs 300 simpleFoam
       iterations (p residual about 4e-3). Re-run at 3,000 iterations:
       - ridge: OpenFOAM itself moves *0.26 m/s RMSE* (max 0.85, 4.0°), and p
@@ -1053,7 +1058,7 @@ For each kernel, a =gpu_kernel_<stage>_matches_cpu= test:
 - compare against =CpuRansBackend= with f32;
 - require max relative diff 1e-5 (=TBD=).
 
-** TODO 4.3 Geometric multigrid
+** NEXT 4.3 Geometric multigrid
 Order (2026-10-21, assumption recorded): 4.4 first, single-grid. The user's
 priority is comparing the GPU with OpenFOAM, and 4.2 gives a complete
 single-grid solver. Multigrid follows once the golden comparison runs.

@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <cstring>
@@ -276,6 +277,60 @@ BOOST_AUTO_TEST_CASE( webgpu_cancel )
         BOOST_CHECK_LT(latency, 1.0);
         BOOST_CHECK_LT(total, 1.3);
     }
+}
+BOOST_AUTO_TEST_CASE( webgpu_cfl_backoff )
+{
+    // the 40 x 30 hill, started at a CFL far too large to be stable: the
+    // backend must back off (8 -> 4 -> 2 -> 1 -> 0.5) and finish with finite
+    // results instead of failing
+    Elevation dem(40, 30, 500000.0, 4800000.0, 30.0, -9999.0, Elevation::meters);
+    for(int r = 0; r < 30; r++)
+        for(int c = 0; c < 40; c++)
+            dem.set_cellValue(r, c, 1000.0 + 150.0 * std::exp(-((c - 20) * (c - 20) +
+                                                                (r - 15) * (r - 15)) / 40.0));
+    MomentumProblem p;
+    p.dem = &dem;
+    p.z0 = 0.01;
+    p.rd = 0.0;
+    p.speed = 4.47;
+    p.direction = 270.0;
+    p.inputHeight = 6.1;
+    p.outputHeight = 6.1;
+    p.meshResolution = 30.0;
+    p.cellBudget = 0;
+    p.iterations = 0;
+    p.nThreads = 1;
+    WebGpuRansBackend backend;
+    backend.cfl = 8.0;
+    backend.maxRetries = 5;
+    backend.maxIterations = 3000;
+    ninjaComClass com;
+    MomentumResult result;
+    try
+    {
+        BOOST_CHECK(backend.solve(p, &com, []() {},
+                                  [](const MomentumResult &) { return true; }, result));
+    }
+    catch(const std::runtime_error &e)
+    {
+        if(std::string(e.what()).find("no adapter") != std::string::npos)
+        {
+            std::cout << "SKIP: no WebGPU adapter\n";
+            return;
+        }
+        throw;
+    }
+    BOOST_TEST_MESSAGE("finished at CFL " << backend.lastCfl);
+    BOOST_CHECK_LT(backend.lastCfl, 8.0);
+    for(int r = 0; r < 30; r++)
+        for(int c = 0; c < 40; c++)
+            BOOST_CHECK(std::isfinite(result.u(r, c)) && std::isfinite(result.k(r, c)));
+
+    // and with no retries left it reports the divergence
+    backend.maxRetries = 0;
+    BOOST_CHECK_THROW(backend.solve(p, &com, []() {},
+                                    [](const MomentumResult &) { return true; }, result),
+                      std::runtime_error);
 }
 #endif /* WITH_WEBGPU */
 

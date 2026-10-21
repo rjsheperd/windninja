@@ -44,6 +44,9 @@ public:
     int maxIterations = 20000;     // pseudo-time steps
     int checkEvery = 100;          // steps between residual readbacks
     double tolerance = 1e-5;       // residual drop, relative to each equation's peak
+    double cfl = 0.5;              // pseudo-time CFL number
+    int maxRetries = 3;            // restarts at half the CFL after a divergence
+    double lastCfl = 0.0;          // the CFL number the last solve finished at
 
     virtual bool solve(const MomentumProblem &problem,
                        ninjaComClass *com,
