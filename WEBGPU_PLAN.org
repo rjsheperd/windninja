@@ -764,7 +764,7 @@ Findings:
   than 10% of the estimated per-iteration CPU time, plan kernel fusion in
   Phase 4.
 
-** TODO 3.4 Solver-only WebAssembly module
+** NEXT 3.4 Solver-only WebAssembly module
 The browser target is the GPU solver alone, not WindNinja in WASM (GDAL,
 NetCDF and Boost make that a heavy port). =MomentumProblem= is already the
 boundary: a DEM grid and scalars in, u/v/k grids out. DEM loading stays in
@@ -776,6 +776,12 @@ JavaScript, or a separate GDAL WASM build.
 - [ ] Note the browser limits: by default only 128 MiB per storage-buffer
       binding and 256 MiB per buffer are guaranteed, and there's no f64. 100k-cell
       meshes fit; larger grids need higher adapter limits or split fields.
+- [ ] Install Emscripten ≥ 4.0.10 (emsdk or Homebrew) and record the version.
+- [ ] Confirm =Context::wait()= works in the browser build (JSPI, with
+      Asyncify as the fallback for browsers without JSPI).
+- [ ] Add tests
+- [ ] Tests pass
+- [ ] Documentation updates
 *** Tests
 - The module runs the saxpy kernel in a headless browser and its readback
   matches (e.g. via the =spel= / Playwright skill).
