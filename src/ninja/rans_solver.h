@@ -118,6 +118,14 @@ public:
     void computeGradients();
     const std::vector<double> &gradient(int field, int direction) const;
     const Boundary &boundary(Side side) const { return bc[side]; }
+    /* Face fluxes summed per cell (needs computeGradients() first).
+    ** residualArray(slot): 0-5 the p, u, v, w, k, epsilon flux residuals,
+    ** 6 the spectral radius (inverse local time step), 7-8 the wall-function
+    ** epsilon and G summed over a cell's rough-wall faces (wallFaces() of
+    ** them). */
+    void computeResiduals();
+    const std::vector<double> &residualArray(int slot) const;
+    const std::vector<int> &wallFaces() const { return nWall; }
 
     const RansGrid &grid;
     double nu, beta;
@@ -151,7 +159,6 @@ private:
 
     double production(int c, double &s2) const;
 
-    void computeResiduals();
     Residuals norms() const;
 };
 

@@ -53,21 +53,32 @@ public:
         Type type = wall;
         double p = 0.0, u = 0.0, v = 0.0, w = 0.0;
         double ustar = 0.0, z0 = 0.0;
+        double k = 0.0, epsilon = 0.0;   // velocity inlets, when turbulent
     };
 
     RansSolver(Context &context, const GridView &view, double nu, double beta);
 
     void setBoundary(Side side, const Boundary &bc);
+    // RNG k-epsilon (RansTurbulenceModel's sigmas); off means laminar
+    void setTurbulence(bool on, double sigmaK = 0.7179, double sigmaEpsilon = 0.7179);
 
     // Green-Gauss gradients of p, u, v, w into gradients: slot
     // field * 3 + direction (field 0-3 = p, u, v, w) of nCells floats.
     void computeGradients();
     std::vector<double> gradient(int field, int direction);
 
+    // Face fluxes summed per cell into residuals (after computeGradients):
+    // slots 0-5 the p, u, v, w, k, epsilon flux residuals, 6 the spectral
+    // radius, 7-8 the rough-wall epsilon and G sums, 9 the wall-face count
+    // (as RansSolver::residualArray / wallFaces).
+    void computeResiduals();
+    std::vector<double> residual(int slot);
+
     Context &context;
     Grid grid;
     Fields fields;
     Buffer gradients;
+    Buffer residuals;
 
 private:
     void dispatch(Kernel &kernel, const std::vector<const Buffer *> &bindings,
@@ -75,11 +86,13 @@ private:
     void uploadParams();
 
     double nu_, beta_;
+    bool turbulent_ = false;
+    double sigmaK_ = 0.7179, sigmaEpsilon_ = 0.7179;
     Boundary bc_[6];
     bool paramsDirty_ = true;
     Buffer params_[3];       // per face direction (Params.dir)
     Buffer faceValues_[3];   // per-face scratch, 12 slots
-    Kernel gradientFaces_, gradientCells_;
+    Kernel gradientFaces_, gradientCells_, fluxFaces_, fluxCells_;
 };
 
 } // namespace gpu

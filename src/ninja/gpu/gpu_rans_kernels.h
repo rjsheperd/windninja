@@ -46,7 +46,10 @@ const VELOCITY_INLET = 2u;
 const PRESSURE_OUTLET = 3u;
 const LOG_PROFILE_INLET = 4u;
 
+// ABL and wall-function constants (rans_abl.h)
 const KAPPA = 0.41;
+const KAPPA_EPSILON = 0.4187;
+const WALL_CMU = 0.085;
 
 struct Bc {
     kind : u32,
@@ -56,16 +59,24 @@ struct Bc {
     w : f32,
     ustar : f32,
     z0 : f32,
-    pad : f32,
+    k : f32,
+    epsilon : f32,
+    pad0 : f32,
+    pad1 : f32,
+    pad2 : f32,
 }
 
 struct Params {
     nx : u32,
     ny : u32,
     nz : u32,
-    dir : u32,       // face direction of a face pass
+    dir : u32,          // face direction of a face pass
     nu : f32,
     beta : f32,
+    sigmaK : f32,
+    sigmaEpsilon : f32,
+    turbulent : u32,    // 0 laminar, 1 k-epsilon
+    yPlusLam : f32,     // wall-function laminar / log switch
     pad0 : f32,
     pad1 : f32,
     bc : array<Bc, 6>,
@@ -86,6 +97,9 @@ const FP = 0u;
 const FU = 1u;
 const FV = 2u;
 const FW = 3u;
+const FK = 4u;
+const FEPSILON = 5u;
+const FNUT = 6u;
 
 fn nCells() -> u32 { return P.nx * P.ny * P.nz; }
 
@@ -115,11 +129,12 @@ fn threadIndex(gid : vec3<u32>, groups : vec3<u32>) -> u32 {
     return gid.x + gid.y * groups.x * 256u;
 }
 
-// Face state (p, u, v, w) on a boundary face from the owner cell's state;
-// n is the outward unit normal, agl the face's height above ground.  For
-// gradients, so outlets extrapolate the velocity without the flux's
-// backflow treatment (as BoundaryState(..., backflow = false)).
-fn boundaryState(b : Bc, n : vec3<f32>, agl : f32, q : vec4<f32>) -> vec4<f32> {
+// Face state (p, u, v, w) on a boundary face from the owner cell's state
+// q, as RansSolver's BoundaryState; n is the outward unit normal, agl the
+// face's height above ground.  backflow applies the outlets' backflow
+// treatment (fluxes only).
+fn boundaryState(b : Bc, n : vec3<f32>, agl : f32, q : vec4<f32>,
+                 backflow : bool) -> vec4<f32> {
     switch b.kind {
         case WALL, VELOCITY_INLET: {
             return vec4<f32>(q.x, b.u, b.v, b.w);
@@ -129,6 +144,10 @@ fn boundaryState(b : Bc, n : vec3<f32>, agl : f32, q : vec4<f32>) -> vec4<f32> {
             return vec4<f32>(q.x, q.yzw - un * n);
         }
         case PRESSURE_OUTLET: {
+            let un = dot(q.yzw, n);
+            if (backflow && un < 0.0) {
+                return vec4<f32>(b.p - 0.5 * un * un, un * n);
+            }
             return vec4<f32>(b.p, q.yzw);
         }
         default: {   // LOG_PROFILE_INLET
@@ -186,7 +205,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
         let o = cellIndex(ijk.x, ijk.y, ijk.z);
         let side = 2u * d + select(0u, 1u, m == last);
         let n = select(-S, S, m == last) / length(S);
-        value = boundaryState(P.bc[side], n, faces[AGL * nf + f], state(o));
+        value = boundaryState(P.bc[side], n, faces[AGL * nf + f], state(o), false);
     } else {
         // inverse-distance weights from the two centroids
         var lo = ijk;
@@ -242,6 +261,289 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
             sum += faceValue(d, slot, faceIndex(d, up)) - faceValue(d, slot, faceIndex(d, ijk));
         }
         gradients[slot * n + c] = sum / v;
+    }
+}
+)wgsl";
+
+// Face pass of the residuals (RansSolver::computeResiduals): per face, 10
+// slots of nFaces.  0-5: the p, u, v, w, k, epsilon fluxes in the stored S
+// orientation (so the gather takes upper minus lower); 6: the spectral
+// radius contribution to each adjacent cell; 7-9: the rough-wall epsilon, G
+// and a 1 on wall faces (boundary faces only).
+constexpr const char *fluxFaces = R"wgsl(
+@group(0) @binding(1) var<storage, read> cells : array<f32>;
+@group(0) @binding(2) var<storage, read> faces : array<f32>;
+@group(0) @binding(3) var<storage, read> fields : array<f32>;
+@group(0) @binding(4) var<storage, read> gradients : array<f32>;
+@group(0) @binding(5) var<storage, read_write> out : array<f32>;
+
+fn field(slot : u32, c : u32) -> f32 { return fields[slot * nCells() + c]; }
+
+fn state(c : u32) -> vec4<f32> {
+    return vec4<f32>(field(FP, c), field(FU, c), field(FV, c), field(FW, c));
+}
+
+fn centroid(c : u32) -> vec3<f32> {
+    let n = nCells();
+    return vec3<f32>(cells[CX * n + c], cells[CY * n + c], cells[CZ * n + c]);
+}
+
+// gradient of field q (0-3 = p, u, v, w) in cell c
+fn grad(q : u32, c : u32) -> vec3<f32> {
+    let n = nCells();
+    return vec3<f32>(gradients[(q * 3u) * n + c], gradients[(q * 3u + 1u) * n + c],
+                     gradients[(q * 3u + 2u) * n + c]);
+}
+
+// linear reconstruction of (p, u, v, w) from cell c by offset r
+fn reconstruct(c : u32, r : vec3<f32>) -> vec4<f32> {
+    let q = state(c);
+    return q + vec4<f32>(dot(grad(0u, c), r), dot(grad(1u, c), r),
+                         dot(grad(2u, c), r), dot(grad(3u, c), r));
+}
+
+// inviscid flux of the artificial-compressibility system through S
+fn inviscid(S : vec3<f32>, q : vec4<f32>) -> vec4<f32> {
+    let U = dot(q.yzw, S);
+    return vec4<f32>(P.beta * U, q.yzw * U + q.x * S);
+}
+
+fn roughWallNut(k : f32, y : f32, z0 : f32) -> f32 {
+    let yPlus = pow(WALL_CMU, 0.25) * sqrt(k) * y / P.nu;
+    let eDash = (y + z0) / z0;
+    return P.nu * (yPlus * KAPPA / log(max(eDash, 1.0 + 1e-4)) - 1.0);
+}
+
+// (epsilon, G) in a wall cell, as EpsilonWallFunction
+fn epsilonWall(nutw : f32, k : f32, y : f32, magGradUw : f32) -> vec2<f32> {
+    let cmu25 = pow(WALL_CMU, 0.25);
+    let yPlus = cmu25 * y * sqrt(k) / P.nu;
+    if (yPlus > P.yPlusLam) {
+        return vec2<f32>(pow(WALL_CMU, 0.75) * pow(k, 1.5) / (KAPPA * y),
+                         (nutw + P.nu) * magGradUw * cmu25 * sqrt(k) / (KAPPA * y));
+    }
+    return vec2<f32>(2.0 * k * P.nu / (y * y), 0.0);
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>,
+        @builtin(num_workgroups) groups : vec3<u32>) {
+    let d = P.dir;
+    let nf = nFaces(d);
+    let f = threadIndex(gid, groups);
+    if (f >= nf) {
+        return;
+    }
+    let e3 = faceExtent(d);
+    var ijk = vec3<u32>(f % e3.x, (f / e3.x) % e3.y, f / (e3.x * e3.y));
+    let S = vec3<f32>(faces[(SX + 0u) * nf + f], faces[(SX + 1u) * nf + f],
+                      faces[(SX + 2u) * nf + f]);
+    let F = vec3<f32>(faces[(FX + 0u) * nf + f], faces[(FX + 1u) * nf + f],
+                      faces[(FX + 2u) * nf + f]);
+    let agl = faces[AGL * nf + f];
+    let m = ijk[d];
+    let last = vec3<u32>(P.nx, P.ny, P.nz)[d];
+    let boundary = m == 0u || m == last;
+    let turbulent = P.turbulent != 0u;
+    let sigmaMin = min(P.sigmaK, P.sigmaEpsilon);
+    let area2 = dot(S, S);
+    let area = sqrt(area2);
+
+    var flux : vec4<f32>;
+    var gU : array<vec3<f32>, 3>;   // face velocity gradient per component
+    var Sv = S;                     // area vector the cell sees (outward)
+    var viscous = true;
+    var spec = 0.0;
+    var nutF = 0.0;
+    var dist = 1.0;
+    var sDotE = 0.0;
+    var kb = 0.0;
+    var eb = 0.0;
+    var fixedTurb = false;
+    var wall = vec3<f32>(0.0);      // epsilon, G, is-wall
+    var o : u32;
+    var nb = 0u;
+
+    if (!boundary) {
+        var lo = ijk;
+        lo[d] = m - 1u;
+        o = cellIndex(lo.x, lo.y, lo.z);
+        nb = cellIndex(ijk.x, ijk.y, ijk.z);
+        // second-order reconstruction to the face from both sides
+        let qL = reconstruct(o, F - centroid(o));
+        let qR = reconstruct(nb, F - centroid(nb));
+        let fL = inviscid(S, qL);
+        let fR = inviscid(S, qR);
+        let UL = dot(qL.yzw, S);
+        let UR = dot(qR.yzw, S);
+        let lambda = max(abs(UL) + sqrt(UL * UL + P.beta * area2),
+                         abs(UR) + sqrt(UR * UR + P.beta * area2));
+        // acoustic dissipation on pressure only; momentum is dissipated at
+        // the convective speed (see RansSolver::computeResiduals)
+        let lambdaU = max(abs(UL), abs(UR));
+        flux = vec4<f32>(0.5 * (fL.x + fR.x) - 0.5 * lambda * (qR.x - qL.x),
+                         0.5 * (fL.yzw + fR.yzw) - 0.5 * lambdaU * (qR.yzw - qL.yzw));
+        // averaged gradient corrected along the centroid line
+        var e = centroid(nb) - centroid(o);
+        let dd = length(e);
+        e = e / dd;
+        let qo = state(o);
+        let qn = state(nb);
+        for (var c = 0u; c < 3u; c++) {
+            let a = 0.5 * (grad(1u + c, o) + grad(1u + c, nb));
+            let corr = (qn[1u + c] - qo[1u + c]) / dd - dot(a, e);
+            gU[c] = a + corr * e;
+        }
+        spec = 0.5 * lambda + P.nu * area2 / (dd * area);
+        if (turbulent) {
+            dist = dd;
+            sDotE = dot(S, e);
+            nutF = 0.5 * (field(FNUT, o) + field(FNUT, nb));
+            spec += nutF / sigmaMin * area2 / (dd * area);
+        }
+    } else {
+        if (m == last) {
+            ijk[d] = m - 1u;
+        }
+        o = cellIndex(ijk.x, ijk.y, ijk.z);
+        let side = 2u * d + select(0u, 1u, m == last);
+        let b = P.bc[side];
+        Sv = select(-S, S, m == last);
+        let n = Sv / area;
+        let qo = state(o);
+        let qb = boundaryState(b, n, agl, qo, true);
+        viscous = b.kind == WALL || b.kind == VELOCITY_INLET || b.kind == LOG_PROFILE_INLET;
+        flux = inviscid(Sv, qb);
+        let Ub = dot(qb.yzw, Sv);
+        let lambda = abs(Ub) + sqrt(Ub * Ub + P.beta * area2);
+        var e = F - centroid(o);
+        let dd = length(e);
+        e = e / dd;
+        for (var c = 0u; c < 3u; c++) {
+            let a = grad(1u + c, o);
+            let corr = (qb[1u + c] - qo[1u + c]) / dd - dot(a, e);
+            gU[c] = a + corr * e;
+        }
+        spec = 0.5 * lambda + select(0.0, P.nu * area2 / (dd * area), viscous);
+        if (turbulent) {
+            dist = dd;
+            sDotE = dot(Sv, e);
+            nutF = field(FNUT, o);
+            let ko = field(FK, o);
+            if (b.kind == WALL && b.z0 > 0.0) {
+                // rough-wall functions; y is the centroid's normal distance
+                let y = abs(dot(centroid(o) - F, Sv)) / area;
+                nutF = max(0.0, roughWallNut(ko, y, b.z0));
+                let du = length(qo.yzw - qb.yzw);
+                wall = vec3<f32>(epsilonWall(nutF, ko, y, du / y), 1.0);
+            }
+            if (b.kind == VELOCITY_INLET) {
+                kb = b.k;
+                eb = b.epsilon;
+                fixedTurb = true;
+            } else if (b.kind == LOG_PROFILE_INLET) {
+                kb = b.ustar * b.ustar / sqrt(WALL_CMU);
+                eb = b.ustar * b.ustar * b.ustar / (KAPPA_EPSILON * (agl + b.z0));
+                fixedTurb = true;
+            } else {
+                kb = ko;
+                eb = field(FEPSILON, o);
+            }
+            if (viscous || fixedTurb) {
+                spec += nutF / sigmaMin * area2 / (dd * area);
+            }
+        }
+    }
+
+    if (viscous && !turbulent) {
+        for (var c = 0u; c < 3u; c++) {
+            flux[1u + c] -= P.nu * dot(gU[c], Sv);
+        }
+    } else if (viscous) {
+        // nu_eff grad(u).S plus nu_t grad(u)^T.S
+        let nuEff = P.nu + nutF;
+        for (var c = 0u; c < 3u; c++) {
+            let gT = vec3<f32>(gU[0][c], gU[1][c], gU[2][c]);
+            flux[1u + c] -= nuEff * dot(gU[c], Sv) + nutF * dot(gT, Sv);
+        }
+    }
+
+    var fk = 0.0;
+    var fe = 0.0;
+    if (turbulent) {
+        // first-order upwind convection on the face mass flux, orthogonal
+        // diffusion
+        let mass = flux.x / P.beta;
+        let Dk = P.nu + nutF / P.sigmaK;
+        let De = P.nu + nutF / P.sigmaEpsilon;
+        let ko = field(FK, o);
+        let eo = field(FEPSILON, o);
+        if (!boundary) {
+            let kn = field(FK, nb);
+            let en = field(FEPSILON, nb);
+            fk = mass * select(kn, ko, mass > 0.0) - Dk * (kn - ko) / dist * sDotE;
+            fe = mass * select(en, eo, mass > 0.0) - De * (en - eo) / dist * sDotE;
+        } else {
+            fk = mass * select(kb, ko, mass > 0.0);
+            fe = mass * select(eb, eo, mass > 0.0);
+            if (fixedTurb) {
+                fk -= Dk * (kb - ko) / dist * sDotE;
+                fe -= De * (eb - eo) / dist * sDotE;
+            }
+        }
+    }
+
+    // a min-side boundary computed its flux outward (-S): store it along S
+    let sign = select(1.0, -1.0, boundary && m == 0u);
+    out[0u * nf + f] = sign * flux.x;
+    out[1u * nf + f] = sign * flux.y;
+    out[2u * nf + f] = sign * flux.z;
+    out[3u * nf + f] = sign * flux.w;
+    out[4u * nf + f] = sign * fk;
+    out[5u * nf + f] = sign * fe;
+    out[6u * nf + f] = spec;
+    out[7u * nf + f] = wall.x;
+    out[8u * nf + f] = wall.y;
+    out[9u * nf + f] = wall.z;
+}
+)wgsl";
+
+// Cell gather of the residuals: 10 slots of nCells.  0-5 (fluxes): upper
+// minus lower face in each direction; 6-9 (spectral radius, wall epsilon,
+// wall G, wall faces): the sum over the six faces.
+constexpr const char *fluxCells = R"wgsl(
+@group(0) @binding(1) var<storage, read> face0 : array<f32>;
+@group(0) @binding(2) var<storage, read> face1 : array<f32>;
+@group(0) @binding(3) var<storage, read> face2 : array<f32>;
+@group(0) @binding(4) var<storage, read_write> residuals : array<f32>;
+
+fn faceValue(d : u32, slot : u32, f : u32) -> f32 {
+    let i = slot * nFaces(d) + f;
+    switch d {
+        case 0u: { return face0[i]; }
+        case 1u: { return face1[i]; }
+        default: { return face2[i]; }
+    }
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>,
+        @builtin(num_workgroups) groups : vec3<u32>) {
+    let n = nCells();
+    let c = threadIndex(gid, groups);
+    if (c >= n) {
+        return;
+    }
+    let ijk = vec3<u32>(c % P.nx, (c / P.nx) % P.ny, c / (P.nx * P.ny));
+    for (var slot = 0u; slot < 10u; slot++) {
+        let sign = select(1.0, -1.0, slot < 6u);
+        var sum = 0.0;
+        for (var d = 0u; d < 3u; d++) {
+            var up = ijk;
+            up[d] += 1u;
+            sum += faceValue(d, slot, faceIndex(d, up)) + sign * faceValue(d, slot, faceIndex(d, ijk));
+        }
+        residuals[slot * n + c] = sum;
     }
 }
 )wgsl";

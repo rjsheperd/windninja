@@ -26,6 +26,8 @@
 
 #include "gpu_rans.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -39,15 +41,29 @@ namespace {
 struct BcBlock
 {
     uint32_t kind;
-    float p, u, v, w, ustar, z0, pad;
+    float p, u, v, w, ustar, z0, k, epsilon, pad[3];
 };
 
 struct ParamsBlock
 {
     uint32_t nx, ny, nz, dir;
-    float nu, beta, pad0, pad1;
+    float nu, beta, sigmaK, sigmaEpsilon;
+    uint32_t turbulent;
+    float yPlusLam, pad0, pad1;
     BcBlock bc[6];
 };
+static_assert(sizeof(BcBlock) == 48 && sizeof(ParamsBlock) == 48 + 6 * 48,
+              "must match the WGSL Params layout");
+
+// the wall functions' laminar / log-layer switch (as WallYPlusLam, with
+// kappa 0.41 and E 9.8)
+double WallYPlusLam()
+{
+    double ypl = 11.0;
+    for(int i = 0; i < 10; i++)
+        ypl = std::log(std::max(9.8 * ypl, 1.0)) / 0.41;
+    return ypl;
+}
 
 std::string source(const char *stage)
 {
@@ -60,7 +76,8 @@ const std::size_t maxGroupsX = 65535;
 
 RansSolver::RansSolver(Context &context, const GridView &view, double nu, double beta)
     : context(context), grid(context, view), fields(context, grid.nCells),
-      gradients(context, 12 * grid.nCells * sizeof(float)), nu_(nu), beta_(beta),
+      gradients(context, 12 * grid.nCells * sizeof(float)),
+      residuals(context, 10 * grid.nCells * sizeof(float)), nu_(nu), beta_(beta),
       params_{Buffer(context, sizeof(ParamsBlock), Buffer::Uniform),
               Buffer(context, sizeof(ParamsBlock), Buffer::Uniform),
               Buffer(context, sizeof(ParamsBlock), Buffer::Uniform)},
@@ -68,8 +85,18 @@ RansSolver::RansSolver(Context &context, const GridView &view, double nu, double
                   Buffer(context, 12 * grid.nFaces[1] * sizeof(float)),
                   Buffer(context, 12 * grid.nFaces[2] * sizeof(float))},
       gradientFaces_(context, source(kernels::gradientFaces).c_str()),
-      gradientCells_(context, source(kernels::gradientCells).c_str())
+      gradientCells_(context, source(kernels::gradientCells).c_str()),
+      fluxFaces_(context, source(kernels::fluxFaces).c_str()),
+      fluxCells_(context, source(kernels::fluxCells).c_str())
 {
+}
+
+void RansSolver::setTurbulence(bool on, double sigmaK, double sigmaEpsilon)
+{
+    turbulent_ = on;
+    sigmaK_ = sigmaK;
+    sigmaEpsilon_ = sigmaEpsilon;
+    paramsDirty_ = true;
 }
 
 void RansSolver::setBoundary(Side side, const Boundary &bc)
@@ -88,11 +115,16 @@ void RansSolver::uploadParams()
     b.nz = grid.nz;
     b.nu = static_cast<float>(nu_);
     b.beta = static_cast<float>(beta_);
+    b.sigmaK = static_cast<float>(sigmaK_);
+    b.sigmaEpsilon = static_cast<float>(sigmaEpsilon_);
+    b.turbulent = turbulent_ ? 1u : 0u;
+    b.yPlusLam = static_cast<float>(WallYPlusLam());
     for(int s = 0; s < 6; s++)
     {
         const Boundary &bc = bc_[s];
         b.bc[s] = {static_cast<uint32_t>(bc.type), float(bc.p), float(bc.u),
-                   float(bc.v), float(bc.w), float(bc.ustar), float(bc.z0), 0.0f};
+                   float(bc.v), float(bc.w), float(bc.ustar), float(bc.z0),
+                   float(bc.k), float(bc.epsilon), {0.0f, 0.0f, 0.0f}};
     }
     for(uint32_t d = 0; d < 3; d++)
     {
@@ -130,6 +162,27 @@ std::vector<double> RansSolver::gradient(int field, int direction)
     std::vector<float> f(grid.nCells);
     gradients.download(f.data(), f.size() * sizeof(float),
                        (field * 3 + direction) * grid.nCells * sizeof(float));
+    return std::vector<double>(f.begin(), f.end());
+}
+
+void RansSolver::computeResiduals()
+{
+    uploadParams();
+    for(int d = 0; d < 3; d++)
+        dispatch(fluxFaces_,
+                 {&params_[d], &grid.cells, &grid.faces[d], &fields.buffer, &gradients,
+                  &faceValues_[d]},
+                 grid.nFaces[d]);
+    dispatch(fluxCells_,
+             {&params_[0], &faceValues_[0], &faceValues_[1], &faceValues_[2], &residuals},
+             grid.nCells);
+}
+
+std::vector<double> RansSolver::residual(int slot)
+{
+    std::vector<float> f(grid.nCells);
+    residuals.download(f.data(), f.size() * sizeof(float),
+                       slot * grid.nCells * sizeof(float));
     return std::vector<double>(f.begin(), f.end());
 }
 

@@ -916,8 +916,25 @@ summing its six faces with signs). No atomics; results are deterministic.
       Mutation check: κ 0.41 → 0.40 in the log-profile inlet fails at 0.073.
       The CPU solver gained public =computeGradients()=, =gradient()= and
       =boundary()= for these tests.
-- [ ] Reconstruction (the flux stage's linear reconstruction to faces).
-- [ ] Convective and diffusive fluxes.
+- [X] Reconstruction (the flux stage's linear reconstruction to faces), and
+- [X] Convective and diffusive fluxes (=computeResiduals=, kernels
+      =fluxFaces= and =fluxCells=). These are the whole of
+      =RansSolver::computeResiduals= except the test-only Dirichlet boundary,
+      the MMS source and the multigrid forcing (that goes with 4.3):
+      - reconstruction and the Rusanov-type flux (acoustic dissipation on p,
+        convective on momentum);
+      - the outlets' backflow treatment;
+      - the corrected face velocity gradient, with ν_eff ∇U·S + ν_t ∇Uᵀ·S;
+      - upwind k/ε convection with orthogonal diffusion;
+      - the spectral radius;
+      - the rough-wall functions (ν_t,w, ε and G).
+      The face pass stores 10 values per face (fluxes in the +S
+      orientation), and the gather takes upper − lower for fluxes and sums
+      the rest. Test =gpu/kernel_residuals_matches_cpu=: the turbulent wind
+      setup with a perturbed state, where w changes sign on the top outlet,
+      exercising backflow. All 9 arrays agree within 3.0e-6 relative
+      (tolerance 1e-5), and the wall-face counts match exactly. Mutations
+      caught: no backflow (0.016), no ν_t ∇Uᵀ term (0.35).
 - [ ] Pseudo-compressibility update with local Δτ.
 - [ ] k-ε source terms and the wall-function cells.
 - [ ] Boundary conditions: inlet log profiles, outlets, top, ground.

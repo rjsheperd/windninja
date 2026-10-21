@@ -396,6 +396,58 @@ BOOST_AUTO_TEST_CASE( kernel_gradients_matches_cpu )
     BOOST_CHECK_LE(worst, 1e-5);   // measured 9.6e-7 on Apple M3 Max
 }
 
+BOOST_AUTO_TEST_CASE( kernel_residuals_matches_cpu )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    RansGrid g = RidgeGrid(40, 12, 10);
+    ::RansSolver cpu(g, 1.58946e-5, 25.0);
+    const double z0 = 0.01, ustar = AblFrictionVelocity(4.47, 6.1, z0);
+    ApplyWindBoundaries(cpu, ustar, z0, 280.0);
+    InitializeLogProfile(cpu, ustar, z0, 280.0);   // turbulent, log profile
+    // a smooth, non-trivial state on top; w changes sign along the top, so
+    // part of the top outlet sees backflow
+    for(int i = 0; i < g.nCells(); i++)
+    {
+        double x = g.cx[i], y = g.cy[i], z = g.cz[i];
+        cpu.p[i] = 3.0 * std::sin(x / 500.0) * std::cos(y / 300.0);
+        cpu.u[i] += std::sin(y / 200.0);
+        cpu.v[i] += -1.0 + 0.5 * std::cos(x / 350.0 + z / 400.0);
+        cpu.w[i] = 0.3 * std::sin(x / 250.0);
+        cpu.k[i] *= 1.0 + 0.5 * std::sin(x / 300.0) * std::cos(z / 500.0);
+        cpu.epsilon[i] *= 1.0 + 0.3 * std::cos(y / 250.0);
+        cpu.nut[i] = cpu.model.cmu * cpu.k[i] * cpu.k[i] / cpu.epsilon[i];
+    }
+    cpu.computeGradients();
+    cpu.computeResiduals();
+
+    gpu::RansSolver gs(*c, ViewOf(g), cpu.nu, cpu.beta);
+    CopyBoundaries(cpu, gs);
+    gs.setTurbulence(true, cpu.model.sigmaK, cpu.model.sigmaEpsilon);
+    const std::vector<double> *f[7] = {&cpu.p, &cpu.u, &cpu.v, &cpu.w, &cpu.k,
+                                       &cpu.epsilon, &cpu.nut};
+    for(int slot = 0; slot < 7; slot++)
+        gs.fields.upload(gpu::FieldSlot(slot), *f[slot]);
+    gs.computeGradients();
+    gs.computeResiduals();
+
+    const char *names[9] = {"p", "u", "v", "w", "k", "epsilon", "spectral",
+                            "wall epsilon", "wall G"};
+    double worst = 0.0;
+    for(int slot = 0; slot < 9; slot++)
+    {
+        double r = RelativeDiff(gs.residual(slot), cpu.residualArray(slot));
+        worst = std::max(worst, r);
+        BOOST_TEST_MESSAGE("residual " << names[slot] << ": " << r);
+    }
+    std::vector<double> walls = gs.residual(9);
+    for(int i = 0; i < g.nCells(); i++)
+        BOOST_CHECK_EQUAL(walls[i], double(cpu.wallFaces()[i]));
+    BOOST_TEST_MESSAGE("worst relative difference " << worst);
+    BOOST_CHECK_LE(worst, 1e-5);   // measured 3.0e-6 on Apple M3 Max
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 #endif
