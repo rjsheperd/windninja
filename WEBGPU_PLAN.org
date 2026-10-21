@@ -1017,9 +1017,25 @@ single-grid solver. Multigrid follows once the golden comparison runs.
   end), yet they match the converged CPU results, so 4.3 multigrid is mainly
   about speed. With a Big Butte run now taking seconds, the near-wall
   investigation (2.5) is cheap to resume on the GPU.
+- [X] Add tests:
+      - =momentum_gpu_golden_flat_coarse_270= (=scripts/check_momentum_gpu_golden.sh=):
+        the golden pipeline on the WebGPU backend against OpenFOAM, with
+        GATE 0 limits. It exits 77 (skip) without an adapter, and takes about
+        11 s. Only flat is registered: ridge and Big Butte fail on the shared
+        numerics and get registered once those pass.
+      - =momentum_backend_webgpu_cancel=: cancelling 0.3 s in returns within
+        about 8 ms (bound 1 s). Ten runs in a row all clean up; device memory
+        isn't observable through WebGPU, so it isn't measured.
+      - =gpu_iterate_deterministic=: two 300-step runs are bitwise identical.
+- [X] Tests pass: all of the above on macOS arm64. One early ctest run of the
+      flat golden case took 228 s against 11 s on every rerun (same adapter).
+      It didn't reproduce, so the cause is unknown; watch for it.
+- [X] Documentation updates: header comments, this file.
 *** Tests
 - =momentum_gpu_golden_*=: all golden cases are within the GATE 0 tolerances
   of OpenFOAM, *and* within a tighter tolerance of the CPU backend.
+  (Flat registered; within about 0.002 m/s of the CPU backend on all three
+  cases run.)
 - =momentum_gpu_cancel=: cancelling mid-run returns promptly (under 1 s) and
   leaks no GPU memory (device memory is stable over 10 cancelled runs).
 - =momentum_gpu_deterministic=: two runs on the same device are bitwise

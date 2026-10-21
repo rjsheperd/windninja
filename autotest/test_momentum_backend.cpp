@@ -29,13 +29,18 @@
 
 #include "momentum_backend.h"
 #include "cpu_rans_backend.h"
+#ifdef WITH_WEBGPU
+#include "webgpu_rans_backend.h"
+#endif
 #include "rans_grid.h"
 #include "ninja.h"
 #include "windninja.h"
 #include "WindNinjaInputs.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
+#include <iostream>
 #include <cstring>
 #include <stdexcept>
 
@@ -200,6 +205,79 @@ BOOST_AUTO_TEST_CASE( cpu_build_grid )
         for(int i = 0; i <= g.nx; i++)
             BOOST_CHECK_CLOSE(g.z[g.node(i, j, g.nz)], top, 1e-10);
 }
+
+#ifdef WITH_WEBGPU
+struct Cancelled {};
+
+BOOST_AUTO_TEST_CASE( webgpu_cancel )
+{
+    // a 40 x 30 hill at 30 m; far more steps than can run before cancelling
+    Elevation dem(40, 30, 500000.0, 4800000.0, 30.0, -9999.0, Elevation::meters);
+    for(int r = 0; r < 30; r++)
+        for(int c = 0; c < 40; c++)
+            dem.set_cellValue(r, c, 1000.0 + 150.0 * std::exp(-((c - 20) * (c - 20) +
+                                                                (r - 15) * (r - 15)) / 40.0));
+    MomentumProblem p;
+    p.dem = &dem;
+    p.z0 = 0.01;
+    p.rd = 0.0;
+    p.speed = 4.47;
+    p.direction = 270.0;
+    p.inputHeight = 6.1;
+    p.outputHeight = 6.1;
+    p.meshResolution = 30.0;
+    p.cellBudget = 0;
+    p.iterations = 0;
+    p.nThreads = 1;
+    WebGpuRansBackend backend;
+    backend.maxIterations = 100000000;
+
+    // cancel 0.3 s in; the backend checks between 100-step chunks, so it must
+    // return well within a second.  Ten runs in a row: each releases its GPU
+    // objects (RAII), so later runs start clean.  (WebGPU doesn't expose
+    // device memory use, so a leak can't be measured directly here.)
+    typedef std::chrono::steady_clock Clock;
+    for(int run = 0; run < 10; run++)
+    {
+        Clock::time_point start = Clock::now(), requested;
+        bool cancelled = false;
+        MomentumResult result;
+        ninjaComClass com;
+        try
+        {
+            backend.solve(p, &com,
+                [&]()
+                {
+                    if(Clock::now() - start > std::chrono::milliseconds(300))
+                    {
+                        requested = Clock::now();
+                        throw Cancelled();
+                    }
+                },
+                [](const MomentumResult &) { return true; }, result);
+        }
+        catch(const Cancelled &)
+        {
+            cancelled = true;
+        }
+        catch(const std::runtime_error &e)
+        {
+            if(std::string(e.what()).find("no adapter") != std::string::npos)
+            {
+                std::cout << "SKIP: no WebGPU adapter\n";
+                return;
+            }
+            throw;
+        }
+        BOOST_REQUIRE(cancelled);
+        double latency = std::chrono::duration<double>(Clock::now() - requested).count();
+        double total = std::chrono::duration<double>(Clock::now() - start).count();
+        BOOST_TEST_MESSAGE("run " << run << ": cancelled after " << total << " s");
+        BOOST_CHECK_LT(latency, 1.0);
+        BOOST_CHECK_LT(total, 1.3);
+    }
+}
+#endif /* WITH_WEBGPU */
 
 BOOST_AUTO_TEST_SUITE_END()
 

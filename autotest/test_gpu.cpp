@@ -446,6 +446,28 @@ BOOST_AUTO_TEST_CASE( kernel_iterate_matches_cpu )
     BOOST_CHECK_LE(many, 1e-4);   // measured 5.3e-6 on Apple M3 Max
 }
 
+BOOST_AUTO_TEST_CASE( iterate_deterministic )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    // face passes and cell gathers, no atomics: two runs are bitwise equal
+    RansGrid g = RidgeGrid(40, 12, 10);
+    ::RansSolver cpu(g, 1.58946e-5, 25.0);
+    PerturbedWindState(cpu);
+    std::vector<std::vector<double>> runs[2];
+    for(auto &run : runs)
+    {
+        gpu::RansSolver gs(*c, GpuGridView(g), cpu.nu, cpu.beta);
+        CopyToGpu(cpu, gs);
+        gs.iterate(300, 0.5);
+        for(int slot = 0; slot < gpu::fieldSlots; slot++)
+            run.push_back(gs.fields.download(gpu::FieldSlot(slot)));
+    }
+    for(int slot = 0; slot < gpu::fieldSlots; slot++)
+        BOOST_CHECK(runs[0][slot] == runs[1][slot]);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 #endif

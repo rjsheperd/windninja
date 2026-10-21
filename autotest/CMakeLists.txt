@@ -360,6 +360,12 @@ if(NINJAFOAM)
     # NinjaInit needs the data directory
     set_tests_properties(momentum_backend_c_api_set_get_backend PROPERTIES
                          ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data")
+    if(WITH_WEBGPU)
+        add_test(momentum_backend_webgpu_cancel
+                 ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/webgpu_cancel)
+        set_tests_properties(momentum_backend_webgpu_cancel PROPERTIES
+                             SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
+    endif(WITH_WEBGPU)
     add_test(stl_1
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=stl/stl_1)
     add_test(stl_2
@@ -403,7 +409,7 @@ add_test(rans_solver_multigrid_matches_single_grid_turbulent
 if(WITH_WEBGPU)
     add_test(gpu_dawn_instance
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=gpu/dawn_instance)
-    foreach(gputest device_create buffer_roundtrip kernel_saxpy
+    foreach(gputest device_create buffer_roundtrip kernel_saxpy iterate_deterministic
                     validation_error_throws reduction_sum grid_pack fields_slots
                     kernel_gradients_matches_cpu kernel_residuals_matches_cpu
                     kernel_iterate_matches_cpu)
@@ -413,6 +419,20 @@ if(WITH_WEBGPU)
         set_tests_properties(gpu_${gputest} PROPERTIES
                              SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
     endforeach(gputest)
+    if(NINJAFOAM AND NINJA_CLI)
+        # the WebGPU backend against OpenFOAM's golden output, GATE 0
+        # tolerances.  Only the cases that pass today: ridge_coarse_270 and
+        # big_butte_small_coarse_270 fail on the shared RANS numerics (the
+        # CPU backend fails them the same way; WEBGPU_PLAN 2.5 / 4.4).
+        foreach(goldencase flat_coarse_270)
+            add_test(NAME momentum_gpu_golden_${goldencase}
+                     COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_gpu_golden.sh
+                             $<TARGET_FILE:WindNinja_cli> $<TARGET_FILE:compare_momentum>
+                             ${goldencase})
+            set_tests_properties(momentum_gpu_golden_${goldencase} PROPERTIES
+                                 SKIP_RETURN_CODE 77)
+        endforeach(goldencase)
+    endif()
     add_test(gpu_overhead_bench_smoke
              ${EXECUTABLE_OUTPUT_PATH}/gpu_overhead_bench --quick)
     set_tests_properties(gpu_overhead_bench_smoke PROPERTIES
