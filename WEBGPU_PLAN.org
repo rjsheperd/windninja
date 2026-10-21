@@ -554,6 +554,17 @@ returns u, v, k there.
       u/v/k via =NINJA_MOMENTUM_RESULT_DIR=). Done so far:
       | case            | speed RMSE | speed max | dir diff | k rel RMSE | iterations | time (12 thr) |
       | flat_coarse_270 | 0.109 m/s  | 0.197 m/s | 0°       | 0.070      | 20,000 cap (1.5e-5) | 6m19s |
+      | big_butte_small_coarse_270 (single grid) | 0.553 | 5.36 | 5.7° | 0.48 | 20,000 cap | ~30 min |
+      | big_butte_small_coarse_270 (multigrid)   | 0.553 | 5.36 | 5.7° | 0.48 | 5,000 cycles | ~12 min |
+      Big Butte *fails* GATE 0. Single grid and multigrid agree to 3–4 digits,
+      so it's not convergence. The difference map puts it *on the butte*: edge
+      bands rms 0.17–0.23 m/s, interior 0.62; the max (CPU 0.67 vs OpenFOAM 6.02
+      m/s) is near the summit. Pattern: slower on the windward (NW) flank, with
+      mixed patches in the lee, i.e. speed-up / separation placed differently.
+      Inlet, domain edges and convergence are ruled out.
+      Next hypotheses: (a) grid shape on steep flanks (CPU first layer has a
+      fixed vertical thickness, so cells shear; OpenFOAM projects then refines);
+      (b) turbulence over the flanks (k rel RMSE 0.48) moving separation.
 - [X] Deferred: the 3-D mass-mesh fields (VTK / colMax) for the CPU backend,
       to Phase 5.2 (feature parity).
 - [ ] Add tests
