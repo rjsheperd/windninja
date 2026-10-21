@@ -1347,7 +1347,7 @@ WINDNINJADLL_EXPORT NinjaErr NinjaSetExistingCaseDirectory(NinjaArmyH * army, co
  *
  * \param army An opaque handle to a valid ninjaArmy.
  * \param nIndex The run to apply the setting to.
- * \param backend "openfoam" or "webgpu".
+ * \param backend "openfoam", "cpu" or "webgpu".
  *
  * \return NINJA_SUCCESS on success, NINJA_E_INVALID if the backend is unknown
  *         or not available in this build, NINJA_E_NULL_PTR on a NULL argument.

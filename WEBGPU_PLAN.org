@@ -527,12 +527,38 @@ ready: =scripts/make_momentum_golden.sh= and =compare_momentum=.
 
 
 
-** TODO 2.4 Terrain cases against golden data
-- [ ] Run the =CpuRansBackend= on every Phase 0 golden case.
-- [ ] Sample the output height with the existing grid code (bilinear in the
-      vertical between layers).
-- [ ] Fill the optional 3-D fields on the mass =Mesh= (direct, no probing
-      needed).
+** IN-PROGRESS 2.4 Terrain cases against golden data [5/10]
+Contract (from =SampleCloudGrid=): OpenFOAM's =foam.tif= is on the resampled
+DEM's own grid (extent and cell count), at cell centres, so the CPU backend
+returns u, v, k there.
+- Horizontal: CPU cell centres = resampled-DEM cell centres; ground at cell
+  corners interpolated from the DEM.
+- Vertical: first layer h₁ = mesh resolution (= OpenFOAM's
+  =finalFirstCellHeight= for 1–2 refinement rounds), then geometric to
+  OpenFOAM's flat top (max elevation + =blockMeshDz=).
+- Result: first-layer u, v, k; =sampleHeight= = h₁/2; =outputHeightResolved=
+  = h₁ < output height. These are OpenFOAM's semantics, so
+  =ApplyMomentumResult= is unchanged.
+- [X] =cpuBackend= in =eMomentumBackend= (CLI / C API name =cpu=).
+- [X] =CpuRansBackend= (=cpu_rans_backend.{h,cpp}=): grid from the problem's
+      DEM, ABL setup, convergence loop (residual-based, iteration cap),
+      progress and cancel, result sampling.
+- [X] =MomentumProblem= carries =meshResolution=.
+- [X] =NinjaFoam::simulate_wind= runs the CPU backend when selected: reuse
+      OpenFOAM's mesh sizing and DEM resampling, skip the case directory
+      (=ninjaArmy= doesn't create one for =cpu=), no mass mesh yet (VTK and
+      turbulence outputs are disabled with a warning).
+- [ ] Run all golden cases with the CPU backend and =compare_momentum=
+      against GATE 0's limits. Tooling done: =MOMENTUM_BACKEND=cpu
+      MOMENTUM_THREADS=n scripts/make_momentum_golden.sh= writes a CPU set (raw
+      u/v/k via =NINJA_MOMENTUM_RESULT_DIR=). Done so far:
+      | case            | speed RMSE | speed max | dir diff | k rel RMSE | iterations | time (12 thr) |
+      | flat_coarse_270 | 0.109 m/s  | 0.197 m/s | 0°       | 0.070      | 20,000 cap (1.5e-5) | 6m19s |
+- [X] Deferred: the 3-D mass-mesh fields (VTK / colMax) for the CPU backend,
+      to Phase 5.2 (feature parity).
+- [ ] Add tests
+- [ ] Tests pass
+- [ ] Documentation updates
 *** Tests
 - =momentum_cpu_golden_bigbutte_270_coarse= and the other golden cases are
   within the GATE 0 tolerances.

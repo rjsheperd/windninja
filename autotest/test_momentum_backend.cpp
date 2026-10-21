@@ -28,10 +28,13 @@
 #ifdef NINJAFOAM
 
 #include "momentum_backend.h"
+#include "cpu_rans_backend.h"
+#include "rans_grid.h"
 #include "ninja.h"
 #include "windninja.h"
 #include "WindNinjaInputs.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -91,6 +94,8 @@ BOOST_AUTO_TEST_CASE( backend_names )
 {
     BOOST_CHECK_EQUAL(ninja::get_eMomentumBackend("openfoam"), WindNinjaInputs::openFoamBackend);
     BOOST_CHECK_EQUAL(ninja::get_eMomentumBackend("webgpu"), WindNinjaInputs::webGpuBackend);
+    BOOST_CHECK_EQUAL(ninja::get_eMomentumBackend("cpu"), WindNinjaInputs::cpuBackend);
+    BOOST_CHECK_EQUAL(ninja::get_momentumBackendName(WindNinjaInputs::cpuBackend), "cpu");
     BOOST_CHECK_THROW(ninja::get_eMomentumBackend("bogus"), std::invalid_argument);
     BOOST_CHECK_EQUAL(ninja::get_momentumBackendName(WindNinjaInputs::openFoamBackend), "openfoam");
     BOOST_CHECK_EQUAL(ninja::get_momentumBackendName(WindNinjaInputs::webGpuBackend), "webgpu");
@@ -100,6 +105,8 @@ BOOST_AUTO_TEST_CASE( backend_unavailable_throws )
 {
     ninja n;
     BOOST_CHECK_NO_THROW(n.set_momentumBackend(WindNinjaInputs::openFoamBackend));
+    BOOST_CHECK_NO_THROW(n.set_momentumBackend(WindNinjaInputs::cpuBackend));
+    n.set_momentumBackend(WindNinjaInputs::openFoamBackend);
     // no WebGPU backend is compiled in yet
     BOOST_CHECK_THROW(n.set_momentumBackend(WindNinjaInputs::webGpuBackend), std::invalid_argument);
     BOOST_CHECK_EQUAL(n.input.momentumBackend, WindNinjaInputs::openFoamBackend);
@@ -135,6 +142,52 @@ BOOST_AUTO_TEST_CASE( c_api_set_get_backend )
     BOOST_CHECK_EQUAL(GetBackend(army, 5), "");
 
     BOOST_CHECK_EQUAL(NinjaDestroyArmy(army, NULL), NINJA_SUCCESS);
+}
+
+BOOST_AUTO_TEST_CASE( cpu_build_grid )
+{
+    // 4 x 3 cells of 100 m at a UTM-like origin, with a slope and one bump
+    Elevation dem(4, 3, 500000.0, 4800000.0, 100.0, -9999.0, Elevation::meters);
+    for(int r = 0; r < 3; r++)
+        for(int c = 0; c < 4; c++)
+            dem.set_cellValue(r, c, 1000.0 + 10.0 * c + 5.0 * r);
+    dem.set_cellValue(1, 2, 1080.0);
+
+    MomentumProblem p;
+    p.dem = &dem;
+    p.meshResolution = 100.0;
+    CpuRansBackend backend;
+    backend.layers = 6;
+    RansGrid g = backend.buildGrid(p, 100.0);
+
+    BOOST_REQUIRE_EQUAL(g.nx, 4);
+    BOOST_REQUIRE_EQUAL(g.ny, 3);
+    BOOST_REQUIRE_EQUAL(g.nz, 6);
+    // cell centres on the DEM's cell centres (AsciiGrid row 0 is south)
+    for(int r = 0; r < 3; r++)
+        for(int c = 0; c < 4; c++)
+        {
+            double x, y;
+            dem.get_cellPosition(r, c, &x, &y);
+            int cell = g.cell(c, r, 0);
+            BOOST_CHECK_CLOSE(g.cx[cell] + g.xOrigin, x, 1e-10);
+            BOOST_CHECK_CLOSE(g.cy[cell] + g.yOrigin, y, 1e-10);
+        }
+    // corner ground is the mean of the DEM cells around it
+    BOOST_CHECK_CLOSE(g.z[g.node(0, 0, 0)], dem.get_cellValue(0, 0), 1e-10);
+    double inner = 0.25 * (dem.get_cellValue(0, 1) + dem.get_cellValue(0, 2) +
+                           dem.get_cellValue(1, 1) + dem.get_cellValue(1, 2));
+    BOOST_CHECK_CLOSE(g.z[g.node(2, 1, 0)], inner, 1e-10);
+    // the first layer is the mesh resolution everywhere
+    for(int j = 0; j <= g.ny; j++)
+        for(int i = 0; i <= g.nx; i++)
+            BOOST_CHECK_CLOSE(g.z[g.node(i, j, 1)] - g.z[g.node(i, j, 0)], 100.0, 1e-10);
+    // flat top at OpenFOAM's height: max elevation plus the largest of 10% of
+    // the extent, 1.1 x relief and 11 block cells of 2 x the mesh resolution
+    double top = 1080.0 + std::max(std::max(0.1 * 400.0, 1.1 * 80.0), 11 * 200.0);
+    for(int j = 0; j <= g.ny; j++)
+        for(int i = 0; i <= g.nx; i++)
+            BOOST_CHECK_CLOSE(g.z[g.node(i, j, g.nz)], top, 1e-10);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

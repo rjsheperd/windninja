@@ -374,7 +374,7 @@ public:
     * \brief Set the CFD backend used by the momentum solver
     *
     * \param nIndex index of a ninja
-    * \param backend 'openfoam' or 'webgpu'
+    * \param backend 'openfoam', 'cpu' or 'webgpu'
     * \return errval Returns NINJA_SUCCESS upon success, NINJA_E_INVALID if the
     *         backend is unknown or not available in this build
     */

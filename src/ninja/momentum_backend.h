@@ -50,6 +50,7 @@ struct MomentumProblem
                              // direction the wind comes from
     double inputHeight;      // m above the canopy
     double outputHeight;     // m above the canopy
+    double meshResolution;   // m, horizontal cell size the DEM was resampled to
     int cellBudget;          // target number of cells (WindNinjaInputs::meshCount)
     int iterations;
     int nThreads;

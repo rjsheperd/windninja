@@ -75,7 +75,8 @@ public:
 
     enum eMomentumBackend{
         openFoamBackend,
-        webGpuBackend
+        webGpuBackend,
+        cpuBackend
     };
 
     enum ePDFBaseMap {

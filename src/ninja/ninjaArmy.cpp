@@ -350,8 +350,9 @@ bool ninjaArmy::startRuns(int numProcessors)
     if(ninjas[0]->isMomentumSolver() && ninjas[0]->input.existingCaseDirectory != "!set"){
         NinjaFoam::SetFoamPath(ninjas[0]->input.existingCaseDirectory.c_str());
     }
-    //if it's a ninjafoam run and the case is not set by the user, generate the ninjafoam dir
-    if(ninjas[0]->isMomentumSolver() && ninjas[0]->input.existingCaseDirectory == "!set"){
+    //if it's an OpenFOAM run and the case is not set by the user, generate the ninjafoam dir
+    if(ninjas[0]->isMomentumSolver() && ninjas[0]->input.existingCaseDirectory == "!set" &&
+       ninjas[0]->input.momentumBackend == WindNinjaInputs::openFoamBackend){
         //force temp dir to DEM location
         CPLSetConfigOption("CPL_TMPDIR", CPLGetDirname(ninjas[0]->input.dem.fileName.c_str()));
         CPLSetConfigOption("CPLTMPDIR", CPLGetDirname(ninjas[0]->input.dem.fileName.c_str()));

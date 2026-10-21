@@ -336,6 +336,8 @@ if(NINJAFOAM)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/problem_from_inputs)
     add_test(momentum_backend_backend_default_openfoam
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_default_openfoam)
+    add_test(momentum_backend_cpu_build_grid
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/cpu_build_grid)
     add_test(momentum_backend_default_iterations
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/default_iterations)
     add_test(momentum_backend_backend_names

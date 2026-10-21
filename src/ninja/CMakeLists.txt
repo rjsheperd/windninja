@@ -133,6 +133,7 @@ if(NINJAFOAM)
                     ninjafoam.cpp
                     momentum_backend.cpp
                     openfoam_backend.cpp
+                    cpu_rans_backend.cpp
                     foamDomainAverageInitialization.cpp
                     foamWxModelInitialization.cpp
                     foamGriddedInitialization.cpp)

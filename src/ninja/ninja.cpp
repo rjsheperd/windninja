@@ -3923,7 +3923,7 @@ void ninja::set_MeshCount(WindNinjaInputs::eNinjafoamMeshChoice meshChoice)
 
 void ninja::set_momentumBackend(WindNinjaInputs::eMomentumBackend backend)
 {
-    if(backend != WindNinjaInputs::openFoamBackend)
+    if(backend != WindNinjaInputs::openFoamBackend && backend != WindNinjaInputs::cpuBackend)
     {
         throw std::invalid_argument( "momentum_backend '" + get_momentumBackendName(backend) +
                                      "' is not available in this build of WindNinja" );
@@ -3939,9 +3939,12 @@ WindNinjaInputs::eMomentumBackend ninja::get_eMomentumBackend(std::string backen
     else if(backend == "webgpu"){
         return WindNinjaInputs::webGpuBackend;
     }
+    else if(backend == "cpu"){
+        return WindNinjaInputs::cpuBackend;
+    }
     else{
         throw std::invalid_argument( "Invalid momentum_backend '" + backend +
-                                     "'\nchoices are: 'openfoam' or 'webgpu'" );
+                                     "'\nchoices are: 'openfoam', 'cpu' or 'webgpu'" );
     }
 }
 
@@ -3951,6 +3954,7 @@ std::string ninja::get_momentumBackendName(WindNinjaInputs::eMomentumBackend bac
     {
         case WindNinjaInputs::openFoamBackend: return "openfoam";
         case WindNinjaInputs::webGpuBackend: return "webgpu";
+        case WindNinjaInputs::cpuBackend: return "cpu";
     }
     return "unknown";
 }

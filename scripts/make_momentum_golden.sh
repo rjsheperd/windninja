@@ -18,6 +18,11 @@
 #   scripts/make_momentum_golden.sh <path/to/WindNinja_cli> [OUT_DIR]
 #
 # OUT_DIR defaults to autotest/golden/momentum in the source tree.
+#
+# MOMENTUM_BACKEND=cpu runs the same cases with the CPU RANS backend instead
+# (no OpenFOAM needed). u, v and k then come from the backend's raw result
+# (NINJA_MOMENTUM_RESULT_DIR) and the OpenFOAM mesh metadata is omitted.
+# MOMENTUM_THREADS sets num_threads (default 2, as the golden set used).
 
 set -e
 
@@ -26,23 +31,27 @@ WN_SRC_DIR="$(dirname "$SCRIPT_DIR")"
 
 CLI="$1"
 OUT_DIR="${2:-$WN_SRC_DIR/autotest/golden/momentum}"
+BACKEND="${MOMENTUM_BACKEND:-openfoam}"
+THREADS="${MOMENTUM_THREADS:-2}"
 
 if [ ! -x "$CLI" ]; then
     echo "usage: $0 <path/to/WindNinja_cli> [OUT_DIR]" 1>&2
     exit 1
 fi
-if [ -z "$WM_PROJECT_VERSION" ]; then
-    echo "No OpenFOAM environment loaded (source <openfoam>/etc/bashrc first)." 1>&2
-    exit 1
-fi
+if [ "$BACKEND" = openfoam ]; then
+    if [ -z "$WM_PROJECT_VERSION" ]; then
+        echo "No OpenFOAM environment loaded (source <openfoam>/etc/bashrc first)." 1>&2
+        exit 1
+    fi
 
-# macOS SIP strips DYLD_LIBRARY_PATH when starting /bin/bash, so OpenFOAM
-# could not dlopen libWindNinja from $FOAM_USER_LIBBIN.  Restore the
-# environment from the (unstripped) WM_PROJECT_DIR.  The OpenFOAM scripts
-# are not 'set -e' safe.
-set +e
-source "$WM_PROJECT_DIR/etc/bashrc" > /dev/null 2>&1
-set -e
+    # macOS SIP strips DYLD_LIBRARY_PATH when starting /bin/bash, so OpenFOAM
+    # could not dlopen libWindNinja from $FOAM_USER_LIBBIN.  Restore the
+    # environment from the (unstripped) WM_PROJECT_DIR.  The OpenFOAM scripts
+    # are not 'set -e' safe.
+    set +e
+    source "$WM_PROJECT_DIR/etc/bashrc" > /dev/null 2>&1
+    set -e
+fi
 
 CLI="$(cd "$(dirname "$CLI")" && pwd)/$(basename "$CLI")"
 WORK_DIR="$(mktemp -d)"
@@ -68,7 +77,7 @@ run_case()
     mkdir -p "$run_dir" "$out"
     cp "$dem" "$run_dir/"
     cat > "$run_dir/$name.cfg" << EOF
-num_threads                = 2
+num_threads                = $THREADS
 elevation_file             = $run_dir/$(basename "$dem")
 initialization_method      = domainAverageInitialization
 momentum_flag              = true
@@ -84,12 +93,32 @@ output_wind_height         = 20.0
 units_output_wind_height   = ft
 vegetation                 = grass
 write_ascii_output         = true
+momentum_backend           = $BACKEND
 EOF
 
-    if ! (cd "$run_dir" && "$CLI" "$name.cfg" > log.cli 2>&1); then
+    if ! (cd "$run_dir" && NINJA_MOMENTUM_RESULT_DIR="$run_dir" "$CLI" "$name.cfg" > log.cli 2>&1); then
         echo "WindNinja_cli failed for $name:" 1>&2
         tail -20 "$run_dir/log.cli" 1>&2
         exit 1
+    fi
+
+    cp "$run_dir"/*_vel.asc "$out/vel.asc"
+    cp "$run_dir"/*_ang.asc "$out/ang.asc"
+
+    if [ "$BACKEND" != openfoam ]; then
+        cp "$run_dir/u.asc" "$run_dir/v.asc" "$run_dir/k.asc" "$out/"
+        rm -f "$out"/*.prj
+        {
+            echo "case: $name"
+            echo "backend: $BACKEND"
+            echo "dem: $(basename "$dem")"
+            echo "mesh_choice: $mesh"
+            echo "input: 10 mph from $direction deg at 20 ft, grass"
+            echo "windninja_commit: $(git -C "$WN_SRC_DIR" rev-parse HEAD)"
+            echo "platform: $(uname -s) $(uname -m)"
+            grep 'CPU RANS' "$run_dir/log.cli" | sed 's/^Run 0: /  /'
+        } > "$out/metadata.txt"
+        return
     fi
 
     local case_dir
@@ -100,8 +129,6 @@ EOF
                    "$case_dir/foam.tif" "$out/v.asc"
     gdal_translate -q -b 3 -of AAIGrid -co SIGNIFICANT_DIGITS=8 \
                    "$case_dir/foam.tif" "$out/k.asc"
-    cp "$run_dir"/*_vel.asc "$out/vel.asc"
-    cp "$run_dir"/*_ang.asc "$out/ang.asc"
     rm -f "$out"/*.prj
 
     # First cell height as computed in ninjafoam.cpp: the blockMesh cell is

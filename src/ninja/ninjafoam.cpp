@@ -29,6 +29,7 @@
 
 #include "ninjafoam.h"
 #include "openfoam_backend.h"
+#include "cpu_rans_backend.h"
 
 const char* NinjaFoam::pszFoamPath = NULL;
 
@@ -193,7 +194,8 @@ bool NinjaFoam::simulate_wind()
     foamVersion = CPLGetConfigOption("WM_PROJECT_VERSION", "");
     #endif
     CPLDebug("NINJAFOAM", CPLSPrintf("foamVersion = \"%s\"",foamVersion.c_str()));
-    if(foamVersion != "2.2.0" && foamVersion != "9" && foamVersion != "11")
+    bool useOpenFoam = input.momentumBackend == WindNinjaInputs::openFoamBackend;
+    if(useOpenFoam && foamVersion != "2.2.0" && foamVersion != "9" && foamVersion != "11")
     {
         throw std::runtime_error("Unsupported OpenFOAM version '" + foamVersion +
                                  "' (WM_PROJECT_VERSION). The momentum solver supports "
@@ -231,6 +233,16 @@ bool NinjaFoam::simulate_wind()
     }
     
     
+    if( !useOpenFoam && ( input.volVTKOutFlag == true || input.writeTurbulence == true ) )
+    {
+        // the mass-mesh sampling behind these outputs reads the OpenFOAM case
+        input.Com->ninjaCom(ninjaComClass::ninjaWarning,
+                "VTK and turbulence output are not available with the '%s' momentum backend yet; skipping them.",
+                get_momentumBackendName(input.momentumBackend).c_str());
+        input.volVTKOutFlag = false;
+        input.writeTurbulence = false;
+    }
+
     if( input.volVTKOutFlag == true || input.writeTurbulence == true )
     {
         writeMassMesh = true;
@@ -301,20 +313,34 @@ bool NinjaFoam::simulate_wind()
     input.meshCount = atoi(CPLGetConfigOption("NINJAFOAM_MESH_COUNT", CPLSPrintf("%d",input.meshCount)));
     input.nIterations = atoi(CPLGetConfigOption("NINJAFOAM_ITERATIONS", CPLSPrintf("%d",input.nIterations)));
 
-    if(input.momentumBackend != WindNinjaInputs::openFoamBackend)
-    {
-        throw std::runtime_error("momentum backend '" + get_momentumBackendName(input.momentumBackend) +
-                                 "' is not available in this build of WindNinja");
-    }
     input.Com->ninjaCom(ninjaComClass::ninjaNone, "Momentum solver backend: %s",
                         get_momentumBackendName(input.momentumBackend).c_str());
     OpenFoamBackend openFoam(*this);
-    MomentumBackend &backend = openFoam;
+    CpuRansBackend cpuRans;
+    MomentumBackend *selected = NULL;
+    switch(input.momentumBackend)
+    {
+        case WindNinjaInputs::openFoamBackend: selected = &openFoam; break;
+        case WindNinjaInputs::cpuBackend: selected = &cpuRans; break;
+        default:
+            throw std::runtime_error("momentum backend '" + get_momentumBackendName(input.momentumBackend) +
+                                     "' is not available in this build of WindNinja");
+    }
+    MomentumBackend &backend = *selected;
     MomentumResult result;
     bool solutionStatus = backend.solve(MakeMomentumProblem(input), input.Com,
             [this]() { checkCancel(); },
             [this](const MomentumResult &r) { return ApplyMomentumResult(r); },
             result);
+
+    // optional raw result dump for backend comparisons (the golden u/v/k.asc)
+    const char *pszResultDir = CPLGetConfigOption("NINJA_MOMENTUM_RESULT_DIR", NULL);
+    if( solutionStatus == true && pszResultDir != NULL )
+    {
+        result.u.write_Grid(CPLFormFilename(pszResultDir, "u", "asc"), 8);
+        result.v.write_Grid(CPLFormFilename(pszResultDir, "v", "asc"), 8);
+        result.k.write_Grid(CPLFormFilename(pszResultDir, "k", "asc"), 8);
+    }
 
     if( solutionStatus == true )
     {

@@ -39,6 +39,7 @@ MomentumProblem MakeMomentumProblem(const WindNinjaInputs &input)
     p.direction = input.inputDirection_proj;
     p.inputHeight = input.inputWindHeight;
     p.outputHeight = input.outputWindHeight;
+    p.meshResolution = input.dem.get_cellSize();
     p.cellBudget = input.meshCount;
     p.iterations = input.nIterations;
     p.nThreads = input.numberCPUs;
