@@ -18,6 +18,7 @@
 #include "gpu_rans.h"
 #include "gpu_reduce.h"
 #include "rans_abl.h"
+#include "rans_gpu_bridge.h"
 #include "rans_grid.h"
 #include "rans_solver.h"
 #include "rans_wind.h"
@@ -59,30 +60,6 @@ uint32_t ulps(float a, float b)
     return ua > ub ? ua - ub : ub - ua;
 }
 
-gpu::GridView ViewOf(const RansGrid &g)
-{
-    gpu::GridView view;
-    view.nx = g.nx; view.ny = g.ny; view.nz = g.nz;
-    view.volume = g.volume.data();
-    view.cx = g.cx.data(); view.cy = g.cy.data(); view.cz = g.cz.data();
-    view.wallDistance = g.wallDistance.data();
-    const std::vector<double> *s[3][3] = {{&g.iSx, &g.iSy, &g.iSz},
-                                          {&g.jSx, &g.jSy, &g.jSz},
-                                          {&g.kSx, &g.kSy, &g.kSz}};
-    const std::vector<double> *f[3][3] = {{&g.iFx, &g.iFy, &g.iFz},
-                                          {&g.jFx, &g.jFy, &g.jFz},
-                                          {&g.kFx, &g.kFy, &g.kFz}};
-    for(int d = 0; d < 3; d++)
-        for(int m = 0; m < 3; m++)
-        {
-            view.s[d][m] = s[d][m]->data();
-            view.f[d][m] = f[d][m]->data();
-        }
-    view.agl[0] = g.iAgl.data();
-    view.agl[1] = g.jAgl.data();
-    return view;
-}
-
 // A terrain-following grid over a Gaussian ridge (first layer h1, geometric
 // growth), at a realistic elevation.
 RansGrid RidgeGrid(int nx, int ny, int nz)
@@ -108,40 +85,6 @@ RansGrid RidgeGrid(int nx, int ny, int nz)
             }
     }
     return RansGrid::FromNodes(nx, ny, nz, x, y, z);
-}
-
-// Copies the CPU solver's boundaries (the wind setup's kinds) to the GPU.
-void CopyBoundaries(const RansSolver &cpu, gpu::RansSolver &g)
-{
-    for(int side = 0; side < 6; side++)
-    {
-        const RansSolver::Boundary &b = cpu.boundary(RansSolver::Side(side));
-        gpu::RansSolver::Boundary gb;
-        switch(b.type)
-        {
-            case RansSolver::Boundary::wall: gb.type = gpu::RansSolver::Boundary::wall; break;
-            case RansSolver::Boundary::slip: gb.type = gpu::RansSolver::Boundary::slip; break;
-            case RansSolver::Boundary::velocityInlet:
-                gb.type = gpu::RansSolver::Boundary::velocityInlet; break;
-            case RansSolver::Boundary::pressureOutlet:
-                gb.type = gpu::RansSolver::Boundary::pressureOutlet; break;
-            case RansSolver::Boundary::logProfileInlet:
-                gb.type = gpu::RansSolver::Boundary::logProfileInlet; break;
-            default: BOOST_FAIL("no GPU version of this boundary kind");
-        }
-        gb.p = b.p; gb.u = b.u; gb.v = b.v; gb.w = b.w;
-        gb.ustar = b.ustar; gb.z0 = b.z0;
-        g.setBoundary(gpu::RansSolver::Side(side), gb);
-    }
-}
-
-gpu::RansSolver::TurbulenceModel ModelOf(const RansSolver &cpu)
-{
-    gpu::RansSolver::TurbulenceModel m;
-    m.cmu = cpu.model.cmu; m.c1 = cpu.model.c1; m.c2 = cpu.model.c2;
-    m.sigmaK = cpu.model.sigmaK; m.sigmaEpsilon = cpu.model.sigmaEpsilon;
-    m.eta0 = cpu.model.eta0; m.beta = cpu.model.beta;
-    return m;
 }
 
 // max |a - b| over max |b|
@@ -175,14 +118,6 @@ void PerturbedWindState(RansSolver &cpu)
         cpu.epsilon[i] *= 1.0 + 0.3 * std::cos(y / 250.0);
         cpu.nut[i] = cpu.model.cmu * cpu.k[i] * cpu.k[i] / cpu.epsilon[i];
     }
-}
-
-void UploadState(const RansSolver &cpu, gpu::RansSolver &gs)
-{
-    const std::vector<double> *f[7] = {&cpu.p, &cpu.u, &cpu.v, &cpu.w, &cpu.k,
-                                       &cpu.epsilon, &cpu.nut};
-    for(int slot = 0; slot < 7; slot++)
-        gs.fields.upload(gpu::FieldSlot(slot), *f[slot]);
 }
 
 // worst RelativeDiff over the 7 fields
@@ -358,7 +293,7 @@ BOOST_AUTO_TEST_CASE( grid_pack )
                 z.push_back(2000.0 + 5.0 * i + 50.0 * k * (1 + 0.1 * k));
             }
     RansGrid g = RansGrid::FromNodes(nx, ny, nz, x, y, z);
-    gpu::Grid grid(*c, ViewOf(g));
+    gpu::Grid grid(*c, GpuGridView(g));
 
     BOOST_CHECK_EQUAL(grid.nCells, size_t(nx * ny * nz));
     BOOST_CHECK_EQUAL(grid.nFaces[2], size_t(nx * ny * (nz + 1)));
@@ -430,12 +365,8 @@ BOOST_AUTO_TEST_CASE( kernel_gradients_matches_cpu )
     });
     cpu.computeGradients();
 
-    gpu::RansSolver gs(*c, ViewOf(g), cpu.nu, cpu.beta);
-    CopyBoundaries(cpu, gs);
-    gs.fields.upload(gpu::fieldP, cpu.p);
-    gs.fields.upload(gpu::fieldU, cpu.u);
-    gs.fields.upload(gpu::fieldV, cpu.v);
-    gs.fields.upload(gpu::fieldW, cpu.w);
+    gpu::RansSolver gs(*c, GpuGridView(g), cpu.nu, cpu.beta);
+    CopyToGpu(cpu, gs);
     gs.computeGradients();
 
     double worst = 0.0;
@@ -461,10 +392,8 @@ BOOST_AUTO_TEST_CASE( kernel_residuals_matches_cpu )
     cpu.computeGradients();
     cpu.computeResiduals();
 
-    gpu::RansSolver gs(*c, ViewOf(g), cpu.nu, cpu.beta);
-    CopyBoundaries(cpu, gs);
-    gs.setTurbulence(true, ModelOf(cpu));
-    UploadState(cpu, gs);
+    gpu::RansSolver gs(*c, GpuGridView(g), cpu.nu, cpu.beta);
+    CopyToGpu(cpu, gs);
     gs.computeGradients();
     gs.computeResiduals();
 
@@ -492,10 +421,8 @@ BOOST_AUTO_TEST_CASE( kernel_iterate_matches_cpu )
     RansGrid g = RidgeGrid(40, 12, 10);
     ::RansSolver cpu(g, 1.58946e-5, 25.0);
     PerturbedWindState(cpu);
-    gpu::RansSolver gs(*c, ViewOf(g), cpu.nu, cpu.beta);
-    CopyBoundaries(cpu, gs);
-    gs.setTurbulence(true, ModelOf(cpu));
-    UploadState(cpu, gs);
+    gpu::RansSolver gs(*c, GpuGridView(g), cpu.nu, cpu.beta);
+    CopyToGpu(cpu, gs);
 
     // one step: the update itself
     ::RansSolver::Residuals rc = cpu.iterate(1, 0.5);

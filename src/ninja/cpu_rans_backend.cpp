@@ -103,13 +103,8 @@ bool CpuRansBackend::solve(const MomentumProblem &problem,
     RansGrid g = buildGrid(problem, firstLayer);
     com->ninjaCom(ninjaComClass::ninjaNone, "CPU RANS grid: %d x %d x %d cells.", g.nx, g.ny, g.nz);
 
-    double ustar = AblFrictionVelocity(problem.speed, problem.inputHeight, problem.z0);
-    // artificial compressibility: wave speed comparable to the flow speed
-    double beta = std::max(1.0, 1.25 * problem.speed * problem.speed);
-    RansSolver s(g, AIR_NU, beta);
+    RansSolver s = setUp(problem, g);
     s.threads = problem.nThreads;
-    ApplyWindBoundaries(s, ustar, problem.z0, problem.direction);
-    InitializeLogProfile(s, ustar, problem.z0, problem.direction);
 
     RansSolver::Residuals peak, r;
     peak.p = peak.u = peak.v = peak.w = 0.0;
@@ -131,6 +126,26 @@ bool CpuRansBackend::solve(const MomentumProblem &problem,
     }
     com->ninjaCom(ninjaComClass::ninjaNone, "CPU RANS stopped after %d cycles, residual %g.", it, worst);
 
+    sample(problem, g, s.u, s.v, s.k, firstLayer, result);
+    return accept(result);
+}
+
+RansSolver CpuRansBackend::setUp(const MomentumProblem &problem, const RansGrid &g)
+{
+    double ustar = AblFrictionVelocity(problem.speed, problem.inputHeight, problem.z0);
+    // artificial compressibility: wave speed comparable to the flow speed
+    double beta = std::max(1.0, 1.25 * problem.speed * problem.speed);
+    RansSolver s(g, AIR_NU, beta);
+    ApplyWindBoundaries(s, ustar, problem.z0, problem.direction);
+    InitializeLogProfile(s, ustar, problem.z0, problem.direction);
+    return s;
+}
+
+void CpuRansBackend::sample(const MomentumProblem &problem, const RansGrid &g,
+                            const std::vector<double> &u, const std::vector<double> &v,
+                            const std::vector<double> &k, double firstLayer,
+                            MomentumResult &result)
+{
     // ground-cell values on the DEM grid, as OpenFOAM's 'cell' sampling
     result.u = *problem.dem;
     result.v = *problem.dem;
@@ -139,9 +154,9 @@ bool CpuRansBackend::solve(const MomentumProblem &problem,
         for(int col = 0; col < g.nx; col++)
         {
             int c = g.cell(col, row, 0);
-            result.u(row, col) = s.u[c];
-            result.v(row, col) = s.v[c];
-            result.k(row, col) = s.k[c];
+            result.u(row, col) = u[c];
+            result.v(row, col) = v[c];
+            result.k(row, col) = k[c];
         }
     result.sampleHeight = firstLayer / 2.0;
     result.outputHeightResolved = firstLayer < problem.outputHeight;
@@ -150,7 +165,6 @@ bool CpuRansBackend::solve(const MomentumProblem &problem,
         // TODO (RJ Sheperd 2026-10-21) -- interpolate to the output height when
         // the first layer resolves it; WindNinja's coarse/medium/fine meshes
         // never do (first cell 59-286 m)
-        throw std::runtime_error("CPU RANS backend: output height inside the first layer is not supported yet");
+        throw std::runtime_error("RANS backend: output height inside the first layer is not supported yet");
     }
-    return accept(result);
 }

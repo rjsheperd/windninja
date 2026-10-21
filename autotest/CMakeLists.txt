@@ -357,6 +357,9 @@ if(NINJAFOAM)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_unavailable_throws)
     add_test(momentum_backend_c_api_set_get_backend
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/c_api_set_get_backend)
+    # NinjaInit needs the data directory
+    set_tests_properties(momentum_backend_c_api_set_get_backend PROPERTIES
+                         ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data")
     add_test(stl_1
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=stl/stl_1)
     add_test(stl_2
@@ -497,7 +500,8 @@ endif()
 
 # Asking for a momentum backend that isn't built in must fail cleanly, before
 # any solve (so it doesn't need OpenFOAM).
-if(RUN_CFG_TESTS AND NINJAFOAM)
+# (only without WITH_WEBGPU, where webgpu is the unavailable backend)
+if(RUN_CFG_TESTS AND NINJAFOAM AND NOT WITH_WEBGPU)
     set(testdir ${PROJECT_BINARY_DIR}/autotest/config/momentum_backend_unavailable)
     file(MAKE_DIRECTORY ${testdir})
     file(COPY ${PROJECT_SOURCE_DIR}/autotest/config/momentum_backend_unavailable.cfg

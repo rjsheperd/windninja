@@ -3923,7 +3923,12 @@ void ninja::set_MeshCount(WindNinjaInputs::eNinjafoamMeshChoice meshChoice)
 
 void ninja::set_momentumBackend(WindNinjaInputs::eMomentumBackend backend)
 {
-    if(backend != WindNinjaInputs::openFoamBackend && backend != WindNinjaInputs::cpuBackend)
+    bool available = backend == WindNinjaInputs::openFoamBackend ||
+                     backend == WindNinjaInputs::cpuBackend;
+#ifdef WITH_WEBGPU
+    available = available || backend == WindNinjaInputs::webGpuBackend;
+#endif
+    if(!available)
     {
         throw std::invalid_argument( "momentum_backend '" + get_momentumBackendName(backend) +
                                      "' is not available in this build of WindNinja" );

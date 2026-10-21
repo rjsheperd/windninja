@@ -141,7 +141,7 @@ EOF
             echo "input: 10 mph from $direction deg at 20 ft, grass"
             echo "windninja_commit: $(git -C "$WN_SRC_DIR" rev-parse HEAD)"
             echo "platform: $(uname -s) $(uname -m)"
-            grep 'CPU RANS' "$run_dir/log.cli" | sed 's/^Run 0: /  /'
+            grep 'RANS' "$run_dir/log.cli" | sed 's/^Run 0: /  /'
         } > "$out/metadata.txt"
         return
     fi

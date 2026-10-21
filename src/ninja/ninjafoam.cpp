@@ -30,6 +30,9 @@
 #include "ninjafoam.h"
 #include "openfoam_backend.h"
 #include "cpu_rans_backend.h"
+#ifdef WITH_WEBGPU
+#include "webgpu_rans_backend.h"
+#endif
 
 const char* NinjaFoam::pszFoamPath = NULL;
 
@@ -317,11 +320,17 @@ bool NinjaFoam::simulate_wind()
                         get_momentumBackendName(input.momentumBackend).c_str());
     OpenFoamBackend openFoam(*this);
     CpuRansBackend cpuRans;
+#ifdef WITH_WEBGPU
+    WebGpuRansBackend webGpuRans;
+#endif
     MomentumBackend *selected = NULL;
     switch(input.momentumBackend)
     {
         case WindNinjaInputs::openFoamBackend: selected = &openFoam; break;
         case WindNinjaInputs::cpuBackend: selected = &cpuRans; break;
+#ifdef WITH_WEBGPU
+        case WindNinjaInputs::webGpuBackend: selected = &webGpuRans; break;
+#endif
         default:
             throw std::runtime_error("momentum backend '" + get_momentumBackendName(input.momentumBackend) +
                                      "' is not available in this build of WindNinja");

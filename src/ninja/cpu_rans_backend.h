@@ -29,6 +29,10 @@
 
 #include "momentum_backend.h"
 
+#include <vector>
+
+#include "rans_solver.h"
+
 class RansGrid;
 
 /*
@@ -58,6 +62,18 @@ public:
     ** flat domain top (max elevation + blockMeshDz).
     */
     RansGrid buildGrid(const MomentumProblem &problem, double firstLayer) const;
+
+    /* Air viscosity, the artificial-compressibility beta for a problem, and
+    ** the wind setup (log-profile inlets, outlets, rough ground) with the
+    ** log-profile initial state.  Shared with the GPU backend. */
+    static RansSolver setUp(const MomentumProblem &problem, const RansGrid &g);
+
+    /* Fill result from the ground-cell u, v, k (per cell of g), as
+    ** OpenFOAM's 'cell' sampling, with the first layer's sample height. */
+    static void sample(const MomentumProblem &problem, const RansGrid &g,
+                       const std::vector<double> &u, const std::vector<double> &v,
+                       const std::vector<double> &k, double firstLayer,
+                       MomentumResult &result);
 };
 
 #endif /* CPU_RANS_BACKEND_H */

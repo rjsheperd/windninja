@@ -140,6 +140,13 @@ if(NINJAFOAM)
                     foamGriddedInitialization.cpp)
 endif(NINJAFOAM)
 
+if(WITH_WEBGPU)
+    set(NINJA_SOURCES ${NINJA_SOURCES} rans_gpu_bridge.cpp)
+    if(NINJAFOAM)
+        set(NINJA_SOURCES ${NINJA_SOURCES} webgpu_rans_backend.cpp)
+    endif(NINJAFOAM)
+endif(WITH_WEBGPU)
+
 if(WITH_NOMADS_SUPPORT)
     set(NINJA_SOURCES ${NINJA_SOURCES}
                       nomads_wx_init.cpp
@@ -191,6 +198,12 @@ else()
 endif()
 
 target_link_libraries(ninja ${LINK_LIBS} $<$<BOOL:${OPENMP_FOUND}>:OpenMP::OpenMP_CXX>)
+if(WITH_WEBGPU)
+    target_link_libraries(ninja ninja_gpu)
+    if(WIN32)
+        target_link_libraries(WindNinjadll PRIVATE ninja_gpu)
+    endif(WIN32)
+endif(WITH_WEBGPU)
 
 
 if(MSVC)

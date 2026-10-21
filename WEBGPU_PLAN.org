@@ -981,8 +981,24 @@ single-grid solver. Multigrid follows once the golden comparison runs.
   least 3× fewer fine-grid sweeps than single-grid.
 
 ** NEXT 4.4 End-to-end GPU backend
-- [ ] Host loop: iterate until converged or out of iterations, read back
-      residuals every N steps, and honour =checkCancel=.
+- [X] =WebGpuRansBackend= (=src/ninja/webgpu_rans_backend.{h,cpp}=, built
+      with =WITH_WEBGPU= and =NINJAFOAM=). =momentum_backend = webgpu= now
+      selects it, through the CLI and the C API. It shares the CPU backend's
+      grid, setup and sampling (=CpuRansBackend::buildGrid=, =setUp=,
+      =sample=), so the two differ only in where, and in what precision, they
+      iterate. =rans_gpu_bridge.{h,cpp}= converts the CPU solver's grid,
+      boundaries, model and state to the GPU's; the GPU tests use it too.
+      Single grid for now (4.3 later). Without an adapter it fails with
+      "momentum backend 'webgpu': WebGPU: no adapter ...".
+- [X] Host loop: iterate until converged or out of iterations, read back
+      residuals every N steps (=checkEvery= 100), and honour =checkCancel=
+      (between chunks). Convergence is as the CPU's: max(u, v) and k residuals
+      below 1e-5 of their peak; =maxIterations= is 20,000 steps.
+- The availability tests are now build-aware: with =WITH_WEBGPU=, =webgpu=
+  is accepted (the C API test too), and =cfg_momentum_backend_unavailable=
+  is registered only without it. =momentum_backend_c_api_set_get_backend=
+  now gets =WINDNINJA_DATA= from ctest. Its earlier "parallel flake" was
+  that variable missing from my =env -i= runs.
 - [ ] Read back the output-height sample and the optional 3-D fields.
 *** Tests
 - =momentum_gpu_golden_*=: all golden cases are within the GATE 0 tolerances
@@ -1105,9 +1121,6 @@ Without =USER= in the environment (e.g. under =env -i=), OpenFOAM's
 =FOAM_USER_LIBBIN= becomes =~/OpenFOAM/-11=. =libWindNinja= isn't loaded,
 and the run fails late and obscurely: =decomposePar= reports
 "Essential entry 'value' missing" for =logProfileDissipationRateInlet=.
-** TODO =momentum_backend_c_api_set_get_backend= fails under =ctest -j 8=
-It passes alone (seen 2026-10-21), so it's probably a shared file or state
-between parallel tests.
 ** TODO =RUN_CFG_TESTS= configure fails where only =python3= exists
 =autotest/CMakeLists.txt:353= runs =pef.py= with a bare =python=, which stock
 macOS lacks, so =ELEV_FILE= is empty and =string(STRIP)= errors. Run it with
