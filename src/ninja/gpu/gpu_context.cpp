@@ -307,27 +307,27 @@ Buffer::~Buffer()
     wgpuBufferRelease(buffer_);
 }
 
-void Buffer::upload(const void *data, std::size_t bytes)
+void Buffer::upload(const void *data, std::size_t bytes, std::size_t offset)
 {
-    if(bytes > size_)
-        throw Error("WebGPU upload larger than the buffer");
+    if(offset % 4 != 0 || offset + bytes > size_)
+        throw Error("WebGPU upload outside the buffer");
     // writeBuffer needs a multiple of 4 bytes; pad the tail with zeros
     std::size_t whole = bytes / 4 * 4;
     if(whole > 0)
-        wgpuQueueWriteBuffer(context_.queue(), buffer_, 0, data, whole);
+        wgpuQueueWriteBuffer(context_.queue(), buffer_, offset, data, whole);
     if(whole < bytes)
     {
         unsigned char tail[4] = {0, 0, 0, 0};
         std::memcpy(tail, static_cast<const unsigned char *>(data) + whole,
                     bytes - whole);
-        wgpuQueueWriteBuffer(context_.queue(), buffer_, whole, tail, 4);
+        wgpuQueueWriteBuffer(context_.queue(), buffer_, offset + whole, tail, 4);
     }
 }
 
-void Buffer::download(void *data, std::size_t bytes)
+void Buffer::download(void *data, std::size_t bytes, std::size_t offset)
 {
-    if(bytes > size_)
-        throw Error("WebGPU download larger than the buffer");
+    if(offset % 4 != 0 || offset + bytes > size_)
+        throw Error("WebGPU download outside the buffer");
     std::size_t padded = (bytes + 3) / 4 * 4;
     WGPUBufferDescriptor desc = WGPU_BUFFER_DESCRIPTOR_INIT;
     desc.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
@@ -336,7 +336,7 @@ void Buffer::download(void *data, std::size_t bytes)
 
     WGPUCommandEncoder encoder =
         wgpuDeviceCreateCommandEncoder(context_.device(), nullptr);
-    wgpuCommandEncoderCopyBufferToBuffer(encoder, buffer_, 0, staging, 0, padded);
+    wgpuCommandEncoderCopyBufferToBuffer(encoder, buffer_, offset, staging, 0, padded);
     WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
     wgpuQueueSubmit(context_.queue(), 1, &commands);
     wgpuCommandBufferRelease(commands);

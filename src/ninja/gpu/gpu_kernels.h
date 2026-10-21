@@ -55,6 +55,48 @@ fn main(@builtin(global_invocation_id) id : vec3<u32>) {
 }
 )wgsl";
 
+// Sum of params.count floats (or their squares) of data from params.offset,
+// one partial sum per workgroup: threads sum a grid-strided handful each,
+// then a tree sum in workgroup memory, so f32 error stays near pairwise.
+// Run it twice (data -> partials -> one value) for the total.
+constexpr const char *reduceSum = R"wgsl(
+struct Params {
+    offset : u32,
+    count : u32,
+    square : u32,
+    pad : u32,
+}
+
+@group(0) @binding(0) var<uniform> params : Params;
+@group(0) @binding(1) var<storage, read> data : array<f32>;
+@group(0) @binding(2) var<storage, read_write> partials : array<f32>;
+
+var<workgroup> scratch : array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(local_invocation_id) lid : vec3<u32>,
+        @builtin(workgroup_id) wid : vec3<u32>,
+        @builtin(num_workgroups) groups : vec3<u32>) {
+    var acc = 0.0;
+    let stride = groups.x * 256u;
+    for (var i = wid.x * 256u + lid.x; i < params.count; i += stride) {
+        let x = data[params.offset + i];
+        acc += select(x, x * x, params.square != 0u);
+    }
+    scratch[lid.x] = acc;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s >>= 1u) {
+        if (lid.x < s) {
+            scratch[lid.x] += scratch[lid.x + s];
+        }
+        workgroupBarrier();
+    }
+    if (lid.x == 0u) {
+        partials[wid.x] = scratch[0];
+    }
+}
+)wgsl";
+
 } // namespace kernels
 } // namespace gpu
 

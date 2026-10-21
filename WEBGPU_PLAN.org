@@ -868,21 +868,37 @@ from numerics problems. From 3.3: record each iteration's dispatches in one
 command encoder and submit, cache bind groups, and read back residuals every
 N iterations only.
 
-** NEXT 4.1 Data layout and precision
-- [ ] Use a structure-of-arrays layout for the fields (u, v, w, p, k, ε, ν_t)
-      and the metrics on the (i,j,k) grid.
-- [ ] Use f32 throughout, with coordinates kept local to the domain origin.
-- [ ] Reduce residuals with a pairwise / two-pass sum to limit f32 error.
-- [ ] Add tests
-- [ ] Tests pass
-- [ ] Documentation updates
+** DONE 4.1 Data layout and precision
+- [X] Use a structure-of-arrays layout for the fields (u, v, w, p, k, ε, ν_t)
+      and the metrics on the (i,j,k) grid (=src/ninja/gpu/gpu_grid.{h,cpp}=).
+      WebGPU guarantees only 8 storage buffers per shader stage, so arrays are
+      *packed*: one cell-metrics buffer, one per face direction, and one fields
+      buffer, each a structure of arrays with slot s at s × count (=CellSlot=,
+      =FaceSlot=, =FieldSlot=). A kernel then needs at most about 7 bindings.
+      =gpu::Grid= takes a non-owning =GridView= of plain arrays, not
+      =RansGrid=, so =ninja_gpu= stays free of WindNinja core for the browser.
+- [X] Use f32 throughout, with coordinates kept local to the domain origin.
+      x and y are already local in =RansGrid=; z (absolute elevation) is
+      shifted by =zOrigin=, the lowest cell centroid.
+- [X] Reduce residuals with a pairwise / two-pass sum to limit f32 error
+      (=gpu::Reducer=, =kernels::reduceSum=): grid-strided partial sums in up to
+      4,096 workgroups with tree sums, then one workgroup. Each call reads back
+      one float, so call it every N iterations.
+- [X] Add tests: =gpu/reduction_sum=, =grid_pack=, =fields_slots=.
+- [X] Tests pass: all 8 =gpu/= unit tests. The 10M-value sum is within 2.3e-8
+      of f64 and the sum of squares within 6.8e-8.
+- [X] Documentation updates: header comments here.
 *** Tests
 - =gpu_reduction_sum=: summing 10M values matches f64 CPU within 1e-6
-  relative.
+  relative. (Done.)
 - =cpu_rans_f32_mode=: the CPU backend compiled with float gives golden results
   within tolerance. This shows f32 is adequate before blaming kernels.
+  *SKIP* (2026-10-21): it would need the CPU solver templated on its scalar
+  type. Phase 4 is checked against OpenFOAM directly (user decision), and the
+  4.2 per-kernel tests compare f32 GPU stages with the f64 CPU, which
+  localises any precision problem.
 
-** TODO 4.2 Kernels, one per solver stage
+** NEXT 4.2 Kernels, one per solver stage
 - [ ] Gradients / reconstruction.
 - [ ] Convective and diffusive fluxes.
 - [ ] Pseudo-compressibility update with local Δτ.

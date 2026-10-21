@@ -119,9 +119,10 @@ public:
     WGPUBuffer handle() const { return buffer_; }
     std::size_t size() const { return size_; }
 
-    void upload(const void *data, std::size_t bytes);
-    // Copies the first bytes of the buffer back through a staging buffer.
-    void download(void *data, std::size_t bytes);
+    // offsets are in bytes and must be multiples of 4
+    void upload(const void *data, std::size_t bytes, std::size_t offset = 0);
+    // Copies bytes from offset back through a staging buffer.
+    void download(void *data, std::size_t bytes, std::size_t offset = 0);
 
     template <typename T> void upload(const std::vector<T> &v)
     {
