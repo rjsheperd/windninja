@@ -73,12 +73,20 @@ if(NINJAFOAM)
                      test_momentum_backend.cpp)
 endif(NINJAFOAM)
 
+if(WITH_WEBGPU)
+    set(TEST_SOURCES ${TEST_SOURCES}
+                     test_gpu.cpp)
+endif(WITH_WEBGPU)
+
 add_executable(test_main ${TEST_SOURCES})
 
 add_dependencies(test_main ninja)
 #ADD_DEPENDENCIES(test_api  ninja)
 
 target_link_libraries(test_main ${LINK_LIBS})
+if(WITH_WEBGPU)
+    target_link_libraries(test_main dawn::webgpu_dawn)
+endif(WITH_WEBGPU)
 target_compile_definitions(test_main PRIVATE
                            WINDNINJA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
@@ -386,6 +394,10 @@ add_test(rans_solver_multigrid_cavity
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/multigrid_cavity)
 add_test(rans_solver_multigrid_matches_single_grid_turbulent
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/multigrid_matches_single_grid_turbulent)
+if(WITH_WEBGPU)
+    add_test(gpu_dawn_instance
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=gpu/dawn_instance)
+endif(WITH_WEBGPU)
 add_test(momentum_compare_identity
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/identity)
 add_test(momentum_compare_identity_golden_case

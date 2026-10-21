@@ -262,6 +262,13 @@ if(NINJAFOAM)
     endif()
 endif()
 
+# WebGPU momentum solver, on Dawn (prebuilt packages: scripts/fetch_dawn.sh)
+option(WITH_WEBGPU "Build the WebGPU momentum solver (needs Dawn)" OFF)
+if(WITH_WEBGPU)
+    find_package(Dawn CONFIG REQUIRED)
+    add_compile_definitions(WITH_WEBGPU)
+endif(WITH_WEBGPU)
+
 # Miscellaneous options
 option(NINJA_SPEED_TESTING "Enable initialization speed dampening" OFF)
 if(NINJA_SPEED_TESTING)

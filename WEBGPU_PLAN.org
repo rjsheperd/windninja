@@ -647,7 +647,7 @@ Started 2026-10-21 by user decision, ahead of GATE 2: Phase 3 doesn't depend on
 the numerics. Phase 4 (the kernel port) waits until the 2.4 Big Butte
 question is settled or formally accepted.
 
-** TODO 3.1 Choose and vendor the runtime
+** IN-PROGRESS 3.1 Choose and vendor the runtime
 Decision (2026-10-21, user): *Dawn*. In a browser the page supplies WebGPU;
 C++ compiled with Emscripten reaches it through *emdawnwebgpu*, Dawn's
 maintained fork of Emscripten's original bindings (Emscripten ≥ 4.0.10:
@@ -658,10 +658,15 @@ advantage, prebuilt native binaries, is a packaging cost only.
 Rules: write host code against the C =webgpu.h= API (stable). Don't use
 =webgpu_cpp.h=, which Dawn marks unstable.
 - [X] Choose the runtime (Dawn), recorded above.
-- [ ] Vendor Dawn for native builds: a prebuilt package where available,
-      otherwise a CMake source build (=DAWN_FETCH_DEPENDENCIES=). Pin a version.
-- [ ] Add a CMake option =WITH_WEBGPU= (default OFF) that finds or builds Dawn
-      and links the GPU layer.
+- [X] Vendor Dawn for native builds: =scripts/fetch_dawn.sh= downloads the
+      pinned nightly =v20261016.190333= (rev =67d4d6e6=) for macOS arm64 / Intel,
+      Linux x64 or Windows x64, checks SHA-256, and prints =Dawn_DIR=. The
+      packages are static, about 14–120 MB, and export =dawn::webgpu_dawn=.
+      Nightly binaries aren't signed or guaranteed by Google, so a shipped
+      installer may want a source build of the same revision (7.1).
+- [X] Add a CMake option =WITH_WEBGPU= (default OFF): =find_package(Dawn
+      CONFIG)=, a =WITH_WEBGPU= define, and =test_main= linked to
+      =dawn::webgpu_dawn=. The =gpu/dawn_instance= smoke test passes on macOS arm64.
 - [ ] Emscripten target for the solver-only module (3.4) via
       =--use-port=emdawnwebgpu=.
 *** Tests
