@@ -999,7 +999,24 @@ single-grid solver. Multigrid follows once the golden comparison runs.
   is registered only without it. =momentum_backend_c_api_set_get_backend=
   now gets =WINDNINJA_DATA= from ctest. Its earlier "parallel flake" was
   that variable missing from my =env -i= runs.
-- [ ] Read back the output-height sample and the optional 3-D fields.
+- [X] Read back the output-height sample (the ground layer, as the CPU
+      backend). [ ] The optional 3-D fields wait for 5.2, as for the CPU
+      backend.
+- First golden comparison (2026-10-21, Apple M3 Max, single grid, 20,000
+  steps; all three cases took 28.6 s in total, meshing and output included):
+  | case                       | speed RMSE | max    | dir   | k rel | vs OpenFOAM | GPU vs CPU backend   |
+  | flat_coarse_270            | 0.109      | 0.197  | 0°    | 0.070 | PASS        | (same as CPU)        |
+  | ridge_coarse_270           | 0.490      | 2.25   | 7.5°  | 0.345 | FAIL        | 0.0021 m/s, 0.02°    |
+  | big_butte_small_coarse_270 | 0.555      | 5.37   | 5.7°  | 0.481 | FAIL        | 0.0023 m/s, 0.02°    |
+  The GPU reproduces the CPU backend to about 0.002 m/s on every case, so the
+  port is faithful. The two failures are the *shared numerics* (Phase 2's
+  open Big Butte question, now with the ridge), not the port. Speed: about
+  10 s per case on the GPU, against 3–12 min on the 12-thread CPU backend
+  with multigrid, and about 14–20 s for OpenFOAM. None of the GPU runs reach
+  the 1e-5 residual drop in 20,000 single-grid steps (3e-4 to 1e-4 at the
+  end), yet they match the converged CPU results, so 4.3 multigrid is mainly
+  about speed. With a Big Butte run now taking seconds, the near-wall
+  investigation (2.5) is cheap to resume on the GPU.
 *** Tests
 - =momentum_gpu_golden_*=: all golden cases are within the GATE 0 tolerances
   of OpenFOAM, *and* within a tighter tolerance of the CPU backend.
