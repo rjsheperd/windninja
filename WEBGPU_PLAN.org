@@ -235,7 +235,11 @@ Boundary map (from =ninjafoam.h= / =ninjafoam.cpp=):
   ASCII grids).
 - The 0.1 and 0.2 tests still pass.
 
-** TODO 1.3 Rename and slim the WindNinja-facing class
+** CANCELLED 1.3 Rename and slim the WindNinja-facing class
+Cancelled (2026-10-20): superseded by the 1.2 thin-adapter decision.
+=NinjaFoam= still contains the OpenFOAM pipeline, so renaming it
+=NinjaMomentum= would be misleading. Revisit together with the full move at
+GATE 7.
 - [ ] Rename =NinjaFoam= to =NinjaMomentum : ninja=. It owns the inputs, the
       output grids, the writers and the diurnal hand-off, and delegates the
       solve.
