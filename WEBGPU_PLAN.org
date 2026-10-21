@@ -631,6 +631,20 @@ defect (2.4) here *before* Phase 4, so the GPU port copies settled numerics.
       tangential velocity relative to the face normal), wall-cell k production
       (OpenFOAM's =nutkWallFunction= / =epsilonWallFunction= G and ε
       overrides), and dissipation on sloped faces.
+      Clue: the worst excess k (3.5×, ~90 m) is *above* the wall cell, where G
+      comes from the cell gradient, not the wall function.
+      Experiment 1 (2026-10-21), refuted: are Green-Gauss gradients
+      inconsistent on skewed terrain cells (OpenFOAM uses =cellMDLimited
+      leastSquares 0.5=)? For a linear u = a·z on a Gaussian-ridge grid like
+      the backend's (h₁ 40 m, growth 1.1), du/dz is exact to 1e-15 and the
+      spurious du/dx is ≤ 0.4% of a at 30° and ≤ 0.8% at 45°. G = ν_t·a² is
+      exact. Still open for a curved (log) profile and for the limiter, which
+      the reproduction below can test.
+      Next suspects: (a) the wall-face shear uses the centre-to-face distance d
+      along e (=gradU·S= with the correction along e), while OpenFOAM's
+      boundary =snGrad= uses the normal distance y (=1/(n·d)=, no
+      non-orthogonal correction). Off by (y/d)² on skewed wall cells; (b) the
+      ν_t·∇Uᵀ·S term at sloped walls.
 - [ ] Cheap reproduction: a steep 2-D ridge, small enough to run in seconds
       on the CPU and in OpenFOAM, which shows the same stagnant layer.
 - [ ] Fix it and re-run =big_butte_small_coarse_270= against GATE 0.
