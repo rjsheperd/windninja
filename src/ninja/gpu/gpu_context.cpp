@@ -96,6 +96,10 @@ void onMapped(WGPUMapAsyncStatus status, WGPUStringView message, void *out,
         *static_cast<std::string *>(out) = str(message);
 }
 
+void onWorkDone(WGPUQueueWorkDoneStatus, WGPUStringView, void *, void *)
+{
+}
+
 struct CompileMessages
 {
     std::string errors;
@@ -122,6 +126,24 @@ void onCompilationInfo(WGPUCompilationInfoRequestStatus status,
 
 Context::Context()
 {
+    try
+    {
+        open();
+    }
+    catch(...)
+    {
+        release();
+        throw;
+    }
+}
+
+Context::~Context()
+{
+    release();
+}
+
+void Context::open()
+{
     WGPUInstanceFeatureName timedWaitAny = WGPUInstanceFeatureName_TimedWaitAny;
     WGPUInstanceDescriptor instanceDesc = WGPU_INSTANCE_DESCRIPTOR_INIT;
     instanceDesc.requiredFeatureCount = 1;
@@ -146,10 +168,7 @@ Context::Context()
             break;
     }
     if(adapterRequest.adapter == nullptr)
-    {
-        wgpuInstanceRelease(instance_);
         throw Unavailable("WebGPU: no adapter: " + adapterRequest.message);
-    }
     adapter_ = adapterRequest.adapter;
 
     WGPUAdapterInfo info = WGPU_ADAPTER_INFO_INIT;
@@ -175,21 +194,25 @@ Context::Context()
     cb.userdata1 = &deviceRequest;
     wait(wgpuAdapterRequestDevice(adapter_, &deviceDesc, cb));
     if(deviceRequest.device == nullptr)
-    {
-        wgpuAdapterRelease(adapter_);
-        wgpuInstanceRelease(instance_);
         throw Unavailable("WebGPU: no device: " + deviceRequest.message);
-    }
     device_ = deviceRequest.device;
     queue_ = wgpuDeviceGetQueue(device_);
 }
 
-Context::~Context()
+void Context::release()
 {
-    wgpuQueueRelease(queue_);
-    wgpuDeviceRelease(device_);
-    wgpuAdapterRelease(adapter_);
-    wgpuInstanceRelease(instance_);
+    if(queue_ != nullptr)
+        wgpuQueueRelease(queue_);
+    if(device_ != nullptr)
+        wgpuDeviceRelease(device_);
+    if(adapter_ != nullptr)
+        wgpuAdapterRelease(adapter_);
+    if(instance_ != nullptr)
+        wgpuInstanceRelease(instance_);
+    queue_ = nullptr;
+    device_ = nullptr;
+    adapter_ = nullptr;
+    instance_ = nullptr;
 }
 
 void Context::wait(WGPUFuture future)
@@ -200,6 +223,14 @@ void Context::wait(WGPUFuture future)
     if(status != WGPUWaitStatus_Success)
         throw Error("WebGPU: waiting on the GPU failed");
     check();
+}
+
+void Context::finish()
+{
+    WGPUQueueWorkDoneCallbackInfo cb = WGPU_QUEUE_WORK_DONE_CALLBACK_INFO_INIT;
+    cb.mode = WGPUCallbackMode_WaitAnyOnly;
+    cb.callback = onWorkDone;
+    wait(wgpuQueueOnSubmittedWorkDone(queue_, cb));
 }
 
 void Context::check()

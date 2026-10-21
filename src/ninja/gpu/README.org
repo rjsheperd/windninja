@@ -27,3 +27,9 @@ ctest -R '^gpu_'
 #+end_src
 On a machine without a WebGPU adapter the =gpu_*= tests print
 =SKIP: no WebGPU adapter= and ctest reports them as skipped.
+
+* Overhead benchmark
+=gpu_overhead_bench= (built with =WITH_WEBGPU=) times dispatch, wait, upload
+and readback costs at 25k to 10M elements, plus the CPU solver per iteration
+at 100k cells. Results and what they mean for Phase 4 are in
+=WEBGPU_PLAN.org= task 3.3.

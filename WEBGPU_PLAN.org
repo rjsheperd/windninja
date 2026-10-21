@@ -714,15 +714,51 @@ Rules: write host code against the C =webgpu.h= API (stable). Don't use
 - =gpu_validation_error_throws=: a bad WGSL compile throws, and the message
   contains the shader line.
 
-** NEXT 3.3 Overhead benchmark
-- [ ] Run a dispatch and readback micro-benchmark at 25k, 100k, 1M and 10M
-      elements.
-- [ ] Measure separately: per-dispatch submit cost (many small dispatches,
+** DONE 3.3 Overhead benchmark
+- [X] Run a dispatch and readback micro-benchmark at 25k, 100k, 1M and 10M
+      elements (=autotest/gpu_overhead_bench.cpp=).
+- [X] Measure separately: per-dispatch submit cost (many small dispatches,
       one wait), upload, readback, and staging-buffer reuse vs one per call.
-- [ ] Compare with the CPU solver's per-iteration time at 100k cells.
-- [ ] Add tests
-- [ ] Tests pass
-- [ ] Documentation updates
+- [X] Compare with the CPU solver's per-iteration time at 100k cells.
+- [X] Add tests: =gpu_overhead_bench_smoke= runs the benchmark with =--quick=.
+      Also =Context::finish()= (wait for queued work) and a fix for a leak when
+      the adapter request itself threw.
+- [X] Tests pass: all six =gpu_*= tests on macOS arm64.
+- [X] Documentation updates: results below; =src/ninja/gpu/README.org=.
+
+Results, 2026-10-21, Apple M3 Max (Metal), Dawn =v20261016=, median of
+three runs (µs; saxpy, 3 float arrays):
+| elements   | queued dispatch | dispatch + wait | upload | readback | staging buffer |
+|------------+-----------------+-----------------+--------+----------+----------------|
+| 25k        |              25 |             500 |    2.4 |      290 |              5 |
+| 100k       |              23 |             230 |     35 |      260 |              5 |
+| 1M         |              42 |             220 |    460 |      620 |              5 |
+| 10M        |             430 |             690 |   4500 |     4800 |              6 |
+CPU RANS solver, 100k cells (100×50×20, turbulent): 80 ms per iteration on
+1 thread, 9.3 ms on 12 threads.
+
+Findings:
+- A queued dispatch costs about 23 µs: a new bind group and a separate
+  submit each time. At 10M elements the kernel itself dominates (430 µs,
+  about 280 GB/s).
+- Against the rule above: about 12 dispatches per iteration would cost
+  about 0.3 ms, or 3% of the CPU's 9.3 ms. That's under 10%, so *no kernel
+  fusion is planned for Phase 4*. But a GPU iteration at 100k cells should
+  itself be well under 1 ms, so the overhead will dominate it. Phase 4 should
+  record each iteration's dispatches into one command encoder and one
+  submit, and cache bind groups. That's cheaper than fusion; fuse only where
+  the profile still says so.
+- A wait round trip costs 0.2–0.5 ms. Never wait every iteration: check
+  residuals every N iterations, reading back a few reduced values, not the
+  fields.
+- Readback has a floor of about 0.25 ms (the wait) plus about 8 GB/s. Upload
+  is about 9 GB/s at 1M+ (the small-size upload time excludes the GPU-side
+  copy).
+- Creating a staging buffer costs about 5 µs, which is negligible next to the
+  readback. =Buffer::download()= keeps one per call.
+- Caveat: this is unified memory. A discrete GPU over PCIe will have different
+  transfer costs; re-run =gpu_overhead_bench= on Linux/Windows hardware at
+  GATE 4.
 *** Tests
 - Record the numbers here. If per-dispatch overhead at 100k cells is more
   than 10% of the estimated per-iteration CPU time, plan kernel fusion in

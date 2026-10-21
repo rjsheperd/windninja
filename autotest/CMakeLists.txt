@@ -86,6 +86,9 @@ add_dependencies(test_main ninja)
 target_link_libraries(test_main ${LINK_LIBS})
 if(WITH_WEBGPU)
     target_link_libraries(test_main ninja_gpu)
+    # WEBGPU_PLAN 3.3; run it without --quick for the recorded numbers
+    add_executable(gpu_overhead_bench gpu_overhead_bench.cpp)
+    target_link_libraries(gpu_overhead_bench ${LINK_LIBS} ninja_gpu)
 endif(WITH_WEBGPU)
 target_compile_definitions(test_main PRIVATE
                            WINDNINJA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -405,6 +408,10 @@ if(WITH_WEBGPU)
         set_tests_properties(gpu_${gputest} PROPERTIES
                              SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
     endforeach(gputest)
+    add_test(gpu_overhead_bench_smoke
+             ${EXECUTABLE_OUTPUT_PATH}/gpu_overhead_bench --quick)
+    set_tests_properties(gpu_overhead_bench_smoke PROPERTIES
+                         SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
 endif(WITH_WEBGPU)
 add_test(momentum_compare_identity
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/identity)

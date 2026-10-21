@@ -78,6 +78,8 @@ public:
     // Waits for a future, then throws if the device was lost or reported an
     // uncaptured error.
     void wait(WGPUFuture future);
+    // Waits until all work submitted to the queue so far has finished.
+    void finish();
     // Throws (and clears) a pending uncaptured error or a device loss.
     void check();
 
@@ -87,6 +89,8 @@ public:
     std::string popErrorScope();
 
 private:
+    void open();
+    void release();
     static void onUncapturedError(WGPUDevice const *, WGPUErrorType type,
                                   WGPUStringView message, void *self, void *);
     static void onDeviceLost(WGPUDevice const *, WGPUDeviceLostReason reason,
