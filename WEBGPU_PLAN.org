@@ -666,6 +666,34 @@ resumes only if the GPU backend fails the golden cases the same way.
       artificial-compressibility pressure dissipation does leak into the
       steady answer, by about 5–10% with opposite signs on the two cases.
       It's real but not the gap; note it for GATE 2.
+- [X] More GPU A/B variants (2026-10-21, Big Butte speed RMSE; baseline 0.555):
+      | variant                                                    | ridge | Big Butte |
+      | OpenFOAM-like cellMDLimited 0.5 gradients (stalls: residual 0.08 / 0.85) | 0.884 | 0.652 |
+      | over-relaxed k/ε diffusion, as OpenFOAM's corrected snGrad | 0.489 | 0.556 |
+      | first-order momentum reconstruction                        | 1.483 | 0.933 |
+      | ground from every 2nd node, bilinear between (160 m)       | 0.509 | 0.517 |
+      Also checked against the OpenFOAM-11 source: =nutkAtmRoughWallFunction= and
+      =epsilonWallFunction= (G and ε overrides, y⁺_lam, snGrad |∇U|_w, corner
+      weights) match ours term by term.
+      Where Big Butte's error is (GPU vs OpenFOAM, binned by slope): it grows
+      with slope. On windward slopes we're systematically slow: mean −0.57 m/s
+      at 15–20°, −0.76 above 30°. The worst cells are one cluster, a ravine
+      running south from the summit ridge (rows 57–61, columns 52–53). There
+      the GPU *separates* (|U| < 1.5 m/s) while OpenFOAM stays attached at 6–8
+      m/s. OpenFOAM's k is smooth over the whole summit (0.44–0.80); ours is
+      strongly structured (0.47–1.83).
+      OpenFOAM's actual ground (minZ face centres of the kept mesh, 9,773 faces
+      at 80 m) is within 4.5 m RMS of the DEM. On the summit it's 8 m low on
+      average (up to 30 m), and the peak is clipped from 2,292 to 2,271 m.
+      Terrain smoothing explains a little of the gap, not most of it.
+      Conclusion so far: local terms (wall functions, wall-face gradients, k/ε
+      diffusion, top outlet) are ruled out. The momentum convection scheme
+      moves the answer most (first-order: 0.93), and the disagreement is about
+      *separation* on steep lee slopes. Candidates: OpenFOAM's linearUpwind
+      with limited gradients, which needs a convergence-friendly limiter (a
+      frozen or smooth one), and OpenFOAM's mesh above the first layer (block
+      cells 2× the mesh resolution, 160 m here, against our 80 m at all
+      heights).
 - [X] Is the OpenFOAM reference converged? WindNinja runs 300 simpleFoam
       iterations (p residual about 4e-3). Re-run at 3,000 iterations:
       - ridge: OpenFOAM itself moves *0.26 m/s RMSE* (max 0.85, 4.0°), and p
