@@ -112,6 +112,7 @@ public:
 
     const RansGrid &grid;
     double nu, beta;
+    int threads = 0;                     // OpenMP threads; 0 = OpenMP default
     std::vector<double> p, u, v, w;      // per cell
     bool turbulent = false;
     TurbulenceModel model;
@@ -129,6 +130,9 @@ private:
     // cell's rough-wall faces (nWall of them)
     std::vector<double> rk, rEps, epsWall, gWall;
     std::vector<int> nWall;
+    std::vector<double> resKCell, resECell;   // per-cell k / epsilon residuals
+
+    int nThreads() const;
 
     double production(int c, double &s2) const;
 

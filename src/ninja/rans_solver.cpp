@@ -39,8 +39,15 @@
 ** the face centroid's height above the ground (side faces only; 0 on k faces).
 */
 template <typename F>
-static void ForEachFace(const RansGrid &g, F f)
+static void ForEachFace(const RansGrid &g, int threads, F f)
 {
+    // Three passes, one per face direction.  Within a pass, faces on
+    // different grid lines (i faces on a (j, k) line, j faces on an (i, k)
+    // line, k faces on an (i, j) column) touch disjoint cells, so the lines
+    // run in parallel without races.  Each cell still receives its face
+    // contributions in the serial order, so results don't depend on the
+    // thread count.
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
     for(int k = 0; k < g.nz; k++)
         for(int j = 0; j < g.ny; j++)
             for(int i = 0; i <= g.nx; i++)
@@ -54,9 +61,10 @@ static void ForEachFace(const RansGrid &g, F f)
                 else
                     f(g.cell(i - 1, j, k), g.cell(i, j, k), -1, sx, sy, sz, g.iFx[n], g.iFy[n], g.iFz[n], g.iAgl[n]);
             }
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
     for(int k = 0; k < g.nz; k++)
-        for(int j = 0; j <= g.ny; j++)
-            for(int i = 0; i < g.nx; i++)
+        for(int i = 0; i < g.nx; i++)
+            for(int j = 0; j <= g.ny; j++)
             {
                 int n = g.jFace(i, j, k);
                 double sx = g.jSx[n], sy = g.jSy[n], sz = g.jSz[n];
@@ -67,9 +75,10 @@ static void ForEachFace(const RansGrid &g, F f)
                 else
                     f(g.cell(i, j - 1, k), g.cell(i, j, k), -1, sx, sy, sz, g.jFx[n], g.jFy[n], g.jFz[n], g.jAgl[n]);
             }
-    for(int k = 0; k <= g.nz; k++)
-        for(int j = 0; j < g.ny; j++)
-            for(int i = 0; i < g.nx; i++)
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(threads)
+    for(int j = 0; j < g.ny; j++)
+        for(int i = 0; i < g.nx; i++)
+            for(int k = 0; k <= g.nz; k++)
             {
                 int n = g.kFace(i, j, k);
                 double sx = g.kSx[n], sy = g.kSy[n], sz = g.kSz[n];
@@ -80,6 +89,22 @@ static void ForEachFace(const RansGrid &g, F f)
                 else
                     f(g.cell(i, j, k - 1), g.cell(i, j, k), -1, sx, sy, sz, g.kFx[n], g.kFy[n], g.kFz[n], 0.0);
             }
+}
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+int RansSolver::nThreads() const
+{
+#ifdef _OPENMP
+    // small grids: thread start-up and synchronisation outweigh the work
+    if(threads <= 0 && grid.nCells() < 20000)
+        return 1;
+    return threads > 0 ? threads : omp_get_max_threads();
+#else
+    return 1;
+#endif
 }
 
 RansSolver::RansSolver(const RansGrid &grid, double nu, double beta)
@@ -126,7 +151,7 @@ void RansSolver::enableTurbulence(double k0, double epsilon0, const TurbulenceMo
     k.assign(n, k0);
     epsilon.assign(n, epsilon0);
     nut.assign(n, model.cmu * k0 * k0 / epsilon0);
-    for(std::vector<double> *a : {&rk, &rEps, &epsWall, &gWall})
+    for(std::vector<double> *a : {&rk, &rEps, &epsWall, &gWall, &resKCell, &resECell})
         a->assign(n, 0.0);
     nWall.assign(n, 0);
 }
@@ -230,7 +255,7 @@ void RansSolver::computeGradients()
             std::fill(a->begin(), a->end(), 0.0);
 
     const RansGrid &g = grid;
-    ForEachFace(g, [&](int o, int nb, int side, double sx, double sy, double sz,
+    ForEachFace(g, nThreads(), [&](int o, int nb, int side, double sx, double sy, double sz,
                        double fx, double fy, double fz, double agl)
     {
         double S[3] = {sx, sy, sz};
@@ -264,6 +289,7 @@ void RansSolver::computeGradients()
             }
         }
     });
+    #pragma omp parallel for schedule(static) num_threads(nThreads())
     for(int c = 0; c < g.nCells(); c++)
         for(int d = 0; d < 3; d++)
         {
@@ -301,7 +327,7 @@ void RansSolver::computeResiduals()
     }
     const double sigmaMin = std::min(model.sigmaK, model.sigmaEpsilon);
 
-    ForEachFace(g, [&](int o, int nb, int side, double sx, double sy, double sz,
+    ForEachFace(g, nThreads(), [&](int o, int nb, int side, double sx, double sy, double sz,
                        double fx, double fy, double fz, double agl)
     {
         double area2 = sx * sx + sy * sy + sz * sz;
@@ -503,6 +529,7 @@ void RansSolver::computeResiduals()
 
     if(source)
     {
+        #pragma omp parallel for schedule(static) num_threads(nThreads())
         for(int c = 0; c < g.nCells(); c++)
         {
             double s[4];
@@ -547,7 +574,7 @@ RansSolver::Residuals RansSolver::iterate(int n, double cfl)
         computeGradients();
         computeResiduals();
         r = norms();
-        double sumK = 0.0, sumE = 0.0;
+        #pragma omp parallel for schedule(static) num_threads(nThreads())
         for(int c = 0; c < grid.nCells(); c++)
         {
             // local pseudo time step: dtau / V = cfl / spectral radius
@@ -573,8 +600,8 @@ RansSolver::Residuals RansSolver::iterate(int n, double cfl)
                     en = epsWall[c] / nWall[c];
                     resE = 0.0;
                 }
-                sumK += resK * resK;
-                sumE += resE * resE;
+                resKCell[c] = resK;
+                resECell[c] = resE;
                 k[c] = std::max(kn, 1e-12);
                 epsilon[c] = std::max(en, 1e-12);
             }
@@ -585,8 +612,16 @@ RansSolver::Residuals RansSolver::iterate(int n, double cfl)
         }
         if(turbulent)
         {
+            #pragma omp parallel for schedule(static) num_threads(nThreads())
             for(int c = 0; c < grid.nCells(); c++)
                 nut[c] = model.cmu * k[c] * k[c] / epsilon[c];
+            // summed serially so the residual doesn't depend on the threads
+            double sumK = 0.0, sumE = 0.0;
+            for(int c = 0; c < grid.nCells(); c++)
+            {
+                sumK += resKCell[c] * resKCell[c];
+                sumE += resECell[c] * resECell[c];
+            }
             r.k = std::sqrt(sumK / grid.nCells());
             r.epsilon = std::sqrt(sumE / grid.nCells());
         }
