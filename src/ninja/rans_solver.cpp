@@ -1,0 +1,404 @@
+/******************************************************************************
+ *
+ * Project:  WindNinja
+ * Purpose:  CPU reference incompressible RANS solver (artificial compressibility)
+ *
+ ******************************************************************************
+ *
+ * THIS SOFTWARE WAS DEVELOPED AT THE ROCKY MOUNTAIN RESEARCH STATION (RMRS)
+ * MISSOULA FIRE SCIENCES LABORATORY BY EMPLOYEES OF THE FEDERAL GOVERNMENT
+ * IN THE COURSE OF THEIR OFFICIAL DUTIES. PURSUANT TO TITLE 17 SECTION 105
+ * OF THE UNITED STATES CODE, THIS SOFTWARE IS NOT SUBJECT TO COPYRIGHT
+ * PROTECTION AND IS IN THE PUBLIC DOMAIN. RMRS MISSOULA FIRE SCIENCES
+ * LABORATORY ASSUMES NO RESPONSIBILITY WHATSOEVER FOR ITS USE BY OTHER
+ * PARTIES,  AND MAKES NO GUARANTEES, EXPRESSED OR IMPLIED, ABOUT ITS QUALITY,
+ * RELIABILITY, OR ANY OTHER CHARACTERISTIC.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ *
+ *****************************************************************************/
+
+#include "rans_solver.h"
+
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+
+/*
+** Visit every face once.  f(owner, neighbour, side, sx, sy, sz, fx, fy, fz)
+** gets the area vector pointing out of owner; neighbour is -1 and side is the
+** block side for boundary faces, and side is -1 for interior faces.
+*/
+template <typename F>
+static void ForEachFace(const RansGrid &g, F f)
+{
+    for(int k = 0; k < g.nz; k++)
+        for(int j = 0; j < g.ny; j++)
+            for(int i = 0; i <= g.nx; i++)
+            {
+                int n = g.iFace(i, j, k);
+                double sx = g.iSx[n], sy = g.iSy[n], sz = g.iSz[n];
+                if(i == 0)
+                    f(g.cell(0, j, k), -1, RansSolver::xMin, -sx, -sy, -sz, g.iFx[n], g.iFy[n], g.iFz[n]);
+                else if(i == g.nx)
+                    f(g.cell(i - 1, j, k), -1, RansSolver::xMax, sx, sy, sz, g.iFx[n], g.iFy[n], g.iFz[n]);
+                else
+                    f(g.cell(i - 1, j, k), g.cell(i, j, k), -1, sx, sy, sz, g.iFx[n], g.iFy[n], g.iFz[n]);
+            }
+    for(int k = 0; k < g.nz; k++)
+        for(int j = 0; j <= g.ny; j++)
+            for(int i = 0; i < g.nx; i++)
+            {
+                int n = g.jFace(i, j, k);
+                double sx = g.jSx[n], sy = g.jSy[n], sz = g.jSz[n];
+                if(j == 0)
+                    f(g.cell(i, 0, k), -1, RansSolver::yMin, -sx, -sy, -sz, g.jFx[n], g.jFy[n], g.jFz[n]);
+                else if(j == g.ny)
+                    f(g.cell(i, j - 1, k), -1, RansSolver::yMax, sx, sy, sz, g.jFx[n], g.jFy[n], g.jFz[n]);
+                else
+                    f(g.cell(i, j - 1, k), g.cell(i, j, k), -1, sx, sy, sz, g.jFx[n], g.jFy[n], g.jFz[n]);
+            }
+    for(int k = 0; k <= g.nz; k++)
+        for(int j = 0; j < g.ny; j++)
+            for(int i = 0; i < g.nx; i++)
+            {
+                int n = g.kFace(i, j, k);
+                double sx = g.kSx[n], sy = g.kSy[n], sz = g.kSz[n];
+                if(k == 0)
+                    f(g.cell(i, j, 0), -1, RansSolver::zMin, -sx, -sy, -sz, g.kFx[n], g.kFy[n], g.kFz[n]);
+                else if(k == g.nz)
+                    f(g.cell(i, j, k - 1), -1, RansSolver::zMax, sx, sy, sz, g.kFx[n], g.kFy[n], g.kFz[n]);
+                else
+                    f(g.cell(i, j, k - 1), g.cell(i, j, k), -1, sx, sy, sz, g.kFx[n], g.kFy[n], g.kFz[n]);
+            }
+}
+
+RansSolver::RansSolver(const RansGrid &grid, double nu, double beta)
+    : grid(grid), nu(nu), beta(beta)
+{
+    if(nu < 0.0 || beta <= 0.0)
+        throw std::invalid_argument("RansSolver needs nu >= 0 and beta > 0");
+    size_t n = grid.nCells();
+    for(std::vector<double> *a : {&p, &u, &v, &w, &rp, &ru, &rv, &rw, &spectral})
+        a->assign(n, 0.0);
+    for(int d = 0; d < 3; d++)
+        for(std::vector<double> *a : {&gp[d], &gu[d], &gv[d], &gw[d]})
+            a->assign(n, 0.0);
+    Boundary slipWall = {Boundary::slip, 0.0, 0.0, 0.0, 0.0, StateFunction()};
+    for(int s = 0; s < 6; s++)
+        bc[s] = slipWall;
+}
+
+void RansSolver::setBoundary(Side side, const Boundary &b)
+{
+    if(b.type == Boundary::dirichlet && !b.state)
+        throw std::invalid_argument("a dirichlet boundary needs a state function");
+    bc[side] = b;
+}
+
+void RansSolver::setSource(const StateFunction &s)
+{
+    source = s;
+}
+
+void RansSolver::setInitial(const StateFunction &state)
+{
+    for(int c = 0; c < grid.nCells(); c++)
+        state(grid.cx[c], grid.cy[c], grid.cz[c], p[c], u[c], v[c], w[c]);
+}
+
+void RansSolver::setUniform(double p0, double u0, double v0, double w0)
+{
+    std::fill(p.begin(), p.end(), p0);
+    std::fill(u.begin(), u.end(), u0);
+    std::fill(v.begin(), v.end(), v0);
+    std::fill(w.begin(), w.end(), w0);
+}
+
+/*
+** State on a boundary face from the owner cell and the side's condition.
+** fixedVelocity says whether the face velocity is prescribed (so viscous
+** stress acts on it); otherwise the boundary carries no viscous flux.
+*/
+static void BoundaryState(const RansSolver::Boundary &b, double nx, double ny, double nz,
+                          double fx, double fy, double fz,
+                          double pc, double uc, double vc, double wc,
+                          double &pb, double &ub, double &vb, double &wb, bool &fixedVelocity)
+{
+    switch(b.type)
+    {
+        case RansSolver::Boundary::wall:
+        case RansSolver::Boundary::velocityInlet:
+            pb = pc; ub = b.u; vb = b.v; wb = b.w;
+            fixedVelocity = true;
+            break;
+        case RansSolver::Boundary::slip:
+        {
+            double un = uc * nx + vc * ny + wc * nz;
+            pb = pc; ub = uc - un * nx; vb = vc - un * ny; wb = wc - un * nz;
+            fixedVelocity = false;
+            break;
+        }
+        case RansSolver::Boundary::pressureOutlet:
+            pb = b.p; ub = uc; vb = vc; wb = wc;
+            fixedVelocity = false;
+            break;
+        case RansSolver::Boundary::dirichlet:
+            b.state(fx, fy, fz, pb, ub, vb, wb);
+            fixedVelocity = true;
+            break;
+    }
+}
+
+void RansSolver::computeGradients()
+{
+    for(int d = 0; d < 3; d++)
+        for(std::vector<double> *a : {&gp[d], &gu[d], &gv[d], &gw[d]})
+            std::fill(a->begin(), a->end(), 0.0);
+
+    const RansGrid &g = grid;
+    ForEachFace(g, [&](int o, int nb, int side, double sx, double sy, double sz,
+                       double fx, double fy, double fz)
+    {
+        double S[3] = {sx, sy, sz};
+        double fp, fu, fv, fw;
+        if(nb >= 0)
+        {
+            // inverse-distance weights from the two centroids
+            double dO = std::hypot(fx - g.cx[o], fy - g.cy[o], fz - g.cz[o]);
+            double dN = std::hypot(fx - g.cx[nb], fy - g.cy[nb], fz - g.cz[nb]);
+            double a = dN / (dO + dN);
+            fp = a * p[o] + (1 - a) * p[nb];
+            fu = a * u[o] + (1 - a) * u[nb];
+            fv = a * v[o] + (1 - a) * v[nb];
+            fw = a * w[o] + (1 - a) * w[nb];
+        }
+        else
+        {
+            double area = std::sqrt(sx * sx + sy * sy + sz * sz);
+            bool fixed;
+            BoundaryState(bc[side], sx / area, sy / area, sz / area, fx, fy, fz,
+                          p[o], u[o], v[o], w[o], fp, fu, fv, fw, fixed);
+        }
+        for(int d = 0; d < 3; d++)
+        {
+            gp[d][o] += fp * S[d]; gu[d][o] += fu * S[d];
+            gv[d][o] += fv * S[d]; gw[d][o] += fw * S[d];
+            if(nb >= 0)
+            {
+                gp[d][nb] -= fp * S[d]; gu[d][nb] -= fu * S[d];
+                gv[d][nb] -= fv * S[d]; gw[d][nb] -= fw * S[d];
+            }
+        }
+    });
+    for(int c = 0; c < g.nCells(); c++)
+        for(int d = 0; d < 3; d++)
+        {
+            gp[d][c] /= g.volume[c]; gu[d][c] /= g.volume[c];
+            gv[d][c] /= g.volume[c]; gw[d][c] /= g.volume[c];
+        }
+}
+
+/* Inviscid flux of the AC system through area vector S for state q. */
+static void InviscidFlux(double beta, double sx, double sy, double sz,
+                         double p, double u, double v, double w, double f[4])
+{
+    double U = u * sx + v * sy + w * sz;
+    f[0] = beta * U;
+    f[1] = u * U + p * sx;
+    f[2] = v * U + p * sy;
+    f[3] = w * U + p * sz;
+}
+
+void RansSolver::computeResiduals()
+{
+    const RansGrid &g = grid;
+    std::fill(rp.begin(), rp.end(), 0.0);
+    std::fill(ru.begin(), ru.end(), 0.0);
+    std::fill(rv.begin(), rv.end(), 0.0);
+    std::fill(rw.begin(), rw.end(), 0.0);
+    std::fill(spectral.begin(), spectral.end(), 0.0);
+
+    ForEachFace(g, [&](int o, int nb, int side, double sx, double sy, double sz,
+                       double fx, double fy, double fz)
+    {
+        double area2 = sx * sx + sy * sy + sz * sz;
+        double area = std::sqrt(area2);
+        double f[4];
+        double gradU[3][3];   // face velocity gradient: [component][direction]
+        bool viscous = true;
+
+        if(nb >= 0)
+        {
+            // second-order reconstruction to the face from both sides
+            double dxo = fx - g.cx[o], dyo = fy - g.cy[o], dzo = fz - g.cz[o];
+            double dxn = fx - g.cx[nb], dyn = fy - g.cy[nb], dzn = fz - g.cz[nb];
+            auto rec = [](const std::vector<double> &q, const std::vector<double> *gq,
+                          int c, double dx, double dy, double dz)
+            { return q[c] + gq[0][c] * dx + gq[1][c] * dy + gq[2][c] * dz; };
+            double pL = rec(p, gp, o, dxo, dyo, dzo), pR = rec(p, gp, nb, dxn, dyn, dzn);
+            double uL = rec(u, gu, o, dxo, dyo, dzo), uR = rec(u, gu, nb, dxn, dyn, dzn);
+            double vL = rec(v, gv, o, dxo, dyo, dzo), vR = rec(v, gv, nb, dxn, dyn, dzn);
+            double wL = rec(w, gw, o, dxo, dyo, dzo), wR = rec(w, gw, nb, dxn, dyn, dzn);
+
+            double fL[4], fR[4];
+            InviscidFlux(beta, sx, sy, sz, pL, uL, vL, wL, fL);
+            InviscidFlux(beta, sx, sy, sz, pR, uR, vR, wR, fR);
+            double UL = uL * sx + vL * sy + wL * sz, UR = uR * sx + vR * sy + wR * sz;
+            double lambda = std::max(std::fabs(UL) + std::sqrt(UL * UL + beta * area2),
+                                     std::fabs(UR) + std::sqrt(UR * UR + beta * area2));
+            f[0] = 0.5 * (fL[0] + fR[0]) - 0.5 * lambda * (pR - pL);
+            f[1] = 0.5 * (fL[1] + fR[1]) - 0.5 * lambda * (uR - uL);
+            f[2] = 0.5 * (fL[2] + fR[2]) - 0.5 * lambda * (vR - vL);
+            f[3] = 0.5 * (fL[3] + fR[3]) - 0.5 * lambda * (wR - wL);
+
+            // averaged gradient corrected along the centroid line
+            double ex = g.cx[nb] - g.cx[o], ey = g.cy[nb] - g.cy[o], ez = g.cz[nb] - g.cz[o];
+            double d = std::sqrt(ex * ex + ey * ey + ez * ez);
+            ex /= d; ey /= d; ez /= d;
+            const std::vector<double> *qs[3] = {&u, &v, &w};
+            const std::vector<double> *gs[3] = {gu, gv, gw};
+            for(int m = 0; m < 3; m++)
+            {
+                double a[3];
+                for(int dd = 0; dd < 3; dd++)
+                    a[dd] = 0.5 * (gs[m][dd][o] + gs[m][dd][nb]);
+                double corr = ((*qs[m])[nb] - (*qs[m])[o]) / d - (a[0] * ex + a[1] * ey + a[2] * ez);
+                gradU[m][0] = a[0] + corr * ex;
+                gradU[m][1] = a[1] + corr * ey;
+                gradU[m][2] = a[2] + corr * ez;
+            }
+            spectral[o] += 0.5 * lambda + nu * area2 / (d * area);
+            spectral[nb] += 0.5 * lambda + nu * area2 / (d * area);
+        }
+        else
+        {
+            double pb, ub, vb, wb;
+            bool fixedVelocity;
+            BoundaryState(bc[side], sx / area, sy / area, sz / area, fx, fy, fz,
+                          p[o], u[o], v[o], w[o], pb, ub, vb, wb, fixedVelocity);
+            double Ub = ub * sx + vb * sy + wb * sz;
+            double lambda = std::fabs(Ub) + std::sqrt(Ub * Ub + beta * area2);
+            if(bc[side].type == Boundary::dirichlet)
+            {
+                // Rusanov flux between the reconstructed interior state and
+                // the prescribed state, so the pressure wave can carry a mass
+                // imbalance out.  Imposing F(state) instead fixes the total
+                // boundary mass flux, and its O(h^2) mismatch with the source
+                // then makes the pressure drift without converging.
+                double dx = fx - g.cx[o], dy = fy - g.cy[o], dz = fz - g.cz[o];
+                double pI = p[o] + gp[0][o] * dx + gp[1][o] * dy + gp[2][o] * dz;
+                double uI = u[o] + gu[0][o] * dx + gu[1][o] * dy + gu[2][o] * dz;
+                double vI = v[o] + gv[0][o] * dx + gv[1][o] * dy + gv[2][o] * dz;
+                double wI = w[o] + gw[0][o] * dx + gw[1][o] * dy + gw[2][o] * dz;
+                double fI[4], fB[4];
+                InviscidFlux(beta, sx, sy, sz, pI, uI, vI, wI, fI);
+                InviscidFlux(beta, sx, sy, sz, pb, ub, vb, wb, fB);
+                double UI = uI * sx + vI * sy + wI * sz;
+                lambda = std::max(lambda, std::fabs(UI) + std::sqrt(UI * UI + beta * area2));
+                f[0] = 0.5 * (fI[0] + fB[0]) - 0.5 * lambda * (pb - pI);
+                f[1] = 0.5 * (fI[1] + fB[1]) - 0.5 * lambda * (ub - uI);
+                f[2] = 0.5 * (fI[2] + fB[2]) - 0.5 * lambda * (vb - vI);
+                f[3] = 0.5 * (fI[3] + fB[3]) - 0.5 * lambda * (wb - wI);
+            }
+            else
+            {
+                InviscidFlux(beta, sx, sy, sz, pb, ub, vb, wb, f);
+            }
+
+            double ex = fx - g.cx[o], ey = fy - g.cy[o], ez = fz - g.cz[o];
+            double d = std::sqrt(ex * ex + ey * ey + ez * ez);
+            ex /= d; ey /= d; ez /= d;
+            viscous = fixedVelocity;
+            const double qb[3] = {ub, vb, wb};
+            const std::vector<double> *qs[3] = {&u, &v, &w};
+            const std::vector<double> *gs[3] = {gu, gv, gw};
+            for(int m = 0; m < 3; m++)
+            {
+                double a[3] = {gs[m][0][o], gs[m][1][o], gs[m][2][o]};
+                double corr = (qb[m] - (*qs[m])[o]) / d - (a[0] * ex + a[1] * ey + a[2] * ez);
+                gradU[m][0] = a[0] + corr * ex;
+                gradU[m][1] = a[1] + corr * ey;
+                gradU[m][2] = a[2] + corr * ez;
+            }
+            spectral[o] += 0.5 * lambda + (viscous ? nu * area2 / (d * area) : 0.0);
+        }
+
+        if(viscous)
+        {
+            f[1] -= nu * (gradU[0][0] * sx + gradU[0][1] * sy + gradU[0][2] * sz);
+            f[2] -= nu * (gradU[1][0] * sx + gradU[1][1] * sy + gradU[1][2] * sz);
+            f[3] -= nu * (gradU[2][0] * sx + gradU[2][1] * sy + gradU[2][2] * sz);
+        }
+
+        rp[o] += f[0]; ru[o] += f[1]; rv[o] += f[2]; rw[o] += f[3];
+        if(nb >= 0)
+        {
+            rp[nb] -= f[0]; ru[nb] -= f[1]; rv[nb] -= f[2]; rw[nb] -= f[3];
+        }
+    });
+
+    if(source)
+    {
+        for(int c = 0; c < g.nCells(); c++)
+        {
+            double s[4];
+            source(g.cx[c], g.cy[c], g.cz[c], s[0], s[1], s[2], s[3]);
+            rp[c] -= s[0] * g.volume[c];
+            ru[c] -= s[1] * g.volume[c];
+            rv[c] -= s[2] * g.volume[c];
+            rw[c] -= s[3] * g.volume[c];
+        }
+    }
+}
+
+RansSolver::Residuals RansSolver::norms() const
+{
+    Residuals r = {0.0, 0.0, 0.0, 0.0};
+    int n = grid.nCells();
+    for(int c = 0; c < n; c++)
+    {
+        double V = grid.volume[c];
+        r.p += (rp[c] / V) * (rp[c] / V);
+        r.u += (ru[c] / V) * (ru[c] / V);
+        r.v += (rv[c] / V) * (rv[c] / V);
+        r.w += (rw[c] / V) * (rw[c] / V);
+    }
+    r.p = std::sqrt(r.p / n); r.u = std::sqrt(r.u / n);
+    r.v = std::sqrt(r.v / n); r.w = std::sqrt(r.w / n);
+    return r;
+}
+
+RansSolver::Residuals RansSolver::residuals()
+{
+    computeGradients();
+    computeResiduals();
+    return norms();
+}
+
+RansSolver::Residuals RansSolver::iterate(int n, double cfl)
+{
+    Residuals r = {0.0, 0.0, 0.0, 0.0};
+    for(int it = 0; it < n; it++)
+    {
+        computeGradients();
+        computeResiduals();
+        r = norms();
+        for(int c = 0; c < grid.nCells(); c++)
+        {
+            // local pseudo time step: dtau / V = cfl / spectral radius
+            double k = cfl / spectral[c];
+            p[c] -= k * rp[c];
+            u[c] -= k * ru[c];
+            v[c] -= k * rv[c];
+            w[c] -= k * rw[c];
+        }
+    }
+    return r;
+}

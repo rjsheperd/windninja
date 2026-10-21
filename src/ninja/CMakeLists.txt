@@ -38,6 +38,7 @@ endif(NINJAFOAM)
 
 set(NINJA_SOURCES air.cpp
                   rans_grid.cpp
+                  rans_solver.cpp
                   ascii_grid.cpp
                   Array2D.cpp
                   Aspect.cpp

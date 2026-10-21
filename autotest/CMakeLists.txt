@@ -50,6 +50,7 @@ set(TEST_SOURCES test_main.cpp
                  momentum_compare.cpp
                  test_momentum_compare.cpp
                  test_rans_grid.cpp
+                 test_rans_solver.cpp
                  test_utm.cpp)
 if(WITH_LCP_CLIENT)
     set(TEST_SOURCES ${TEST_SOURCES} test_landfireclient.cpp)
@@ -360,6 +361,10 @@ add_test(rans_grid_from_mesh
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/from_mesh)
 add_test(rans_grid_bad_input
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/bad_input)
+add_test(rans_solver_freestream
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/freestream)
+add_test(rans_solver_mms_laminar
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/mms_laminar)
 add_test(momentum_compare_identity
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/identity)
 add_test(momentum_compare_identity_golden_case

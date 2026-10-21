@@ -354,13 +354,40 @@ Volumes use the divergence theorem, V = ⅓ Σ (face centroid − x₀)·S.
 - =rans_metrics_sine_hill=: the total volume matches analytic integration of a
   sinusoidal hill, within discretisation error.
 
-** TODO 2.2 Laminar incompressible solver (pseudo-compressibility)
-- [ ] Use the artificial-compressibility formulation with local pseudo time
-      stepping.
-- [ ] Use second-order upwind convection, central diffusion, and Rhie-Chow
-      style pressure dissipation.
-- [ ] Add boundary conditions: velocity inlet, pressure outlet, slip top, no
-      slip / wall.
+** IN-PROGRESS 2.2 Laminar incompressible solver (pseudo-compressibility) [3/9]
+Method (CPU reference, simplest robust choices):
+- Artificial compressibility: ∂p/∂τ + β∇·u = 0, ∂u/∂τ + ∇·(uu) + ∇p = ν∇²u
+  (p kinematic).
+- Convection and pressure: Rusanov flux on the AC system, wave speed
+  |U| + sqrt(U² + β|S|²), with linear reconstruction from Green-Gauss cell
+  gradients. The face jump is O(h²), so the dissipation is second order and
+  plays the Rhie-Chow role against checkerboarding.
+- Viscous: face gradient = average of cell gradients + correction along the
+  centroid line.
+- Pseudo-time: explicit Euler with local Δτ from CFL and a viscous bound.
+- BCs: weak, through boundary face states, per block side.
+- MMS sources: numerical 4th-order derivatives of the exact solution.
+- [X] =src/ninja/rans_solver.{h,cpp}=: state, per-side BCs (no-slip / moving
+      wall, slip, velocity inlet, pressure outlet, Dirichlet), source hook,
+      residual and local-time-step iteration.
+- [X] MMS harness: numerical source terms from an exact solution.
+      Result (curved + stretched grid, 8/16/32): converged to a 1e-9 residual
+      drop in 500–1000 iterations; 16→32 orders u 2.08, w 2.55, p 1.85.
+      Lessons: (1) an all-Dirichlet boundary needs the Rusanov flux between
+      interior and prescribed states. Imposing F(state) fixes the boundary
+      mass flux, whose O(h²) mismatch with the source made p drift forever.
+      (2) A refinement study must hold the *total* stretching fixed (per-layer
+      growth G^(1/(n−1))); a fixed per-layer ratio isn't a refinement sequence
+      and collapsed the observed order to ~0.1.
+- [ ] Lid-driven cavity setup (x–z plane, one cell in y with slip sides).
+      Check the Ghia et al. (1982) Re = 100 reference values against the
+      paper before relying on them.
+- [X] Residual convergence monitoring (L2 per equation; =iterate= returns it).
+- [ ] Decide =rans_converges_residual='s =TBD= iteration count from
+      measurement.
+- [ ] Add tests
+- [ ] Tests pass
+- [ ] Documentation updates
 *** Tests
 - =rans_mms_laminar=: a manufactured solution on a curvilinear grid shows the
   observed order of accuracy at least 1.8 for u and at least 1.5 for p, over 3
