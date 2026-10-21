@@ -1,0 +1,21 @@
+case: ridge_coarse_270
+dem: ridge.tif
+mesh_choice: coarse
+input: 10 mph from 270 deg at 20 ft, grass
+number_of_iterations: 300
+mesh_resolution_m: 46.81
+refinement_rounds: 1
+first_cell_height_m: 46.81
+output_height_resolved: no
+openfoam_version: 11
+windninja_commit: df5b47ea08320df9ab6744f4ef0b5ec90edc116d
+platform: Darwin arm64
+retries: 0
+final_time: 347s
+final_initial_residuals:
+  Ux: 0.0002019295296
+  Uy: 0.0003545679077
+  Uz: 0.0006417939873
+  p: 0.004076837951
+  epsilon: 0.0004920003374
+  k: 0.0004476968103

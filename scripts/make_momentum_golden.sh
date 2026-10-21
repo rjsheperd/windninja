@@ -23,6 +23,8 @@
 # (no OpenFOAM needed). u, v and k then come from the backend's raw result
 # (NINJA_MOMENTUM_RESULT_DIR) and the OpenFOAM mesh metadata is omitted.
 # MOMENTUM_THREADS sets num_threads (default 2, as the golden set used).
+# MOMENTUM_CASES is an extended regex on case names (default: all), e.g.
+# MOMENTUM_CASES='^ridge_' to run only the synthetic ridge.
 
 set -e
 
@@ -33,6 +35,7 @@ CLI="$1"
 OUT_DIR="${2:-$WN_SRC_DIR/autotest/golden/momentum}"
 BACKEND="${MOMENTUM_BACKEND:-openfoam}"
 THREADS="${MOMENTUM_THREADS:-2}"
+CASES="${MOMENTUM_CASES:-.}"
 
 if [ ! -x "$CLI" ]; then
     echo "usage: $0 <path/to/WindNinja_cli> [OUT_DIR]" 1>&2
@@ -65,6 +68,25 @@ gdal_create -q -of GTiff -outsize 200 200 -bands 1 -ot Float32 -burn 1000 \
             -a_srs EPSG:32612 -a_ullr 300000 4810000 306000 4804000 \
             "$WORK_DIR/flat.tif"
 
+# A steep synthetic ridge (plan 2.5): 6 km E-W x 3 km N-S at 30 m, a N-S
+# Gaussian ridge 400 m high and 500 m wide (max slope 34 deg) on a 1000 m base.
+awk 'BEGIN {
+    nc = 200; nr = 100; dx = 30
+    print "ncols " nc; print "nrows " nr
+    print "xllcorner 300000"; print "yllcorner 4807000"
+    print "cellsize " dx; print "NODATA_value -9999"
+    for(r = 0; r < nr; r++) {
+        line = ""
+        for(c = 0; c < nc; c++) {
+            x = (c + 0.5) * dx - nc * dx / 2
+            line = line sprintf("%.3f ", 1000 + 400 * exp(-(x / 500) ^ 2))
+        }
+        print line
+    }
+}' > "$WORK_DIR/ridge.asc"
+gdal_translate -q -a_srs EPSG:32612 -of GTiff "$WORK_DIR/ridge.asc" \
+               "$WORK_DIR/ridge.tif"
+
 # Run one case and collect its output.
 # Arguments: case name, DEM path, mesh choice, wind direction
 run_case()
@@ -73,6 +95,9 @@ run_case()
     local run_dir="$WORK_DIR/$name"
     local out="$OUT_DIR/$name"
 
+    if ! [[ "$name" =~ $CASES ]]; then
+        return
+    fi
     echo "Running $name..."
     mkdir -p "$run_dir" "$out"
     cp "$dem" "$run_dir/"
@@ -169,5 +194,6 @@ for mesh in coarse medium; do
 done
 run_case "mackay_small_coarse_270" "$WINDNINJA_DATA/mackay_small.tif" coarse 270
 run_case "flat_coarse_270" "$WORK_DIR/flat.tif" coarse 270
+run_case "ridge_coarse_270" "$WORK_DIR/ridge.tif" coarse 270
 
 echo "Golden output written to $OUT_DIR"

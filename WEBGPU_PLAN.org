@@ -622,9 +622,13 @@ transports k and ε.
 - [X] Tests pass (full suite 105/105)
 - [X] Documentation updates (=rans_multigrid.h= header; damping rationale)
 
-** NEXT 2.5 Robustness on steep terrain
+** WAIT 2.5 Robustness on steep terrain
 User decision (2026-10-21): with Phase 3 done, fix the Big Butte near-wall
 defect (2.4) here *before* Phase 4, so the GPU port copies settled numerics.
+*Superseded later the same day (user):* get on with the WebGPU work and
+compare it with OpenFOAM directly. Parked here with the outlet backflow fix
+(below) in; the rest (the Big Butte near-wall question, skew and mitigations)
+resumes only if the GPU backend fails the golden cases the same way.
 - [ ] Find the near-wall defect: a CPU column on the butte has a stagnant
       first ~100 m (0.98 vs 6.85 m/s) and k up to 3.5× OpenFOAM's (2.4).
       Candidates: the wall function on sloped faces (wall distance and
@@ -645,8 +649,29 @@ defect (2.4) here *before* Phase 4, so the GPU port copies settled numerics.
       boundary =snGrad= uses the normal distance y (=1/(n·d)=, no
       non-orthogonal correction). Off by (y/d)² on skewed wall cells; (b) the
       ν_t·∇Uᵀ·S term at sloped walls.
-- [ ] Cheap reproduction: a steep 2-D ridge, small enough to run in seconds
+- [X] Cheap reproduction: a steep 2-D ridge, small enough to run in seconds
       on the CPU and in OpenFOAM, which shows the same stagnant layer.
+      Done as golden case =ridge_coarse_270= (=make_momentum_golden.sh=, with
+      the new =MOMENTUM_CASES= filter): a N–S Gaussian ridge 400 m high and
+      500 m wide (34° max slope), 6×3 km at 30 m, UTM 12N. OpenFOAM takes 14 s
+      with no retries. The CPU backend *fails much harder than on Big Butte*:
+      speed RMSE 2.70 m/s, max 15.1, direction 16.9°, k rel RMSE 2.21. The
+      residual stalls at 0.094 from cycle 600, so 5,000 cycles take 43 min.
+      Windward and the crest agree within 10–20%. In the lee both solvers
+      separate (u < 0), but the CPU has a 6–15 m/s *northward* stream across
+      the whole span, faster than the freestream, on a ridge that's uniform
+      N–S. It enters through the south face, an *outlet* here because the
+      grid is rotated about 1.7° from true north 200 km west of the zone's
+      central meridian. OpenFOAM's lee drifts north at only 1–4 m/s.
+      Diagnosis (experiment 2): WindNinja's OpenFOAM outlets are
+      =totalPressure= (p0 = 0) with =pressureInletOutletVelocity=, so backflow
+      enters normal to the face only, at p0 − ½|U|². The CPU =pressureOutlet=
+      fixed static p = 0 and extrapolated U both ways, admitting unbounded,
+      tangential inflow. Fix: the same backflow treatment in the outlet *flux*
+      only. Applying it to the gradients' face values too broke flat-terrain
+      convergence (residual 0.94), because U·n flips sign on faces parallel to
+      the wind and the tangential velocity jumps; in the flux the jump is
+      multiplied by the mass flux, which is ~0 there. Re-run pending.
 - [ ] Fix it and re-run =big_butte_small_coarse_270= against GATE 0.
 - [ ] Measure grid skew and aspect ratio (=Mesh::get_equiangle_skew= and
       =Mesh::get_aspect_ratio= already exist).
@@ -835,12 +860,22 @@ JavaScript, or a separate GDAL WASM build.
 
 * Phase 4: GPU solver port (=WebGpuRansBackend=)
 Goal: the same numerics as the =CpuRansBackend=, as WGSL kernels.
+Started 2026-10-21 by user decision, ahead of GATE 2 and with 2.5 parked. The
+acceptance reference is *OpenFOAM's golden output* (GATE 0 tolerances),
+including the new steep =ridge_coarse_270=. The CPU backend serves only as
+an f64 oracle for the per-kernel port tests (4.2), which separate port bugs
+from numerics problems. From 3.3: record each iteration's dispatches in one
+command encoder and submit, cache bind groups, and read back residuals every
+N iterations only.
 
-** TODO 4.1 Data layout and precision
+** NEXT 4.1 Data layout and precision
 - [ ] Use a structure-of-arrays layout for the fields (u, v, w, p, k, ε, ν_t)
       and the metrics on the (i,j,k) grid.
 - [ ] Use f32 throughout, with coordinates kept local to the domain origin.
 - [ ] Reduce residuals with a pairwise / two-pass sum to limit f32 error.
+- [ ] Add tests
+- [ ] Tests pass
+- [ ] Documentation updates
 *** Tests
 - =gpu_reduction_sum=: summing 10M values matches f64 CPU within 1e-6
   relative.
@@ -990,6 +1025,14 @@ Goal: evidence that the GPU backend is fit for operational use.
 If the replacement value contains the key (e.g. =ReplaceKeys(s, "a", "aa")=),
 each pass re-finds the key from the start of the string. Found during 0.1.
 
+** TODO =make_momentum_golden.sh= should check for =libWindNinja= up front
+Without =USER= in the environment (e.g. under =env -i=), OpenFOAM's
+=FOAM_USER_LIBBIN= becomes =~/OpenFOAM/-11=. =libWindNinja= isn't loaded,
+and the run fails late and obscurely: =decomposePar= reports
+"Essential entry 'value' missing" for =logProfileDissipationRateInlet=.
+** TODO =momentum_backend_c_api_set_get_backend= fails under =ctest -j 8=
+It passes alone (seen 2026-10-21), so it's probably a shared file or state
+between parallel tests.
 ** TODO =RUN_CFG_TESTS= configure fails where only =python3= exists
 =autotest/CMakeLists.txt:353= runs =pef.py= with a bare =python=, which stock
 macOS lacks, so =ELEV_FILE= is empty and =string(STRIP)= errors. Run it with

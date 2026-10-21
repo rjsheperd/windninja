@@ -186,10 +186,12 @@ void RansSolver::setUniform(double p0, double u0, double v0, double w0)
 ** State on a boundary face from the owner cell and the side's condition.
 ** fixedVelocity says whether the face velocity is prescribed (so viscous
 ** stress acts on it); otherwise the boundary carries no viscous flux.
+** backflow applies the outlet backflow treatment (for fluxes only: it is
+** continuous in the flux, but not in the face value gradients would see).
 */
 static void BoundaryState(const RansSolver::Boundary &b, double nx, double ny, double nz,
                           double fx, double fy, double fz, double agl,
-                          double pc, double uc, double vc, double wc,
+                          double pc, double uc, double vc, double wc, bool backflow,
                           double &pb, double &ub, double &vb, double &wb, bool &fixedVelocity)
 {
     switch(b.type)
@@ -207,9 +209,26 @@ static void BoundaryState(const RansSolver::Boundary &b, double nx, double ny, d
             break;
         }
         case RansSolver::Boundary::pressureOutlet:
-            pb = b.p; ub = uc; vb = vc; wb = wc;
+        {
+            // as WindNinja's OpenFOAM outlets (totalPressure p0 = b.p with
+            // pressureInletOutletVelocity): outflow takes the cell velocity
+            // at p0; backflow enters normal to the face only, at the static
+            // pressure p0 - |U|^2 / 2.  A fixed static pressure with
+            // extrapolated velocity lets lee recirculation pull in
+            // unbounded, tangential inflow.
+            double un = uc * nx + vc * ny + wc * nz;
+            if(!backflow || un >= 0.0)
+            {
+                pb = b.p; ub = uc; vb = vc; wb = wc;
+            }
+            else
+            {
+                pb = b.p - 0.5 * un * un;
+                ub = un * nx; vb = un * ny; wb = un * nz;
+            }
             fixedVelocity = false;
             break;
+        }
         case RansSolver::Boundary::dirichlet:
             b.state(fx, fy, fz, pb, ub, vb, wb);
             fixedVelocity = true;
@@ -276,7 +295,7 @@ void RansSolver::computeGradients()
             double area = std::sqrt(sx * sx + sy * sy + sz * sz);
             bool fixed;
             BoundaryState(bc[side], sx / area, sy / area, sz / area, fx, fy, fz, agl,
-                          p[o], u[o], v[o], w[o], fp, fu, fv, fw, fixed);
+                          p[o], u[o], v[o], w[o], false, fp, fu, fv, fw, fixed);
         }
         for(int d = 0; d < 3; d++)
         {
@@ -403,7 +422,7 @@ void RansSolver::computeResiduals()
             double pb, ub, vb, wb;
             bool fixedVelocity;
             BoundaryState(bc[side], sx / area, sy / area, sz / area, fx, fy, fz, agl,
-                          p[o], u[o], v[o], w[o], pb, ub, vb, wb, fixedVelocity);
+                          p[o], u[o], v[o], w[o], true, pb, ub, vb, wb, fixedVelocity);
             double Ub = ub * sx + vb * sy + wb * sz;
             double lambda = std::fabs(Ub) + std::sqrt(Ub * Ub + beta * area2);
             if(bc[side].type == Boundary::dirichlet)
