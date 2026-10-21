@@ -694,6 +694,38 @@ resumes only if the GPU backend fails the golden cases the same way.
       frozen or smooth one), and OpenFOAM's mesh above the first layer (block
       cells 2× the mesh resolution, 160 m here, against our 80 m at all
       heights).
+- [X] *Is coarse OpenFOAM the right target on steep terrain?* (2026-10-21,
+      Big Butte 270, coarse 80 m / medium 63 m / fine 25 m. Our numbers are
+      the GPU backend, equal to the CPU backend to 0.002 m/s.) At WindNinja's
+      20 ft output (=vel=/=ang=, log-profiled to the same height for every
+      mesh), against OpenFOAM *fine* as the best available reference:
+      | run             | 20 ft speed RMSE vs OpenFOAM fine | direction |
+      | OpenFOAM coarse | 0.719 m/s                         | 9.3°      |
+      | ours coarse     | 0.564 m/s                         | 6.9°      |
+      | OpenFOAM medium | 0.602 m/s                         | 6.6°      |
+      | ours medium     | 0.471 m/s                         | 5.3°      |
+      OpenFOAM coarse vs medium: 0.382 m/s, 4.0°. Ours vs OpenFOAM at the
+      same mesh: 0.573 coarse, 0.539 medium. (First-cell u/v/k tell the same
+      story; OpenFOAM is closer on k.)
+      So on steep terrain *OpenFOAM's own mesh error exceeds GATE 0's 0.25 m/s*,
+      and at each mesh our solution is *closer to the fine solution* than
+      OpenFOAM's. GATE 0's "match OpenFOAM at the same mesh within 0.25 m/s"
+      asks us to reproduce OpenFOAM's discretisation error there.
+      *Decision needed (GATE 2, team):* re-base the terrain criterion. For
+      example: at the 20 ft output, against OpenFOAM fine, no worse than
+      OpenFOAM at the same mesh, with GATE 0's absolute limits kept for flat
+      terrain.
+- [X] Fine mesh (300×331×20, 2M cells): the GPU *diverged* (NaN by step 800)
+      at CFL 0.5. It's stable at CFL 0.25, but not converged in 20,000 steps
+      (residual 0.03); at CFL 0.1, residual 0.12. Fixes, now done:
+      - both backends now fail with "... diverged by step/cycle N" on a
+        non-finite residual. Before, NaN compared false, the loop ended as if
+        converged, and WindNinja reported a misleading "Error during
+        simpleFoam()".
+      Still to do (next):
+      - a CFL back-off on divergence (restart at half CFL, as OpenFOAM's
+        retries);
+      - GPU multigrid (4.3), which a 2M-cell mesh needs to converge.
 - [X] Is the OpenFOAM reference converged? WindNinja runs 300 simpleFoam
       iterations (p residual about 4e-3). Re-run at 3,000 iterations:
       - ridge: OpenFOAM itself moves *0.26 m/s RMSE* (max 0.85, 4.0°), and p

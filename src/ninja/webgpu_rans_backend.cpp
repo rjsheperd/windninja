@@ -27,6 +27,7 @@
 #include "webgpu_rans_backend.h"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -79,6 +80,10 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
         peak.u = std::max(peak.u, std::max(r.u, r.v));
         peak.k = std::max(peak.k, r.k);
         worst = std::max(std::max(r.u, r.v) / peak.u, r.k / peak.k);
+        // NaN compares false, so without this a diverged run would stop as
+        // if converged
+        if(!std::isfinite(r.u) || !std::isfinite(r.v) || !std::isfinite(r.k))
+            throw std::runtime_error("WebGPU RANS diverged by step " + std::to_string(it));
         if(it % 1000 == 0)
             com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS step %d, residual %g", it, worst);
     }
