@@ -276,6 +276,107 @@ bool NinjaFoam::simulate_wind()
         keepOutputGridsInMemory(true);
     }
 
+    MomentumResult result;
+    bool solutionStatus = SolveWithOpenFoam(result,
+            [this](const MomentumResult &r) { return ApplyMomentumResult(r); });
+
+    if( solutionStatus == true )
+    {
+        /*-------------------------------------------------------------------*/
+        /* Generate and Sample mass mesh                                     */
+        /*-------------------------------------------------------------------*/
+        #ifdef _OPENMP
+        startGenerateAndSampleMassMesh = omp_get_wtime();
+        #endif
+        input.Com->ninjaCom(ninjaComClass::ninjaNone, "Generating and sampling mass mesh...");
+        GenerateAndSampleMassMesh();
+        #ifdef _OPENMP
+        endGenerateAndSampleMassMesh = omp_get_wtime();
+        #endif
+    }
+    if( solutionStatus == false ){
+        input.Com->ninjaCom(ninjaComClass::ninjaNone, "Error during simpleFoam() or other foam processes (sampling foam files). The flow solution failed.");
+        return false;
+    }
+
+    /*----------------------------------------*/
+    /*  write output files                    */
+    /*----------------------------------------*/
+
+    #ifdef _OPENMP
+    startWriteOut = omp_get_wtime();
+    #endif
+
+    if(input.diurnalWinds == false){
+        input.Com->ninjaCom(ninjaComClass::ninjaNone, "Writing output files...");
+        WriteOutputFiles();
+    }
+           
+    #ifdef _OPENMP
+    endWriteOut = omp_get_wtime();
+    endTotal = omp_get_wtime();
+    #endif
+
+    /*----------------------------------------*/
+    /*  wrap up                               */
+    /*----------------------------------------*/
+
+    #ifdef _OPENMP
+    for( int t = 0; t < endRestart.size(); t++ )
+    {
+        input.Com->ninjaCom(ninjaComClass::ninjaNone, "try %d time was %lf seconds.", t, endRestart[t]-startRestart[t]);
+    }
+    if( endRestart.size() > 0 )
+    {
+        int t = endRestart.size();
+        input.Com->ninjaCom(ninjaComClass::ninjaNone, "try %d time was %lf seconds.", t, endTotal-startRestart[t]);
+    }
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "File writing time was %lf seconds.", endFoamFileWriting-startFoamFileWriting);
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "STL conversion time was %lf seconds.", endStlConversion-startStlConversion);
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Meshing time was %lf seconds.",endMesh-startMesh);
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Initialization time was %lf seconds.",endInit-startInit);
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Solver time was %lf seconds.",endSolve-startSolve);
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Output sampling time was %lf seconds.", endOutputSampling-startOutputSampling);
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "generate and sample mass mesh time was %lf seconds.", endGenerateAndSampleMassMesh-startGenerateAndSampleMassMesh);
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Output writing time was %lf seconds.",endWriteOut-startWriteOut);
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Total simulation time was %lf seconds.",endTotal-startTotal);
+    #endif
+
+    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Run number %d done!", input.inputsRunNumber);
+
+    if(!input.keepOutGridsInMemory && input.diurnalWinds == false)
+    {
+       CloudGrid.deallocate();
+       AngleGrid.deallocate();
+       VelocityGrid.deallocate();
+       TurbulenceGrid.deallocate();
+       colMaxGrid.deallocate();
+    }
+    // always deallocate the 3D data grids, until we figure out how to use them for diurnal inputs
+    //if(input.diurnalWinds == false)
+    //{
+       massMesh_u.deallocate();
+       massMesh_v.deallocate();
+       massMesh_w.deallocate();
+       massMesh_k.deallocate();
+    //}
+
+    if(input.diurnalWinds == true){
+        input.Com->ninjaCom(ninjaComClass::ninjaNone, "Adding diurnal winds...");
+    }   
+
+    return true;
+}
+
+/*
+** Run the OpenFOAM part of a momentum solver run: write the case, mesh,
+** initialize, solve and sample on the output-height surface.  accept is
+** called with each sampled result and returns false to reject it, which
+** triggers a retry on a smoothed DEM.  Returns whether a result was accepted.
+*/
+bool NinjaFoam::SolveWithOpenFoam(MomentumResult &result,
+        const std::function<bool(const MomentumResult &)> &accept)
+{
     ComputeDirection(); //convert wind direction to unit vector notation
     SetInlets();
     SetBcs();
@@ -475,12 +576,12 @@ bool NinjaFoam::simulate_wind()
         //suppress libXML warnings
         CPLPushErrorHandler(CPLQuietErrorHandler);
         Sample();
-        solutionStatus = SampleRawOutput();
+        solutionStatus = ReadRawOutput(result) && accept(result);
         if( solutionStatus == false )
         {
             if(input.existingCaseDirectory != "!set"){
                 // no smoothing of the dem if this is an existing case
-                input.Com->ninjaCom(ninjaComClass::ninjaNone, "Error during SampleRawOutput(). Can't generate new mesh from smoothed elevation file "
+                input.Com->ninjaCom(ninjaComClass::ninjaNone, "Error during sampling. Can't generate new mesh from smoothed elevation file "
                         "for existing case directory. Try again without using an existing case.");
             }
             // try smoothing the dem, starting at a smoothDist of 1, incrementing the smoothDist by 1 every 2 tries,
@@ -488,11 +589,11 @@ bool NinjaFoam::simulate_wind()
             tryIdx++;
             if( tryIdx <= nTries )
             {
-                input.Com->ninjaCom(ninjaComClass::ninjaNone, "Error during SampleRawOutput(). Smoothing elevation file and starting over with new mesh...");
+                input.Com->ninjaCom(ninjaComClass::ninjaNone, "Error during sampling. Smoothing elevation file and starting over with new mesh...");
                 input.Com->ninjaCom(ninjaComClass::ninjaNone, "simpleFoam tryIdx = %d",tryIdx);
             } else
             {
-                input.Com->ninjaCom(ninjaComClass::ninjaNone, "Error during SampleRawOutput()...");
+                input.Com->ninjaCom(ninjaComClass::ninjaNone, "Error during sampling...");
                 break;
             }
 
@@ -527,101 +628,19 @@ bool NinjaFoam::simulate_wind()
 
             continue;
 
-        }  // if(!SampleRawOutput())
+        }  // if(!ReadRawOutput(result) || !accept(result))
         CPLPopErrorHandler();
 
         #ifdef _OPENMP
         endOutputSampling = omp_get_wtime();
         #endif
 
-        /*-------------------------------------------------------------------*/
-        /* Generate and Sample mass mesh                                     */
-        /*-------------------------------------------------------------------*/
-        #ifdef _OPENMP
-        startGenerateAndSampleMassMesh = omp_get_wtime();
-        #endif
-        input.Com->ninjaCom(ninjaComClass::ninjaNone, "Generating and sampling mass mesh...");
-        GenerateAndSampleMassMesh();
-        #ifdef _OPENMP
-        endGenerateAndSampleMassMesh = omp_get_wtime();
-        #endif
-    
         // update the tryIdx for the next loop
         tryIdx++;
 
     } // while( solutionStatus == false && tryIdx <= nTries )
-    if( solutionStatus == false ){
-        input.Com->ninjaCom(ninjaComClass::ninjaNone, "Error during simpleFoam() or other foam processes (sampling foam files). The flow solution failed.");
-        return false;
-    }
 
-    /*----------------------------------------*/
-    /*  write output files                    */
-    /*----------------------------------------*/
-
-    #ifdef _OPENMP
-    startWriteOut = omp_get_wtime();
-    #endif
-
-    if(input.diurnalWinds == false){
-        input.Com->ninjaCom(ninjaComClass::ninjaNone, "Writing output files...");
-        WriteOutputFiles();
-    }
-           
-    #ifdef _OPENMP
-    endWriteOut = omp_get_wtime();
-    endTotal = omp_get_wtime();
-    #endif
-
-    /*----------------------------------------*/
-    /*  wrap up                               */
-    /*----------------------------------------*/
-
-    #ifdef _OPENMP
-    for( int t = 0; t < endRestart.size(); t++ )
-    {
-        input.Com->ninjaCom(ninjaComClass::ninjaNone, "try %d time was %lf seconds.", t, endRestart[t]-startRestart[t]);
-    }
-    if( endRestart.size() > 0 )
-    {
-        int t = endRestart.size();
-        input.Com->ninjaCom(ninjaComClass::ninjaNone, "try %d time was %lf seconds.", t, endTotal-startRestart[t]);
-    }
-    input.Com->ninjaCom(ninjaComClass::ninjaNone, "File writing time was %lf seconds.", endFoamFileWriting-startFoamFileWriting);
-    input.Com->ninjaCom(ninjaComClass::ninjaNone, "STL conversion time was %lf seconds.", endStlConversion-startStlConversion);
-    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Meshing time was %lf seconds.",endMesh-startMesh);
-    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Initialization time was %lf seconds.",endInit-startInit);
-    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Solver time was %lf seconds.",endSolve-startSolve);
-    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Output sampling time was %lf seconds.", endOutputSampling-startOutputSampling);
-    input.Com->ninjaCom(ninjaComClass::ninjaNone, "generate and sample mass mesh time was %lf seconds.", endGenerateAndSampleMassMesh-startGenerateAndSampleMassMesh);
-    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Output writing time was %lf seconds.",endWriteOut-startWriteOut);
-    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Total simulation time was %lf seconds.",endTotal-startTotal);
-    #endif
-
-    input.Com->ninjaCom(ninjaComClass::ninjaNone, "Run number %d done!", input.inputsRunNumber);
-
-    if(!input.keepOutGridsInMemory && input.diurnalWinds == false)
-    {
-       CloudGrid.deallocate();
-       AngleGrid.deallocate();
-       VelocityGrid.deallocate();
-       TurbulenceGrid.deallocate();
-       colMaxGrid.deallocate();
-    }
-    // always deallocate the 3D data grids, until we figure out how to use them for diurnal inputs
-    //if(input.diurnalWinds == false)
-    //{
-       massMesh_u.deallocate();
-       massMesh_v.deallocate();
-       massMesh_w.deallocate();
-       massMesh_k.deallocate();
-    //}
-
-    if(input.diurnalWinds == true){
-        input.Com->ninjaCom(ninjaComClass::ninjaNone, "Adding diurnal winds...");
-    }   
-
-    return true;
+    return solutionStatus;
 }
 
 void NinjaFoam::AddBcBlock(std::string &dataString)
@@ -2699,13 +2718,12 @@ const char * NinjaFoam::GetGridFilename()
     return pszGridFilename;
 }
 
-bool NinjaFoam::SampleRawOutput()
+/*
+** Read the sampled OpenFOAM output (u, v, k on the output-height surface)
+** into result.  Returns false if the output is missing or incomplete.
+*/
+bool NinjaFoam::ReadRawOutput(MomentumResult &result)
 {
-    /*-------------------------------------------------------------------*/
-    /* convert output from xyz to speed and direction                    */
-    /*-------------------------------------------------------------------*/
-
-    AsciiGrid<double> foamU, foamV;
     int rc;
     if( foamVersion == "11" )
     {
@@ -2723,23 +2741,47 @@ bool NinjaFoam::SampleRawOutput()
     hDS = GDALOpen( GetGridFilename(), GA_ReadOnly );
     if( hDS == NULL )
     {
-        CPLError( CE_Failure, CPLE_AppDefined, "Invalid output written in NinjaFoam::SampleRawOutput");
+        CPLError( CE_Failure, CPLE_AppDefined, "Invalid output written in NinjaFoam::ReadRawOutput");
         return false;
     }
 
-    GDAL2AsciiGrid( (GDALDataset *)hDS, 1, foamU );
-    GDAL2AsciiGrid( (GDALDataset *)hDS, 2, foamV );
+    GDAL2AsciiGrid( (GDALDataset *)hDS, 1, result.u );
+    GDAL2AsciiGrid( (GDALDataset *)hDS, 2, result.v );
 
     // If we failed to fill in the data for the entire grid, we've failed.
     // Report a better message.
-    if(foamU.get_hasNoDataValues() || foamV.get_hasNoDataValues())
+    if(result.u.get_hasNoDataValues() || result.v.get_hasNoDataValues())
     {
         // testing this by forcing a value to be NO_DATA. For some odd reason, this message isn't going through.
         CPLError( CE_Failure, CPLE_AppDefined, "The openfoam output could not be interpolated to a proper surface.");
         return false;
     }
 
-    if(!CheckIfOutputWindHeightIsResolved()){
+    GDAL2AsciiGrid( (GDALDataset *)hDS, 3, result.k );
+    GDALClose( hDS );
+
+    result.outputHeightResolved = CheckIfOutputWindHeightIsResolved();
+    result.sampleHeight = finalFirstCellHeight/2.0;
+
+    return true;
+}
+
+/*
+** Turn a momentum solver result into the output grids: log-profile it down
+** to the output height if the mesh didn't resolve it, then fill VelocityGrid,
+** AngleGrid and TurbulenceGrid.  Returns false if the solution is not
+** physically plausible.
+*/
+bool NinjaFoam::ApplyMomentumResult(const MomentumResult &result)
+{
+    /*-------------------------------------------------------------------*/
+    /* convert output from xyz to speed and direction                    */
+    /*-------------------------------------------------------------------*/
+
+    AsciiGrid<double> foamU = result.u;
+    AsciiGrid<double> foamV = result.v;
+
+    if(!result.outputHeightResolved){
         //if the output wind height is not resolved, interpolate to output height using a log profile
         windProfile profile;
         profile.profile_switch = windProfile::monin_obukov_similarity;
@@ -2754,7 +2796,7 @@ bool NinjaFoam::SampleRawOutput()
                 profile.Rough_h = input.surface.Rough_h(i,j);
                 profile.Rough_d = input.surface.Rough_d(i,j);
                 //this is height above the vegetation
-                profile.inputWindHeight = finalFirstCellHeight/2.0 + input.surface.Rough_d(i,j) - input.surface.Rough_h(i,j);
+                profile.inputWindHeight = result.sampleHeight + input.surface.Rough_d(i,j) - input.surface.Rough_h(i,j);
  
                 //this is height above THE GROUND!! (not "z=0" for the log profile)
                 profile.AGL=input.outputWindHeight + input.surface.Rough_h(i,j);
@@ -2790,19 +2832,15 @@ bool NinjaFoam::SampleRawOutput()
     /* convert k to average velocity fluctuations (u')                   */
     /* u' = sqrt(2/3*k)                                                  */
     /*-------------------------------------------------------------------*/
-    AsciiGrid<double> foamK;
+    TurbulenceGrid = result.k;
 
-    GDAL2AsciiGrid( (GDALDataset *)hDS, 3, foamK );
-    TurbulenceGrid = foamK;
-
-    for(int i=0; i<foamK.get_nRows(); i++)
+    for(int i=0; i<result.k.get_nRows(); i++)
     {
-        for(int j=0; j<foamK.get_nCols(); j++)
+        for(int j=0; j<result.k.get_nCols(); j++)
         {
-            TurbulenceGrid(i,j) = std::sqrt(2.0/3.0 * foamK(i,j));
+            TurbulenceGrid(i,j) = std::sqrt(2.0/3.0 * result.k(i,j));
         }
     }
-    GDALClose( hDS );
 
     return true;
 }

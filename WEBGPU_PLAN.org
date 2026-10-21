@@ -168,7 +168,7 @@ with =NINJAFOAM= for now, because =meshCount= / =nIterations= live under
   =WindNinjaInputs= maps speed, direction, heights, z0, Rd and cell budget.
   Units are converted to SI.
 
-** IN-PROGRESS 1.2 Extract =OpenFoamBackend= [2/8]
+** IN-PROGRESS 1.2 Extract =OpenFoamBackend= [3/9]
 Approach: extract-class-by-delegation. =OpenFoamBackend= holds a
 =WindNinjaInputs&=, so the OpenFOAM method bodies move almost verbatim, and
 only the boundary (=simulate_wind=, =SampleRawOutput=) is rewritten. The log-
@@ -204,9 +204,17 @@ Boundary map (from =ninjafoam.h= / =ninjafoam.cpp=):
       Baseline at f31c8694: all 8 cases match.
 - [X] Add =sampleHeight= (m above ground) / =outputHeightResolved= to
       =MomentumResult=.
-- [ ] Create =openfoam_backend.{h,cpp}= and move the OpenFOAM methods and
-      their state (case files, mesh, solve, sample, probes, case reuse, retry
-      loop) with =input.= references intact.
+- [X] Step A: inside =ninjafoam.cpp=, carve the OpenFOAM part of
+      =simulate_wind= (case setup through raw sampling, including the retry
+      loop) into =NinjaFoam::SolveWithOpenFoam()= returning a
+      =MomentumResult=, with the log-profile correction after it. Bitwise check.
+      Done: =SolveWithOpenFoam(result, accept)=; =SampleRawOutput= split into
+      =ReadRawOutput= (backend) and =ApplyMomentumResult= (WindNinja side). The
+      retry loop calls =accept=, because a rejection can come from the
+      post-processed 220 m/s check. Golden check: all 8 match.
+- [ ] Step B: create =openfoam_backend.{h,cpp}= and move =SolveWithOpenFoam=,
+      the methods it calls and their state into =OpenFoamBackend=, with
+      =input.= references intact. Bitwise check.
 - [ ] Make =NinjaFoam::simulate_wind= call =OpenFoamBackend::solve=, then
       apply the log-profile correction and fill the output grids.
 - [ ] Keep case reuse (=existing_case_directory=) as an OpenFOAM-specific
@@ -574,6 +582,17 @@ SIP strips =DYLD_LIBRARY_PATH= when starting =/bin/bash=, so OpenFOAM can't
 re-sources =$WM_PROJECT_DIR/etc/bashrc= to work around it. Document this for
 macOS users, or set an rpath / =FOAM_USER_LIBBIN= so the =dlopen= doesn't
 depend on =DYLD_*=. Found during 0.3.
+
+** TODO Existing case dir is smoothed and unlinked after a sampling failure
+In the retry loop, a sampling failure with =existing_case_directory= set prints
+"Can't generate new mesh ... for existing case directory" but doesn't return
+(unlike the simpleFoam failure path). It goes on to smooth the DEM and
+=NinjaUnlinkTree= the user's case directory. Preserved as-is in 1.2. Found
+during 1.2.
+** TODO Unbalanced =CPLPushErrorHandler= in the retry loop
+=CPLPushErrorHandler(CPLQuietErrorHandler)= before sampling is only popped on
+success. Each sampling retry leaves a quiet handler pushed, which may hide later
+GDAL errors. Preserved as-is in 1.2. Found during 1.2.
 
 * Open questions (need answers from the team)
 - Are the tolerances in GATE 0 acceptable to the science team? Who signs off?

@@ -31,6 +31,7 @@
 #define NINJA_FOAM_INCLUDED_
 
 #include "ninja.h"
+#include "momentum_backend.h"
 
 #include "assert.h"
 
@@ -176,7 +177,10 @@ private:
 
     /* Output */
     Elevation outputSampleGrid;
-    bool SampleRawOutput();
+    bool SolveWithOpenFoam(MomentumResult &result,
+                           const std::function<bool(const MomentumResult &)> &accept);
+    bool ReadRawOutput(MomentumResult &result);
+    bool ApplyMomentumResult(const MomentumResult &result);
     void WriteOutputFiles();
     void SetOutputResolution();
     void SetOutputFilenames();
