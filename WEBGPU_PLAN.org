@@ -562,9 +562,19 @@ returns u, v, k there.
       m/s) is near the summit. Pattern: slower on the windward (NW) flank, with
       mixed patches in the lee, i.e. speed-up / separation placed differently.
       Inlet, domain edges and convergence are ruled out.
-      Next hypotheses: (a) grid shape on steep flanks (CPU first layer has a
-      fixed vertical thickness, so cells shear; OpenFOAM projects then refines);
-      (b) turbulence over the flanks (k rel RMSE 0.48) moving separation.
+      Column comparison at the worst point (near the summit, 2026-10-21):
+      | ~AGL     | CPU |U| / k      | OpenFOAM |U| / k |
+      | ground   | 2194.6 m       | ≈2206 m          |
+      | ~40 m    | 0.98 / 0.90    | 6.85 / 0.55      |
+      | ~90 m    | 4.96 / 1.90    | 7.55 / 0.57      |
+      | ≥ 150 m  | 8.7–10.6       | ~9.5             |
+      Ground agrees within 11 m, so grid shape is ruled out. The CPU solver has
+      a stagnant near-ground layer with k up to 3.5× OpenFOAM's, the same
+      signature as the pre-fix flat bug. Leading hypothesis for 2.5:
+      a near-wall turbulence / wall-treatment defect on steep, sheared terrain
+      (wall-cell k production, the wall function on slopes, or dissipation on
+      sloped faces). Investigation capped here by user agreement. Phase 3
+      proceeds; Phase 4 waits on this.
 - [X] Deferred: the 3-D mass-mesh fields (VTK / colMax) for the CPU backend,
       to Phase 5.2 (feature parity).
 - [ ] Add tests
