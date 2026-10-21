@@ -406,7 +406,7 @@ Method (CPU reference, simplest robust choices):
 - =rans_converges_residual=: the residuals fall 5 orders of magnitude within
   =TBD= iterations on the cavity.
 
-** BLOCKED 2.3 RNG k-ε with atmospheric wall functions [6/10]
+** IN-PROGRESS 2.3 RNG k-ε with atmospheric wall functions [6/11]
 Parity record (what OpenFOAM-11 WindNinja actually uses):
 - Inlet U: u* = U∞·0.41/ln(h_in/z0); U = u*/0.41·ln(AGL/z0).
 - Inlet k: u*²/√0.085 (RNG Cμ), constant with height.
@@ -466,6 +466,13 @@ hold the log law:
   Wright 2007). WindNinja's real first cells are also 59–286 m, not ~2 m.
 - Decisive check: parity with OpenFOAM on a flat case (2.4's golden
   =flat_coarse_270=).
+Decision (2026-10-21, user): replace the analytic 2% / 1% criteria with
+parity against OpenFOAM.
+- [ ] Flat-terrain parity: run OpenFOAM-11 on the flat case and extract a
+      mid-domain column (cell centres, U, k, ε, ν_t) and the inlet z0 / u*.
+      Run the CPU solver on a grid whose layers match that column, then
+      compare U(z), k(z) and wall u*. A match puts the log-law drift on the
+      model; a mismatch localizes a bug.
 *** Tests
 - =rans_flat_terrain_log_law=: over a flat DEM the profile stays log-law along
   the whole fetch (homogeneous ABL), with speed at 10 m AGL within 2% of
