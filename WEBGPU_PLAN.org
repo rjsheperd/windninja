@@ -632,22 +632,41 @@ transports k and ε.
 
 * Phase 3: WebGPU infrastructure
 Goal: a WebGPU device, buffers, a kernel and readback from C++ on every
-platform, before porting solver kernels.
+platform *and in a browser* (WebAssembly), before porting solver kernels.
+Started 2026-10-21 by user decision, ahead of GATE 2: Phase 3 doesn't depend on
+the numerics. Phase 4 (the kernel port) waits until the 2.4 Big Butte
+question is settled or formally accepted.
 
 ** TODO 3.1 Choose and vendor the runtime
-- [ ] Evaluate Dawn vs wgpu-native: build size, prebuilt binaries for Win,
-      macOS and Linux (x64 and arm64), license, and =webgpu.h= API stability.
-- [ ] Add a CMake option =WITH_WEBGPU= (default OFF), with a =find_package= or
-      =FetchContent= recipe.
-- [ ] Record the decision in this file.
+Decision (2026-10-21, user): *Dawn*. In a browser the page supplies WebGPU;
+C++ compiled with Emscripten reaches it through *emdawnwebgpu*, Dawn's
+maintained fork of Emscripten's original bindings (Emscripten ≥ 4.0.10:
+=--use-port=emdawnwebgpu=). Native Dawn and emdawnwebgpu ship the same
+=webgpu.h=, so one host-code path serves both. wgpu-native has no C++
+browser counterpart (its browser story is the Rust =wgpu= crate); its
+advantage, prebuilt native binaries, is a packaging cost only.
+Rules: write host code against the C =webgpu.h= API (stable). Don't use
+=webgpu_cpp.h=, which Dawn marks unstable.
+- [X] Choose the runtime (Dawn), recorded above.
+- [ ] Vendor Dawn for native builds: a prebuilt package where available,
+      otherwise a CMake source build (=DAWN_FETCH_DEPENDENCIES=). Pin a version.
+- [ ] Add a CMake option =WITH_WEBGPU= (default OFF) that finds or builds Dawn
+      and links the GPU layer.
+- [ ] Emscripten target for the solver-only module (3.4) via
+      =--use-port=emdawnwebgpu=.
 *** Tests
 - CI builds with =WITH_WEBGPU=ON= on Linux, macOS and Windows.
+- An Emscripten build of the 3.4 module links.
 
 ** TODO 3.2 Device and buffer layer (=src/ninja/gpu/=)
 - [ ] Create an RAII wrapper for instance, adapter, device and queue. Request a
       high-performance adapter, then fall back.
 - [ ] Create a storage buffer helper with upload and readback (staging buffer
-      plus =mapAsync=, waited on synchronously).
+      plus =mapAsync=). Readback must be *asynchronous-capable*: a WASM module
+      can't block on the GPU in a browser. The native host may wait
+      (=wgpuInstanceWaitAny=); the browser build yields (Emscripten JSPI or
+      Asyncify, or a step-and-callback loop). Design the solver host loop for
+      both from the start.
 - [ ] Load WGSL from embedded strings (no runtime file lookup).
 - [ ] Turn device-lost and validation errors into C++ exceptions with messages.
 *** Tests
@@ -666,6 +685,22 @@ platform, before porting solver kernels.
 - Record the numbers here. If per-dispatch overhead at 100k cells is more
   than 10% of the estimated per-iteration CPU time, plan kernel fusion in
   Phase 4.
+
+** TODO 3.4 Solver-only WebAssembly module
+The browser target is the GPU solver alone, not WindNinja in WASM (GDAL,
+NetCDF and Boost make that a heavy port). =MomentumProblem= is already the
+boundary: a DEM grid and scalars in, u/v/k grids out. DEM loading stays in
+JavaScript, or a separate GDAL WASM build.
+- [ ] Keep the GPU solver code free of GDAL / WindNinja-core dependencies (a
+      library that takes plain arrays plus the problem scalars).
+- [ ] Emscripten build of a minimal module: device, the 3.2 saxpy kernel,
+      async readback, and a tiny JS harness page.
+- [ ] Note the browser limits: by default only 128 MiB per storage-buffer
+      binding and 256 MiB per buffer are guaranteed, and there's no f64. 100k-cell
+      meshes fit; larger grids need higher adapter limits or split fields.
+*** Tests
+- The module runs the saxpy kernel in a headless browser and its readback
+  matches (e.g. via the =spel= / Playwright skill).
 
 * Phase 4: GPU solver port (=WebGpuRansBackend=)
 Goal: the same numerics as the =CpuRansBackend=, as WGSL kernels.
@@ -813,9 +848,8 @@ Goal: evidence that the GPU backend is fit for operational use.
   drop the =data/ninjafoam= templates, the BC library and the hwloc requirement).
 
 * Out of scope / later
-- Browser build. It needs either WindNinja core in WASM (GDAL etc.) or a
-  solver-only web component. Decide after GATE 4, and keep the WGSL free of
-  native-only assumptions so either stays possible.
+- Full WindNinja core in the browser (GDAL etc.). Decided against for now:
+  the browser target is the solver-only module (3.4).
 - LBM / LES transient solver (see WEBGPU.org, "Why not LBM").
 - Non-neutral stability, Coriolis, or spatially varying inflow. These become
   possible once the solver is in-house, but need separate validation.
