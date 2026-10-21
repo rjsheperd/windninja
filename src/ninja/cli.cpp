@@ -362,7 +362,7 @@ int windNinjaCLI(int argc, char* argv[])
                 ("existing_case_directory", po::value<std::string>(), "path to an existing OpenFOAM case directory")
                 ("momentum_flag", po::value<bool>()->default_value(false), "use momentum solver (true, false)")
                 ("momentum_backend", po::value<std::string>()->default_value("openfoam"), "CFD backend for the momentum solver (openfoam, webgpu)")
-                ("number_of_iterations", po::value<int>()->default_value(300), "number of iterations for momentum solver")
+                ("number_of_iterations", po::value<int>()->default_value(WindNinjaInputs::defaultMomentumIterations), "number of iterations for momentum solver")
                 ("mesh_count", po::value<int>(), "number of cells in the mesh")
                 ("turbulence_output_flag", po::value<bool>()->default_value(false), "write turbulence output (true, false)")
                 #endif

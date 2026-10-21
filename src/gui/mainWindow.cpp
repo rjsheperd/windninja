@@ -1108,15 +1108,6 @@ bool MainWindow::prepareArmy(NinjaArmyH *ninjaArmy, int numNinjas, const char* i
             }
         }
 
-        #ifdef NINJAFOAM
-        // the cli and the GUI use a value of 300 instead of the default value of 1000.
-        ninjaErr = NinjaSetNumberOfIterations(ninjaArmy, i, 300, papszOptions);
-        if(ninjaErr != NINJA_SUCCESS)
-        {
-            qDebug() << "NinjaSetNumberOfIterations: ninjaErr =" << ninjaErr;
-            return false;
-        }
-        #endif //NINJAFOAM
 
         if(ui->meshResolutionComboBox->currentIndex() == 3) // custom res
         {

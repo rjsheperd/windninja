@@ -295,12 +295,26 @@ GATE 7.
   when built without WebGPU.
 - The C API test (=autotest/api=) sets and reads back the backend.
 
-** TODO 1.6 Fix the found defects (separate small PRs)
-- [ ] Unknown OpenFOAM version: fail loudly instead of segfaulting
-      (=ninjafoam.cpp:1217-1231=). Check every =VSIFOpenL=.
-- [ ] Use one iteration default for the core, CLI and GUI.
-- [ ] CMake: link the =ninja= target instead of =libninja.a= by path
-      (=src/cli=, =autotest=), so macOS needs no extra flags.
+** DONE 1.6 Fix the found defects (separate small PRs) [7/7]
+- [X] Unknown OpenFOAM version: validate =foamVersion= against
+      {2.2.0, 9, 11} once at the top of =simulate_wind= (the 63 version branches
+      assume one of these), so it fails loudly instead of segfaulting
+      (=ninjafoam.cpp:1217-1231=).
+- [X] Unchecked =VSIFOpenL=: 34 calls, 6 checked. Use an =OpenOrThrow= helper
+      at the 13 sites that dereference the handle (template / case-file I/O and
+      data reads). The 12 =CPLSpawn= log-file handles are left as-is: a NULL
+      handle should only lose the log (unverified).
+- [X] Use one iteration default for the core, CLI and GUI:
+      =WindNinjaInputs::defaultMomentumIterations= = 300. The GUI no longer
+      hard-codes 300. Effect: C API callers who never set iterations now get
+      300, not 1000.
+- [X] CMake: link the =ninja= target instead of =libninja.a= by path
+      (=src/cli=, =autotest=), so macOS needs no extra flags. Verified with a
+      clean configure and build with empty =CMAKE_CXX_FLAGS= /
+      =CMAKE_EXE_LINKER_FLAGS=. =build_deps_macos.sh= no longer prints them.
+- [X] Add tests (=ninjafoam/unknown_version=, =momentum_backend/default_iterations=)
+- [X] Tests pass (clean build: 86/86 with OpenFOAM; golden check: all 8 match)
+- [X] Documentation updates (=build_deps_macos.sh= output; header comments)
 *** Tests
 - =ninjafoam_unknown_version=: setting =WM_PROJECT_VERSION=v9999= makes
   =simulate_wind= throw a =std::runtime_error= naming the version.

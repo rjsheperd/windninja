@@ -36,11 +36,9 @@ if(NINJAFOAM)
     endif()
 endif(NINJAFOAM)
 
-if(WIN32 OR APPLE)
-    set(LINK_LIBS ${LINK_LIBS} ${PROJECT_BINARY_DIR}/src/ninja/${CMAKE_CFG_INTDIR}/${CMAKE_STATIC_LIBRARY_PREFIX}ninja${CMAKE_STATIC_LIBRARY_SUFFIX})
-else(WIN32 OR APPLE)
-    set(LINK_LIBS ${LINK_LIBS} ${PROJECT_BINARY_DIR}/src/ninja/${CMAKE_CFG_INTDIR}/${CMAKE_SHARED_LIBRARY_PREFIX}ninja${CMAKE_SHARED_LIBRARY_SUFFIX})
-endif(WIN32 OR APPLE)
+# link the target, not the library file, so its dependencies (shapelib,
+# OpenMP, hwloc) come with it; libninja is static on Windows and macOS
+set(LINK_LIBS ${LINK_LIBS} ninja)
 
 if (UNIX AND NOT APPLE)
     set(CMAKE_INSTALL_RPATH "\$ORIGIN/../lib")

@@ -28,20 +28,9 @@ set(LINK_LIBS ${NETCDF_LIBRARIES_C}
               ${CURL_LIBRARIES}
               ${Boost_LIBRARIES})
 
-if(NINJAFOAM)
-    if(NOT WIN32)
-        set(LINK_LIBS ${LINK_LIBS}
-                      ${HWLOC_LIBRARY})
-    endif()
-endif(NINJAFOAM)
-
-if(WIN32 OR APPLE)
-    set(LINK_LIBS ${LINK_LIBS}
-                  ${PROJECT_BINARY_DIR}/src/ninja/${CMAKE_CFG_INTDIR}/${CMAKE_STATIC_LIBRARY_PREFIX}ninja${CMAKE_STATIC_LIBRARY_SUFFIX})
-else(WIN32 OR APPLE)
-    set(LINK_LIBS ${LINK_LIBS}
-                  ${PROJECT_BINARY_DIR}/src/ninja/${CMAKE_SHARED_LIBRARY_PREFIX}ninja${CMAKE_SHARED_LIBRARY_SUFFIX})
-endif(WIN32 OR APPLE)
+# link the target, not the library file, so its dependencies (shapelib,
+# OpenMP, hwloc) come with it
+set(LINK_LIBS ${LINK_LIBS} ninja)
 
 set(TEST_SOURCES test_main.cpp
                  test_contain.cpp
@@ -336,10 +325,16 @@ if(NINJAFOAM)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/replace_keys)
     add_test(ninjafoam_is_momentum_solver
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/is_momentum_solver)
+    if(NOT WIN32)
+        add_test(ninjafoam_unknown_version
+                 ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/unknown_version)
+    endif()
     add_test(momentum_backend_problem_from_inputs
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/problem_from_inputs)
     add_test(momentum_backend_backend_default_openfoam
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_default_openfoam)
+    add_test(momentum_backend_default_iterations
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/default_iterations)
     add_test(momentum_backend_backend_names
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_names)
     add_test(momentum_backend_backend_unavailable_throws

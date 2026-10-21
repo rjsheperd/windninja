@@ -112,9 +112,7 @@ cat << EOF
 Done. Configure WindNinja with:
 
     cmake -S $WN_SRC_DIR -B build -DCMAKE_PREFIX_PATH=$(brew --prefix) \\
-          -DOpenMP_ROOT=$(brew --prefix libomp) \\
-          -DCMAKE_EXE_LINKER_FLAGS="-L$(brew --prefix)/lib -lshp -L$(brew --prefix libomp)/lib -lomp" \\
-          -DCMAKE_CXX_FLAGS="-I$(brew --prefix libomp)/include"
+          -DOpenMP_ROOT=$(brew --prefix libomp)
 
 Before running WindNinja with the momentum solver:
 

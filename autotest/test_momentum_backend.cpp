@@ -79,6 +79,14 @@ BOOST_AUTO_TEST_CASE( backend_default_openfoam )
     BOOST_CHECK_EQUAL(copy.momentumBackend, WindNinjaInputs::openFoamBackend);
 }
 
+BOOST_AUTO_TEST_CASE( default_iterations )
+{
+    // the core, CLI and GUI share one default
+    WindNinjaInputs input;
+    BOOST_CHECK_EQUAL(input.nIterations, WindNinjaInputs::defaultMomentumIterations);
+    BOOST_CHECK_EQUAL(WindNinjaInputs::defaultMomentumIterations, 300);
+}
+
 BOOST_AUTO_TEST_CASE( backend_names )
 {
     BOOST_CHECK_EQUAL(ninja::get_eMomentumBackend("openfoam"), WindNinjaInputs::openFoamBackend);

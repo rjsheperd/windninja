@@ -162,7 +162,7 @@ WindNinjaInputs::WindNinjaInputs()
     ustarFile = "!set";
 #endif
 #ifdef NINJAFOAM
-    nIterations = 1000;
+    nIterations = defaultMomentumIterations;
     meshCount = -1;
     ninjafoamMeshChoice = WindNinjaInputs::fine;
     momentumBackend = WindNinjaInputs::openFoamBackend;

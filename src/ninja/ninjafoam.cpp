@@ -32,6 +32,21 @@
 
 const char* NinjaFoam::pszFoamPath = NULL;
 
+/*
+** Open a file the OpenFOAM pipeline can't continue without (case templates,
+** case files, sampled data).  Throws instead of returning NULL.
+*/
+static VSILFILE *OpenOrThrow(const char *pszFilename, const char *pszAccess)
+{
+    VSILFILE *fp = VSIFOpenL(pszFilename, pszAccess);
+    if(fp == NULL)
+    {
+        throw std::runtime_error(std::string("Cannot open ") + pszFilename +
+                                 " (mode " + pszAccess + ") for the NINJAFOAM case.");
+    }
+    return fp;
+}
+
 NinjaFoam::NinjaFoam() : ninja()
 {
     foamVersion = "";
@@ -178,6 +193,12 @@ bool NinjaFoam::simulate_wind()
     foamVersion = CPLGetConfigOption("WM_PROJECT_VERSION", "");
     #endif
     CPLDebug("NINJAFOAM", CPLSPrintf("foamVersion = \"%s\"",foamVersion.c_str()));
+    if(foamVersion != "2.2.0" && foamVersion != "9" && foamVersion != "11")
+    {
+        throw std::runtime_error("Unsupported OpenFOAM version '" + foamVersion +
+                                 "' (WM_PROJECT_VERSION). The momentum solver supports "
+                                 "OpenFOAM 2.2.0, 9 and 11 from openfoam.org.");
+    }
 
     std::string pszWnDataPath = CPLGetConfigOption( "WINDNINJA_DATA", NULL );
     if( !CPLCheckForFile((char*)CPLFormFilename(pszWnDataPath.c_str(),"tz_world.zip",NULL), NULL) )
@@ -705,7 +726,7 @@ void NinjaFoam::AddBcBlock(std::string &dataString)
 
     char *data;
     VSILFILE *fin;
-    fin = VSIFOpenL( pszTemplateFile, "r" );
+    fin = OpenOrThrow( pszTemplateFile, "r" );
 
     vsi_l_offset offset;
     VSIFSeekL(fin, 0, SEEK_END);
@@ -927,8 +948,8 @@ void NinjaFoam::WriteFoamFiles()
             pszInput = CPLFormFilename(pszArchive, osFullPath.c_str(), "");
             pszOutput = CPLFormFilename(pszFoamPath, osFullPath.c_str(), "");
 
-            fin = VSIFOpenL( pszInput, "r" );
-            fout = VSIFOpenL( pszOutput, "w" );
+            fin = OpenOrThrow( pszInput, "r" );
+            fout = OpenOrThrow( pszOutput, "w" );
 
             if( osFullPath.find("0") == 0){
                 WriteZeroFiles(fin, fout, pszFilename);
@@ -1265,8 +1286,8 @@ void NinjaFoam::writeBlockMesh()
     VSILFILE *fin;
     VSILFILE *fout;
 
-    fin = VSIFOpenL( pszInput, "r" );
-    fout = VSIFOpenL( pszOutput, "w" );
+    fin = OpenOrThrow( pszInput, "r" );
+    fout = OpenOrThrow( pszOutput, "w" );
 
     char *data;
 
@@ -1348,8 +1369,8 @@ void NinjaFoam::writeMoveDynamicMesh()
     pszInput = CPLFormFilename(pszArchive, "0/pointDisplacement", "");
     pszOutput = CPLFormFilename(pszFoamPath, "0/pointDisplacement", "");
 
-    fin = VSIFOpenL( pszInput, "r" );
-    fout = VSIFOpenL( pszOutput, "w" );
+    fin = OpenOrThrow( pszInput, "r" );
+    fout = OpenOrThrow( pszOutput, "w" );
 
     char *data;
 
@@ -1429,7 +1450,7 @@ void NinjaFoam::CopyFile(const char *pszInput, const char *pszOutput, std::strin
     VSILFILE *fin;
     VSILFILE *fout;
 
-    fin = VSIFOpenL( pszInput, "r" );
+    fin = OpenOrThrow( pszInput, "r" );
 
     char *data;
 
@@ -1451,7 +1472,7 @@ void NinjaFoam::CopyFile(const char *pszInput, const char *pszOutput, std::strin
         ReplaceKeys(s, key, value, 100);
     }
 
-    fout = VSIFOpenL( pszOutput, "w" );
+    fout = OpenOrThrow( pszOutput, "w" );
     
     const char * d = s.c_str();
     int nSize = strlen(d);
@@ -3085,7 +3106,7 @@ void NinjaFoam::readInProbeData( const wn_3dArray& x, const wn_3dArray& y, const
     
     // read the full data file into a string separated by "\n" chars for each line
     VSILFILE *fin;
-    fin = VSIFOpenL( probeSampleData_filename, "r" );
+    fin = OpenOrThrow( probeSampleData_filename, "r" );
     
     char *data;
     
@@ -3224,7 +3245,7 @@ void NinjaFoam::readInProbeData( const wn_3dArray& x, const wn_3dArray& y, const
     
     // read the full data file into a string separated by "\n" chars for each line
     VSILFILE *fin;
-    fin = VSIFOpenL( probeSampleData_filename, "r" );
+    fin = OpenOrThrow( probeSampleData_filename, "r" );
     
     char *data;
     
@@ -3352,7 +3373,7 @@ void NinjaFoam::readInProbeData_foam10(const wn_3dArray& x, const wn_3dArray& y,
 
     // read the full data file into a string separated by "\n" chars for each line
     VSILFILE *fin;
-    fin = VSIFOpenL( probeSampleData_filename, "r" );
+    fin = OpenOrThrow( probeSampleData_filename, "r" );
 
     char *data;
 
@@ -4731,7 +4752,7 @@ double NinjaFoam::GetFirstCellHeightFromDisk(int time)
     const char *pszInput = CPLSPrintf("%s/%d/U", pszFoamPath, time);
     VSILFILE *fin;
 
-    fin = VSIFOpenL( pszInput, "r" );
+    fin = OpenOrThrow( pszInput, "r" );
 
     char *data;
 

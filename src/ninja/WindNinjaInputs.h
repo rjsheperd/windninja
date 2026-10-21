@@ -300,6 +300,7 @@ public:
      *  NinjaFOAM section
      *-----------------------------------------------------------------------------*/
 #ifdef NINJAFOAM
+    static constexpr int defaultMomentumIterations = 300; //used by the core, CLI and GUI
     int nIterations; //number of iterations for a ninjafoam simulation
     int meshCount; //mesh count for a ninjafoam simulation
     eNinjafoamMeshChoice ninjafoamMeshChoice; // fine, medium, coarse

@@ -31,6 +31,7 @@
 #include "ninjafoam.h"
 
 #include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -160,6 +161,27 @@ BOOST_AUTO_TEST_CASE( is_momentum_solver )
     ninja *base = &f;
     BOOST_CHECK(base->isMomentumSolver());
 }
+
+#ifndef WIN32
+BOOST_AUTO_TEST_CASE( unknown_version )
+{
+    // an unsupported OpenFOAM (e.g. ESI v2606) must fail with a clear error,
+    // not fall through the version branches and crash
+    CPLSetConfigOption("WM_PROJECT_VERSION", "v9999");
+    bool threw = false;
+    try
+    {
+        f.simulate_wind();
+    }
+    catch(std::runtime_error &e)
+    {
+        threw = true;
+        BOOST_CHECK(std::string(e.what()).find("'v9999'") != std::string::npos);
+    }
+    CPLSetConfigOption("WM_PROJECT_VERSION", NULL);
+    BOOST_CHECK(threw);
+}
+#endif
 
 BOOST_AUTO_TEST_SUITE_END()
 
