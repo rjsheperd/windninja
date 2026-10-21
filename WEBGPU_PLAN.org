@@ -714,9 +714,15 @@ Rules: write host code against the C =webgpu.h= API (stable). Don't use
 - =gpu_validation_error_throws=: a bad WGSL compile throws, and the message
   contains the shader line.
 
-** TODO 3.3 Overhead benchmark
+** NEXT 3.3 Overhead benchmark
 - [ ] Run a dispatch and readback micro-benchmark at 25k, 100k, 1M and 10M
       elements.
+- [ ] Measure separately: per-dispatch submit cost (many small dispatches,
+      one wait), upload, readback, and staging-buffer reuse vs one per call.
+- [ ] Compare with the CPU solver's per-iteration time at 100k cells.
+- [ ] Add tests
+- [ ] Tests pass
+- [ ] Documentation updates
 *** Tests
 - Record the numbers here. If per-dispatch overhead at 100k cells is more
   than 10% of the estimated per-iteration CPU time, plan kernel fusion in
