@@ -80,12 +80,19 @@ public:
     virtual ~MomentumBackend() {}
 
     /*
-    ** Solve the problem.  Progress goes to com; checkCancel is called
-    ** periodically and throws cancelledByUser to stop the run.
+    ** Solve the problem into result.  Progress goes to com; checkCancel is
+    ** called periodically and throws cancelledByUser to stop the run.
+    **
+    ** accept is called with each candidate result and returns false to reject
+    ** it (e.g. the caller's post-processed speeds are implausible).  A backend
+    ** may then retry, for instance on a smoothed DEM.  Returns whether a
+    ** result was accepted.
     */
-    virtual MomentumResult solve(const MomentumProblem &problem,
-                                 ninjaComClass *com,
-                                 const std::function<void()> &checkCancel) = 0;
+    virtual bool solve(const MomentumProblem &problem,
+                       ninjaComClass *com,
+                       const std::function<void()> &checkCancel,
+                       const std::function<bool(const MomentumResult &)> &accept,
+                       MomentumResult &result) = 0;
 };
 
 /* Build a MomentumProblem from the inputs of a momentum solver run. */

@@ -70,6 +70,7 @@
  */
 class NinjaFoam : public ninja
 {
+    friend class OpenFoamBackend;
 
 public:
     NinjaFoam();

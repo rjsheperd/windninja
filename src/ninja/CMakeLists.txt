@@ -128,6 +128,7 @@ if(NINJAFOAM)
     set(NINJA_SOURCES ${NINJA_SOURCES}
                     ninjafoam.cpp
                     momentum_backend.cpp
+                    openfoam_backend.cpp
                     foamDomainAverageInitialization.cpp
                     foamWxModelInitialization.cpp
                     foamGriddedInitialization.cpp)

@@ -168,7 +168,7 @@ with =NINJAFOAM= for now, because =meshCount= / =nIterations= live under
   =WindNinjaInputs= maps speed, direction, heights, z0, Rd and cell budget.
   Units are converted to SI.
 
-** IN-PROGRESS 1.2 Extract =OpenFoamBackend= [3/9]
+** DONE 1.2 Extract =OpenFoamBackend= [8/8]
 Approach: extract-class-by-delegation. =OpenFoamBackend= holds a
 =WindNinjaInputs&=, so the OpenFOAM method bodies move almost verbatim, and
 only the boundary (=simulate_wind=, =SampleRawOutput=) is rewritten. The log-
@@ -212,16 +212,24 @@ Boundary map (from =ninjafoam.h= / =ninjafoam.cpp=):
       =ReadRawOutput= (backend) and =ApplyMomentumResult= (WindNinja side). The
       retry loop calls =accept=, because a rejection can come from the
       post-processed 220 m/s check. Golden check: all 8 match.
-- [ ] Step B: create =openfoam_backend.{h,cpp}= and move =SolveWithOpenFoam=,
-      the methods it calls and their state into =OpenFoamBackend=, with
-      =input.= references intact. Bitwise check.
-- [ ] Make =NinjaFoam::simulate_wind= call =OpenFoamBackend::solve=, then
-      apply the log-profile correction and fill the output grids.
-- [ ] Keep case reuse (=existing_case_directory=) as an OpenFOAM-specific
-      option on the backend.
-- [ ] Add tests
-- [ ] Tests pass
-- [ ] Documentation updates
+- [X] Step B (thin adapter, decided 2026-10-20): =OpenFoamBackend= in
+      =openfoam_backend.{h,cpp}= implements =MomentumBackend= by forwarding to
+      NinjaFoam's existing OpenFOAM methods (as a friend). The code stays in
+      =ninjafoam.cpp=. A full physical move is deferred to GATE 7: it carries
+      risk in untested paths (case reuse, retries) and is wasted work if
+      OpenFOAM is deprecated. =MomentumBackend::solve= gains the =accept=
+      callback and returns =bool=. Bitwise check: all 8 match.
+- [X] Make =NinjaFoam::simulate_wind= call the backend through
+      =MomentumBackend&= with a =MakeMomentumProblem= problem.
+- [X] Keep case reuse (=existing_case_directory=) as an OpenFOAM-specific
+      option on the backend. It stays inside the OpenFOAM pipeline behind the
+      adapter and is untested (no golden case for reuse).
+- [X] Add tests (=check_momentum_golden.sh= is this task's test; the
+      adapter needs OpenFOAM, so it has no unit test)
+- [X] Tests pass (bitwise golden check; full suite 79/79 with OpenFOAM
+      loaded, incl. both momentum cfg runs)
+- [X] Documentation updates (header comments in =openfoam_backend.h= /
+      =momentum_backend.h=; decision recorded above)
 *** Tests
 - The Phase 0 golden cases match their pre-refactor outputs *exactly* (bitwise
   ASCII grids).

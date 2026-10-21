@@ -28,6 +28,7 @@
  *****************************************************************************/
 
 #include "ninjafoam.h"
+#include "openfoam_backend.h"
 
 const char* NinjaFoam::pszFoamPath = NULL;
 
@@ -276,9 +277,16 @@ bool NinjaFoam::simulate_wind()
         keepOutputGridsInMemory(true);
     }
 
+    input.meshCount = atoi(CPLGetConfigOption("NINJAFOAM_MESH_COUNT", CPLSPrintf("%d",input.meshCount)));
+    input.nIterations = atoi(CPLGetConfigOption("NINJAFOAM_ITERATIONS", CPLSPrintf("%d",input.nIterations)));
+
+    OpenFoamBackend openFoam(*this);
+    MomentumBackend &backend = openFoam;
     MomentumResult result;
-    bool solutionStatus = SolveWithOpenFoam(result,
-            [this](const MomentumResult &r) { return ApplyMomentumResult(r); });
+    bool solutionStatus = backend.solve(MakeMomentumProblem(input), input.Com,
+            [this]() { checkCancel(); },
+            [this](const MomentumResult &r) { return ApplyMomentumResult(r); },
+            result);
 
     if( solutionStatus == true )
     {
@@ -381,8 +389,6 @@ bool NinjaFoam::SolveWithOpenFoam(MomentumResult &result,
     SetInlets();
     SetBcs();
 
-    input.meshCount = atoi(CPLGetConfigOption("NINJAFOAM_MESH_COUNT", CPLSPrintf("%d",input.meshCount)));
-    input.nIterations = atoi(CPLGetConfigOption("NINJAFOAM_ITERATIONS", CPLSPrintf("%d",input.nIterations)));
     
     input.Com->ninjaCom(ninjaComClass::ninjaNone, "Run number %d started with %d threads.", input.inputsRunNumber, input.numberCPUs);
 
