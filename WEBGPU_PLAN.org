@@ -168,11 +168,51 @@ with =NINJAFOAM= for now, because =meshCount= / =nIterations= live under
   =WindNinjaInputs= maps speed, direction, heights, z0, Rd and cell budget.
   Units are converted to SI.
 
-** TODO 1.2 Extract =OpenFoamBackend=
-- [ ] Move the case generation, spawn and sampling code out of
-      =ninjafoam.cpp= into =openfoam_backend.cpp=, unchanged.
+** IN-PROGRESS 1.2 Extract =OpenFoamBackend= [1/8]
+Approach: extract-class-by-delegation. =OpenFoamBackend= holds a
+=WindNinjaInputs&=, so the OpenFOAM method bodies move almost verbatim, and
+only the boundary (=simulate_wind=, =SampleRawOutput=) is rewritten. The log-
+profile correction in =SampleRawOutput= (=ninjafoam.cpp:2742=) is WindNinja
+post-processing that every backend needs (see 0.3), so it stays on the
+WindNinja side. =MomentumResult= therefore gains the sample height and a
+resolved flag.
+Boundary map (from =ninjafoam.h= / =ninjafoam.cpp=):
+- Moves to the backend: case files (=WriteFoamFiles=, =Write*Files=,
+  BC blocks, =SetInlets= / =SetBcs= / =ComputeDirection=), mesh
+  (=writeBlockMesh=, =SetBlockMeshParametersFromDem=, =MoveDynamicMesh=,
+  =RefineSurfaceLayer=, =TopoSet=, =RefineMesh=, =RenumberMesh=), solve
+  (=ApplyInit=, =DecomposePar=, =SimpleFoam=, =ReconstructPar=, retry loop),
+  sampling (=Sample=, =SanitizeOutput*=, =SampleCloudGrid=, raw read in
+  =SampleRawOutput=, probe I/O =writeProbeSampleFile= / =runProbeSample= /
+  =readInProbeData*=), case reuse (=UpdateExistingCase=, =GenerateNewCase=,
+  =Read/WriteNinjaLog=, =CheckForValidCaseDir=, =Get*OnDisk=) and their state
+  members.
+- Stays in =NinjaFoam=: =simulate_wind= setup (=CloudGrid=, =init=,
+  =keepOutputGridsInMemory=), the log-profile parts of =SampleRawOutput= and
+  =fillEmptyProbeVals= (use =init->=), =generateMassMesh=,
+  =generateColMaxGrid=, output resolution, file names and writers, and
+  =countNumCores= / =set_numberCPUs=.
+- =checkCancel()= is called inside the pipeline (MoveDynamicMesh, SimpleFoam
+  loop, GenerateNewCase), so the backend holds a =checkCancel= callback member.
+- NinjaFoam is copied by armies (copy ctor / =operator==), so the backend is a
+  per-run local inside =simulate_wind=, not a member holding =WindNinjaInputs&=.
+- =pszFoamPath= is static and set by =ninjaArmy= via =GenerateFoamDirectory= /
+  =SetFoamPath=. NinjaFoam keeps those as forwarding statics.
+- [X] Add =scripts/check_momentum_golden.sh=: regenerate the golden set into a
+      temp dir and require a bitwise match (=compare_momentum ... 0 0 0= for
+      every case). Run it before any code moves, as a baseline.
+      Baseline at f31c8694: all 8 cases match.
+- [ ] Add =sampleHeight= / =outputHeightResolved= to =MomentumResult=.
+- [ ] Create =openfoam_backend.{h,cpp}= and move the OpenFOAM methods and
+      their state (case files, mesh, solve, sample, probes, case reuse, retry
+      loop) with =input.= references intact.
+- [ ] Make =NinjaFoam::simulate_wind= call =OpenFoamBackend::solve=, then
+      apply the log-profile correction and fill the output grids.
 - [ ] Keep case reuse (=existing_case_directory=) as an OpenFOAM-specific
       option on the backend.
+- [ ] Add tests
+- [ ] Tests pass
+- [ ] Documentation updates
 *** Tests
 - The Phase 0 golden cases match their pre-refactor outputs *exactly* (bitwise
   ASCII grids).
