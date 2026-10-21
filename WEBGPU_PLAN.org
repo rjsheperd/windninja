@@ -1087,9 +1087,20 @@ Done 2026-10-21: =gpu::RansMultigrid= (=src/ninja/gpu/gpu_multigrid{.h,.cpp,_ker
   23 µs per dispatch).
   So the WebGPU backend defaults to *single grid* (=multigridLevels= 1, 20,000
   steps), with multigrid available. The real lever for run time is the
-  residual plateau. Both solvers' answers stop changing long before the cap,
-  so a stopping test on the solution's change, not the residual, would end
-  runs much earlier. That's next.
+  residual plateau.
+- Follow-up, output-based stop (=WebGpuRansBackend::outputTolerance=, default
+  1e-3 m/s): stop when the RMS change of ground-layer speed over a check
+  interval (100 steps) is below it. Measured (stop step; RMS vs the
+  20,000-step answer):
+  | case                | 1e-3            | 3e-4 / 1e-4      |
+  | flat_coarse_270     | 1,600; 0.0012   | 8,500–9,000; 0.0005 |
+  | ridge_coarse_270    | 17,400; 0.0039  | 20,000 (cap)     |
+  | big_butte coarse    | 18,100; 0.0025  | 20,000 (cap)     |
+  | big_butte medium    | 20,000 (cap)    | 20,000 (cap)     |
+  A minor win (flat 3 s instead of 10). The steep cases keep drifting
+  slowly to the end, so their residual plateau is genuine slow evolution,
+  not wasted iterations; faster convergence there needs a better smoother or
+  an implicit scheme, not a different stopping test.
 Order (2026-10-21, assumption recorded): 4.4 first, single-grid. The user's
 priority is comparing the GPU with OpenFOAM, and 4.2 gives a complete
 single-grid solver. Multigrid follows once the golden comparison runs.

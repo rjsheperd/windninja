@@ -49,6 +49,10 @@ public:
     int maxIterations = 20000;
     int checkEvery = 100;          // between residual readbacks
     double tolerance = 1e-5;       // residual drop, relative to each equation's peak
+    // also stop when the output (ground-layer speed) changes by less than
+    // this RMS, m/s, over checkEvery steps; 0 = residual test only.  On the
+    // golden cases 1e-3 ends within 0.004 m/s RMS of the full run
+    double outputTolerance = 1e-3;
     double cfl = 0.5;              // pseudo-time CFL number
     int maxRetries = 3;            // restarts at half the CFL after a divergence
     double lastCfl = 0.0;          // the CFL number the last solve finished at

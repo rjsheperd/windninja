@@ -31,6 +31,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "cpu_rans_backend.h"
 #include "gpu_context.h"
@@ -82,7 +83,7 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
     // (as OpenFOAM's retries)
     double runCfl = cfl;
     int it = 0;
-    double worst = 1.0;
+    double worst = 1.0, change = 1e30;
     for(int attempt = 0; ; attempt++)
     {
         if(attempt > 0)
@@ -95,7 +96,9 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
         worst = 1.0;
         it = 0;
         bool diverged = false;
-        while(it < maxIterations && worst > tolerance)
+        change = 1e30;
+        std::vector<float> previous;
+        while(it < maxIterations && worst > tolerance && change >= outputTolerance)
         {
             checkCancel();
             if(mg)
@@ -117,6 +120,26 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
             peak.u = std::max(peak.u, std::max(r.u, r.v));
             peak.k = std::max(peak.k, r.k);
             worst = std::max(std::max(r.u, r.v) / peak.u, r.k / peak.k);
+            // RMS change of the ground-layer speed since the last check (the
+            // ground layer is the first nx * ny cells of each field slot)
+            const std::size_t n2 = std::size_t(g.nx) * g.ny, nc = s.grid.nCells;
+            std::vector<float> ground(2 * n2);
+            s.fields.buffer.download(ground.data(), n2 * sizeof(float),
+                                     gpu::fieldU * nc * sizeof(float));
+            s.fields.buffer.download(ground.data() + n2, n2 * sizeof(float),
+                                     gpu::fieldV * nc * sizeof(float));
+            if(!previous.empty())
+            {
+                double sum = 0.0;
+                for(std::size_t i = 0; i < n2; i++)
+                {
+                    double d = std::hypot(ground[i], ground[n2 + i]) -
+                               std::hypot(previous[i], previous[n2 + i]);
+                    sum += d * d;
+                }
+                change = std::sqrt(sum / n2);
+            }
+            previous.swap(ground);
             if(it % (mg ? 200 : 1000) == 0)
                 com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS %s %d, residual %g", unit, it,
                               worst);
@@ -134,8 +157,9 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
         runCfl /= 2.0;
     }
     lastCfl = runCfl;
-    com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS stopped after %d %ss at CFL %g, residual %g.",
-                  it, unit, runCfl, worst);
+    com->ninjaCom(ninjaComClass::ninjaNone,
+                  "WebGPU RANS stopped after %d %ss at CFL %g, residual %g, output change %g m/s.",
+                  it, unit, runCfl, worst, change);
 
     CpuRansBackend::sample(problem, g, s.fields.download(gpu::fieldU),
                            s.fields.download(gpu::fieldV), s.fields.download(gpu::fieldK),
