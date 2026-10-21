@@ -247,11 +247,23 @@ GATE 7.
 *** Tests
 - The full ctest suite is green. The momentum cfg tests from 0.2 are unchanged.
 
-** TODO 1.4 Replace =identify()= string checks
-- [ ] List every =identify() == "ninjafoam"= / =="ninja"= site
-      (=ninja.cpp=, =ninjaArmy.cpp=).
-- [ ] Replace each with a capability query (=hasTurbulenceOutput()=,
-      =supportsFrictionVelocity()=, ...).
+** DONE 1.4 Replace =identify()= string checks [6/6]
+- [X] List every =identify() == "ninjafoam"= / =="ninja"= site. Found 11, all
+      in =ninjaArmy.cpp=: 350/354 (OpenFOAM case dir), 510/523/641/652/664
+      (momentum run flow: diurnal pass, sequential runs), 1967/1971 (mesh
+      sizing), 2869/2881 (friction velocity / dust only for the mass solver).
+- [X] Replace each with one virtual =isMomentumSolver()= (false in =ninja=,
+      true in =NinjaFoam=). Finer capabilities would all equal it today
+      (simplest solution). The case-dir pair becomes a backend check once a
+      second backend exists (1.5). Also fix bitwise =&= on booleans at 350,
+      354 and 523. The now-unreachable "invalid identify()" branch in
+      =setMeshResolutionChoice= was removed.
+- [X] Keep =identify()= for logging.
+- [X] Add tests (=ninjafoam/is_momentum_solver=)
+- [X] Tests pass (80/80 with OpenFOAM loaded; the multi-run momentum army
+      path at =ninjaArmy.cpp:641= has no test, but the change there is a direct
+      substitution)
+- [X] Documentation updates (SKIP: internal change, no user-facing docs)
 *** Tests
 - KMZ / turbulence / colMax output for momentum runs is unchanged (golden
   cases, plus a file-list diff of the output directory).

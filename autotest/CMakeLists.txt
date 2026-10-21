@@ -334,6 +334,8 @@ if(NINJAFOAM)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/replace_key)
     add_test(ninjafoam_replace_keys
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/replace_keys)
+    add_test(ninjafoam_is_momentum_solver
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/is_momentum_solver)
     add_test(momentum_backend_problem_from_inputs
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/problem_from_inputs)
     add_test(stl_1

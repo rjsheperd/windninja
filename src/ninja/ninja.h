@@ -131,6 +131,7 @@ public:
 
     virtual bool simulate_wind();
     inline virtual std::string identify() {return std::string("ninja");}
+    inline virtual bool isMomentumSolver() const {return false;}  //conservation of mass and momentum
     bool cancel;	//if set to "false" during a simulation (ie when "simulate_wind()" is running), the simulation will attempt to end
     Mesh mesh;
 

@@ -347,11 +347,11 @@ bool ninjaArmy::startRuns(int numProcessors)
 
 #ifdef NINJAFOAM
     //if it's a ninjafoam run and the user specified an existing case dir, set it here
-    if(ninjas[0]->identify() == "ninjafoam" & ninjas[0]->input.existingCaseDirectory != "!set"){
+    if(ninjas[0]->isMomentumSolver() && ninjas[0]->input.existingCaseDirectory != "!set"){
         NinjaFoam::SetFoamPath(ninjas[0]->input.existingCaseDirectory.c_str());
     }
     //if it's a ninjafoam run and the case is not set by the user, generate the ninjafoam dir
-    if(ninjas[0]->identify() == "ninjafoam" & ninjas[0]->input.existingCaseDirectory == "!set"){
+    if(ninjas[0]->isMomentumSolver() && ninjas[0]->input.existingCaseDirectory == "!set"){
         //force temp dir to DEM location
         CPLSetConfigOption("CPL_TMPDIR", CPLGetDirname(ninjas[0]->input.dem.fileName.c_str()));
         CPLSetConfigOption("CPLTMPDIR", CPLGetDirname(ninjas[0]->input.dem.fileName.c_str()));
@@ -507,7 +507,7 @@ bool ninjaArmy::startRuns(int numProcessors)
         //set number of threads for the run
         ninjas[0]->set_numberCPUs(numProcessors);
         try{
-            if ((ninjas[0]->identify() == "ninjafoam") && ninjas[0]->input.diurnalWinds)
+            if (ninjas[0]->isMomentumSolver() && ninjas[0]->input.diurnalWinds)
             {
                 //Set the ninjafoam solver progress bar to stop at 80% so that
                 //the diurnal solver can contribute too
@@ -520,7 +520,7 @@ bool ninjaArmy::startRuns(int numProcessors)
 #ifdef NINJAFOAM
             //if it's a ninjafoam run and diurnal is turned on, link the ninjafoam with
             //a ninja run to add diurnal flow after the cfd solution is computed
-            if ((ninjas[0]->identify() == "ninjafoam") & ninjas[0]->input.diurnalWinds){
+            if (ninjas[0]->isMomentumSolver() && ninjas[0]->input.diurnalWinds){
                 CPLDebug("NINJA", "Starting a ninja to add diurnal to ninjafoam output.");
                 ninja* diurnal_ninja = new ninja(*ninjas[0]);
                 //Set the diurnal ninja to have the same com object,
@@ -638,7 +638,7 @@ bool ninjaArmy::startRuns(int numProcessors)
         }
     }
 #ifdef NINJAFOAM
-    else if ((ninjas.size() > 1) && (ninjas[0]->identify() =="ninjafoam"))
+    else if ((ninjas.size() > 1) && ninjas[0]->isMomentumSolver())
     {
 #ifdef _OPENMP
         omp_set_num_threads(numProcessors);
@@ -649,7 +649,7 @@ bool ninjaArmy::startRuns(int numProcessors)
                 //set number of threads for the run
                 ninjas[i]->set_numberCPUs( numProcessors );
 
-                if((ninjas[i]->identify() == "ninjafoam") && ninjas[0]->input.diurnalWinds)
+                if(ninjas[i]->isMomentumSolver() && ninjas[0]->input.diurnalWinds)
                 {
                     //Set the ninjafoam solver progress bar to stop at 80% so that
                     //the diurnal solver can contribute too
@@ -661,7 +661,7 @@ bool ninjaArmy::startRuns(int numProcessors)
                 }
                 //if it's a ninjafoam run and diurnal is turned on, link the ninjafoam with
                 //a ninja run to add diurnal flow after the cfd solution is computed
-                if((ninjas[i]->identify() == "ninjafoam") && ninjas[i]->input.diurnalWinds){
+                if(ninjas[i]->isMomentumSolver() && ninjas[i]->input.diurnalWinds){
                     CPLDebug("NINJA", "Starting a ninja to add diurnal to ninjafoam output.");
                     ninja* diurnal_ninja = new ninja(*ninjas[i]);
                     //Set the diurnal ninja to have the same com object,
@@ -1964,21 +1964,15 @@ int ninjaArmy::setMeshResolutionChoice( const int nIndex, const std::string choi
     {
         try
         {
-            if( ninjas[ nIndex ]->identify() == "ninja" )
-            {
-                ninjas[ nIndex ]->set_meshResChoice( choice );
-                retval = NINJA_SUCCESS;
-            } else if( ninjas[ nIndex ]->identify() == "ninjafoam" )
+            if( ninjas[ nIndex ]->isMomentumSolver() )
             {
                 ninjas[ nIndex ]->set_MeshCount( ninja::get_eNinjafoamMeshChoice(choice) );
-                retval = NINJA_SUCCESS;
             }
             else
             {
-                throw std::invalid_argument( "invalid ninja->identify() '" + choice +
-                                             "' in ninjaArmy::setMeshResolutionChoice()" +
-                                             "\nshould be: 'ninja' or 'ninjafoam'" );
+                ninjas[ nIndex ]->set_meshResChoice( choice );
             }
+            retval = NINJA_SUCCESS;
         }
         catch( std::logic_error &e )
         {
@@ -2866,7 +2860,7 @@ void ninjaArmy::writeConsistentColorScaleOutputs()
             #endif //NINJAFOAM
             #ifdef FRICTION_VELOCITY
             AsciiGrid<double> *ustarTempGrid = nullptr;
-            if(ninjas[i]->input.frictionVelocityFlag == 1 && ninjas[i]->identify() == "ninja")
+            if(ninjas[i]->input.frictionVelocityFlag == 1 && !ninjas[i]->isMomentumSolver())
             {
                 ustarTempGrid = new AsciiGrid<double> (ninjas[i]->UstarGrid.resample_Grid(ninjas[i]->input.kmzResolution, AsciiGrid<double>::order0));
                 if(ninjas[0]->input.outputBufferClipping <= 0.0)
@@ -2878,7 +2872,7 @@ void ninjaArmy::writeConsistentColorScaleOutputs()
             #endif //FRICTION_VELOCITY
             #ifdef EMISSIONS
             AsciiGrid<double> *dustTempGrid = nullptr;
-            if(ninjas[i]->input.dustFlag == 1 && ninjas[i]->identify() == "ninja")
+            if(ninjas[i]->input.dustFlag == 1 && !ninjas[i]->isMomentumSolver())
             {
                 dustTempGrid = new AsciiGrid<double> (ninjas[i]->DustGrid.resample_Grid(ninjas[i]->input.kmzResolution, AsciiGrid<double>::order0));
                 if(ninjas[0]->input.outputBufferClipping <= 0.0)

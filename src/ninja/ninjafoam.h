@@ -81,6 +81,7 @@ public:
 
     virtual bool simulate_wind();
     inline virtual std::string identify() {return std::string("ninjafoam");}
+    inline virtual bool isMomentumSolver() const {return true;}
 
     int countNumCores();
     virtual void set_numberCPUs(int CPUs);

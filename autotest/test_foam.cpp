@@ -151,6 +151,16 @@ BOOST_AUTO_TEST_CASE( replace_keys )
     BOOST_CHECK_EQUAL(s, "y y $x$");
 }
 
+BOOST_AUTO_TEST_CASE( is_momentum_solver )
+{
+    // ninjaArmy branches on this instead of comparing identify() strings
+    ninja n;
+    BOOST_CHECK(!n.isMomentumSolver());
+    BOOST_CHECK(f.isMomentumSolver());
+    ninja *base = &f;
+    BOOST_CHECK(base->isMomentumSolver());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 #endif /* NINJAFOAM */
