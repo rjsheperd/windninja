@@ -168,7 +168,7 @@ with =NINJAFOAM= for now, because =meshCount= / =nIterations= live under
   =WindNinjaInputs= maps speed, direction, heights, z0, Rd and cell budget.
   Units are converted to SI.
 
-** IN-PROGRESS 1.2 Extract =OpenFoamBackend= [1/8]
+** IN-PROGRESS 1.2 Extract =OpenFoamBackend= [2/8]
 Approach: extract-class-by-delegation. =OpenFoamBackend= holds a
 =WindNinjaInputs&=, so the OpenFOAM method bodies move almost verbatim, and
 only the boundary (=simulate_wind=, =SampleRawOutput=) is rewritten. The log-
@@ -202,7 +202,8 @@ Boundary map (from =ninjafoam.h= / =ninjafoam.cpp=):
       temp dir and require a bitwise match (=compare_momentum ... 0 0 0= for
       every case). Run it before any code moves, as a baseline.
       Baseline at f31c8694: all 8 cases match.
-- [ ] Add =sampleHeight= / =outputHeightResolved= to =MomentumResult=.
+- [X] Add =sampleHeight= (m above ground) / =outputHeightResolved= to
+      =MomentumResult=.
 - [ ] Create =openfoam_backend.{h,cpp}= and move the OpenFOAM methods and
       their state (case files, mesh, solve, sample, probes, case reuse, retry
       loop) with =input.= references intact.

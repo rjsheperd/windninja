@@ -57,12 +57,21 @@ struct MomentumProblem
 
 /*
 ** Grids on the output-height surface: u and v in m/s, k in m^2/s^2.
+**
+** If the mesh does not resolve the output height (first cell taller than
+** it), the grids hold ground-cell values representative of sampleHeight
+** rather than of the output height.  The caller then log-profiles them down
+** to the output height, so every backend gets the same post-processing.
 */
 struct MomentumResult
 {
     AsciiGrid<double> u;
     AsciiGrid<double> v;
     AsciiGrid<double> k;
+    bool outputHeightResolved;
+    double sampleHeight;     // m above the ground that u, v, k represent when
+                             // !outputHeightResolved (the caller converts to
+                             // height above the canopy per cell)
 };
 
 class MomentumBackend
