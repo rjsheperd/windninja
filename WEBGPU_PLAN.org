@@ -144,13 +144,25 @@ Big Butte coarse 0° vs 270° (speed RMSE 1.67 m/s, direction 80.2°, k rel RMSE
 * Phase 1: Cut the =MomentumBackend= seam (no behaviour change)
 Goal: OpenFOAM becomes one implementation behind an interface.
 
-** TODO 1.1 Define the interface
-- [ ] Add =src/ninja/momentum_backend.h= with =MomentumProblem=,
+** DONE 1.1 Define the interface [7/7]
+Note: =MomentumProblem= mirrors exactly what OpenFOAM consumes today:
+=inputSpeed= (m/s), =inputDirection_proj=, =inputWindHeight= /
+=outputWindHeight= (m above canopy), and the *domain means* of
+=surface.Roughness= and =surface.Rough_d= (=ninjafoam.cpp:694-700=).
+Per-cell roughness is a later extension. =momentum_backend.cpp= builds only
+with =NINJAFOAM= for now, because =meshCount= / =nIterations= live under
+=#ifdef NINJAFOAM= in =WindNinjaInputs.h= (see 1.5).
+- [X] Add =src/ninja/momentum_backend.h= with =MomentumProblem=,
       =MomentumResult= and the abstract =MomentumBackend= (see WEBGPU.org §A).
-- [ ] Add a =Volume= type for the optional 3-D fields (or reuse
-      =wn_3dScalarField= on the mass =Mesh=).
-- [ ] Route progress and cancel through the existing =ninjaComClass= and
-      =checkCancel=.
+- [X] Add =MakeMomentumProblem(const WindNinjaInputs&)=
+      (=momentum_backend.cpp=).
+- [X] Defer the 3-D fields to 1.2, where =GenerateAndSampleMassMesh= is the
+      first consumer; =MomentumResult= starts with the u, v, k grids.
+- [X] Route progress through =ninjaComClass= and cancel through a callback
+      that throws =cancelledByUser= (wrapping =ninja::checkCancel=).
+- [X] Add tests (=momentum_backend/problem_from_inputs=)
+- [X] Tests pass (full suite 77 passed + 2 skipped of 79)
+- [X] Documentation updates (header comments; =WEBGPU.org= §A points at the header)
 *** Tests
 - =momentum_backend_problem_from_inputs=: building a =MomentumProblem= from a
   =WindNinjaInputs= maps speed, direction, heights, z0, Rd and cell budget.
@@ -189,6 +201,8 @@ Goal: OpenFOAM becomes one implementation behind an interface.
 - [ ] Add a CLI option =momentum_backend= (default =openfoam=).
 - [ ] Add a C API =NinjaSetMomentumBackend=. Leave the GUI alone until Phase 5.
 - [ ] Return a clear error if the selected backend wasn't compiled in.
+- [ ] Move =nIterations= / =meshCount= out of =#ifdef NINJAFOAM= in
+      =WindNinjaInputs.h=, and build =momentum_backend.cpp= unconditionally.
 *** Tests
 - =cli_momentum_backend_default= reports openfoam.
 - =cli_momentum_backend_unavailable= exits non-zero with the expected message

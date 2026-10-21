@@ -132,6 +132,8 @@ Useful only as a reference for an f16 esoteric-pull streaming kernel in WGSL.
 
 * Recommended design
 ** A. Cut the seam (worth doing even without WebGPU)
+The interface now lives in =src/ninja/momentum_backend.h= (plan task 1.1). The
+sketch below is the original proposal; the header is authoritative.
 #+begin_src c++
 struct MomentumProblem {
     const Elevation& dem;          // resampled to mesh resolution

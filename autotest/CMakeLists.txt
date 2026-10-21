@@ -77,7 +77,8 @@ endif(WITH_NOMADS_SUPPORT)
 
 if(NINJAFOAM)
     set(TEST_SOURCES ${TEST_SOURCES}
-                     test_foam.cpp)
+                     test_foam.cpp
+                     test_momentum_backend.cpp)
 endif(NINJAFOAM)
 
 add_executable(test_main ${TEST_SOURCES})
@@ -333,6 +334,8 @@ if(NINJAFOAM)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/replace_key)
     add_test(ninjafoam_replace_keys
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/replace_keys)
+    add_test(momentum_backend_problem_from_inputs
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/problem_from_inputs)
     add_test(stl_1
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=stl/stl_1)
     add_test(stl_2
