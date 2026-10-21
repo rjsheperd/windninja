@@ -406,15 +406,39 @@ Method (CPU reference, simplest robust choices):
 - =rans_converges_residual=: the residuals fall 5 orders of magnitude within
   =TBD= iterations on the cavity.
 
-** TODO 2.3 RNG k-ε with atmospheric wall functions
-- [ ] Add the transport equations for k and ε with the RNG coefficients from
-      =data/ninjafoam/11/constant/momentumTransport=.
-- [ ] Port the rough-wall function from
-      =src/ninjafoam/11/wallBC/nutkAtmRoughWallFunction=.
-- [ ] Port the log-profile inlets for U, k and ε from
-      =src/ninjafoam/11/inletBC=, and the log-law initialisation from
-      =applyInit=.
+** IN-PROGRESS 2.3 RNG k-ε with atmospheric wall functions [1/10]
+Parity record (what OpenFOAM-11 WindNinja actually uses):
+- Inlet U: u* = U∞·0.41/ln(h_in/z0); U = u*/0.41·ln(AGL/z0).
+- Inlet k: u*²/√0.085 (RNG Cμ), constant with height.
+- Inlet ε: u*³/(0.4187·(AGL+z0)). A *different* κ from U's 0.41; kept for
+  parity, flagged.
+- Inlet AGL in OpenFOAM: face z − lowest face z in the column + h₁/2 (an
+  estimate). Here: face height above the ground directly from the grid.
+- Ground: no-slip U, zero-gradient k (=kqRWallFunction=), =epsilonWallFunction=
+  (ε = Cμ^¾k^1.5/(κy), G = (ν+ν_tw)|∂U/∂n|Cμ^¼√k/(κy)), and
+  ν_tw = ν(y⁺κ/ln(max((y+z0)/z0, 1+1e-4)) − 1), y⁺ = Cμ^¼√k·y/ν. Wall-function
+  Cμ 0.085, κ 0.41, E 9.8: WindNinja's =0/nut= overrides OpenFOAM's 0.09
+  default (checked in the OpenFOAM-11 source). For y⁺ < y⁺_lam,
+  =epsilonWallFunction= uses ε = 2kν/y² and adds no G.
+- RNG coefficients from =momentumTransport=: Cμ 0.085, C1 0.92 (not the
+  textbook 1.42), C2 1.68, σk = σε = 0.7179, η₀ 4.38, β 0.012.
+- Top: p = 0, zero-gradient U, k, ε. Outlet sides: OpenFOAM uses
+  =totalPressure= (p₀ = 0) and =pressureInletOutletVelocity=. Here: the
+  =pressureOutlet= (p = 0, extrapolated U), which differs only where flow
+  re-enters.
+- [X] =rans_abl.{h,cpp}=: the inlet U, k, ε and rough-wall ν_t formulas as
+      pure functions, with the parity constants above, plus =EpsilonWallFunction=
+      and =WallYPlusLam=. Tests: =rans_abl/= (bc_port_matches_openfoam at 1e-10).
+- [ ] Momentum viscous terms with ν_eff = ν + ν_t, plus the ν_t (∇u)ᵀ term
+      (OpenFOAM's divDevSigma). Laminar results unchanged when ν_t = 0.
+- [ ] k and ε transport (RNG production, R term, effective diffusivities),
+      with BCs per side (inlet profile, zero gradient, wall functions).
+- [ ] Log-profile inlet boundary type for U, k, ε along the wind direction.
+- [ ] Log-law initialisation (=applyInit= equivalent) by wall distance.
 - [ ] Assign inlet and outlet sides by wind direction, as =SetInlets= does today.
+- [ ] Add tests
+- [ ] Tests pass
+- [ ] Documentation updates
 *** Tests
 - =rans_flat_terrain_log_law=: over a flat DEM the profile stays log-law along
   the whole fetch (homogeneous ABL), with speed at 10 m AGL within 2% of

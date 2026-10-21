@@ -49,6 +49,7 @@ set(TEST_SOURCES test_main.cpp
                  test_rmtree.cpp
                  momentum_compare.cpp
                  test_momentum_compare.cpp
+                 test_rans_abl.cpp
                  test_rans_grid.cpp
                  test_rans_solver.cpp
                  test_utm.cpp)
@@ -349,6 +350,12 @@ if(NINJAFOAM)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=stl/stl_2)
 endif(NINJAFOAM)
 
+add_test(rans_abl_bc_port_matches_openfoam
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_abl/bc_port_matches_openfoam)
+add_test(rans_abl_inlet_profile_hits_input_speed
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_abl/inlet_profile_hits_input_speed)
+add_test(rans_abl_wall_functions
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_abl/wall_functions)
 add_test(rans_grid_flat_box
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/flat_box)
 add_test(rans_grid_closed_surface
