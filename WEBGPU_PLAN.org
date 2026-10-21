@@ -1058,7 +1058,38 @@ For each kernel, a =gpu_kernel_<stage>_matches_cpu= test:
 - compare against =CpuRansBackend= with f32;
 - require max relative diff 1e-5 (=TBD=).
 
-** NEXT 4.3 Geometric multigrid
+** DONE 4.3 Geometric multigrid
+Done 2026-10-21: =gpu::RansMultigrid= (=src/ninja/gpu/gpu_multigrid{.h,.cpp,_kernels.h}=).
+- The hierarchy comes from the CPU =RansMultigrid= (=grid(l)=, new
+  =coarseNodes(l, d)=), passed as plain arrays (=GpuMultigridLevels= in the
+  bridge).
+- Coarse levels are =gpu::RansSolver=s with frozen turbulence (=turbulent= 2)
+  and a forcing buffer, which the residual gather adds.
+- Kernels: volume-weighted restriction of all 7 fields, which also keeps the
+  starting state; the FAS forcing updated in place as
+  F = ΣR_fine − (R − F_old); trilinear prolongation of the 0.6-damped
+  correction.
+- A V-cycle reads nothing back. =reset()= zeroes the forcing for a restart,
+  because NaN left by a divergence poisons the in-place update. That was
+  found when the CFL back-off failed with multigrid.
+- Test =gpu/multigrid_matches_cpu= (3 levels on the ridge grid): within
+  8.8e-7 of the CPU multigrid after 1 V-cycle and 3.5e-6 after 31. Mutation
+  caught: forcing without F_old (diverges, 6e6).
+- *Result: on the GPU, multigrid gives the same answers, slower.* Against
+  single grid: 1e-4 to 1e-2 m/s on flat, ridge and Big Butte coarse/medium.
+  It takes 34–49 s per case against about 10 s, and every run hits the
+  5,000-cycle cap because the residual plateaus (Big Butte at 0.11, as the
+  CPU multigrid does).
+  On Big Butte fine it's stable at CFL 0.5 (single grid diverges there and
+  backs off to 0.25), but takes 4 min 27 s for 0.569 m/s vs OpenFOAM fine,
+  against single grid's 2 min 43 s for 0.549. Each V-cycle is about 100
+  dispatches, mostly on small coarse grids, so it's overhead-bound (3.3: about
+  23 µs per dispatch).
+  So the WebGPU backend defaults to *single grid* (=multigridLevels= 1, 20,000
+  steps), with multigrid available. The real lever for run time is the
+  residual plateau. Both solvers' answers stop changing long before the cap,
+  so a stopping test on the solution's change, not the residual, would end
+  runs much earlier. That's next.
 Order (2026-10-21, assumption recorded): 4.4 first, single-grid. The user's
 priority is comparing the GPU with OpenFOAM, and 4.2 gives a complete
 single-grid solver. Multigrid follows once the golden comparison runs.

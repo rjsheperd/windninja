@@ -75,7 +75,9 @@ struct Params {
     beta : f32,
     sigmaK : f32,
     sigmaEpsilon : f32,
-    turbulent : u32,    // 0 laminar, 1 k-epsilon
+    turbulent : u32,    // 0 laminar, 1 k-epsilon, 2 frozen k-epsilon (nut and
+                        // wall functions from fixed k, epsilon: multigrid
+                        // coarse levels)
     yPlusLam : f32,     // wall-function laminar / log switch
     cfl : f32,
     pad0 : f32,
@@ -518,13 +520,15 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
 )wgsl";
 
 // Cell gather of the residuals: 10 slots of nCells.  0-5 (fluxes): upper
-// minus lower face in each direction; 6-9 (spectral radius, wall epsilon,
-// wall G, wall faces): the sum over the six faces.
+// minus lower face in each direction, plus (0-3) the multigrid FAS forcing;
+// 6-9 (spectral radius, wall epsilon, wall G, wall faces): the sum over the
+// six faces.
 constexpr const char *fluxCells = R"wgsl(
 @group(0) @binding(1) var<storage, read> face0 : array<f32>;
 @group(0) @binding(2) var<storage, read> face1 : array<f32>;
 @group(0) @binding(3) var<storage, read> face2 : array<f32>;
 @group(0) @binding(4) var<storage, read_write> residuals : array<f32>;
+@group(0) @binding(5) var<storage, read> forcing : array<f32>;
 
 fn faceValue(d : u32, slot : u32, f : u32) -> f32 {
     let i = slot * nFaces(d) + f;
@@ -551,6 +555,9 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
             var up = ijk;
             up[d] += 1u;
             sum += faceValue(d, slot, faceIndex(d, up)) + sign * faceValue(d, slot, faceIndex(d, ijk));
+        }
+        if (slot < 4u) {
+            sum += forcing[slot * n + c];
         }
         residuals[slot * n + c] = sum;
     }

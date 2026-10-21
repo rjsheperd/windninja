@@ -74,13 +74,25 @@ public:
     RansSolver(Context &context, const GridView &view, double nu, double beta);
 
     void setBoundary(Side side, const Boundary &bc);
+    const Boundary &boundary(Side side) const { return bc_[side]; }
+    double nu() const { return nu_; }
+    double beta() const { return beta_; }
+    bool turbulent() const { return turbulent_; }
+    const TurbulenceModel &model() const { return model_; }
     // off means laminar; the one-argument form uses the default model
     void setTurbulence(bool on, const TurbulenceModel &model);
     void setTurbulence(bool on);
+    // turbulent, but k, epsilon and nut held fixed: they set the eddy
+    // viscosity and wall functions only (multigrid coarse levels)
+    void setFrozenTurbulence(bool frozen);
 
     /* Take n pseudo-time steps; returns the residuals of the last step (one
     ** wait on the GPU, at the end). */
     Residuals iterate(int n, double cfl);
+    // n steps without reading anything back (no wait)
+    void steps(int n, double cfl);
+    // the residuals of the last step (waits)
+    Residuals lastResiduals();
 
     // Green-Gauss gradients of p, u, v, w into gradients: slot
     // field * 3 + direction (field 0-3 = p, u, v, w) of nCells floats.
@@ -100,6 +112,8 @@ public:
     Buffer gradients;
     Buffer residuals;
     Buffer norms;          // per-cell residuals of the last step, 6 slots
+    Buffer forcing;        // FAS forcing added to the p, u, v, w residuals,
+                           // 4 slots (zero unless a multigrid level)
 
 private:
     void dispatch(Kernel &kernel, const std::vector<const Buffer *> &bindings,
@@ -108,7 +122,7 @@ private:
     void step();
 
     double nu_, beta_, cfl_ = 0.0;
-    bool turbulent_ = false;
+    bool turbulent_ = false, frozen_ = false;
     TurbulenceModel model_;
     Boundary bc_[6];
     bool paramsDirty_ = true;

@@ -326,6 +326,19 @@ BOOST_AUTO_TEST_CASE( webgpu_cfl_backoff )
         for(int c = 0; c < 40; c++)
             BOOST_CHECK(std::isfinite(result.u(r, c)) && std::isfinite(result.k(r, c)));
 
+    // the same with multigrid, whose restart must also clear the coarse
+    // forcing (NaN from the diverged attempt would poison it)
+    backend.multigridLevels = 6;
+    backend.maxIterations = 500;
+    backend.checkEvery = 10;
+    BOOST_CHECK(backend.solve(p, &com, []() {},
+                              [](const MomentumResult &) { return true; }, result));
+    BOOST_TEST_MESSAGE("multigrid finished at CFL " << backend.lastCfl);
+    BOOST_CHECK_LT(backend.lastCfl, 8.0);
+    for(int r = 0; r < 30; r++)
+        for(int c = 0; c < 40; c++)
+            BOOST_CHECK(std::isfinite(result.u(r, c)) && std::isfinite(result.k(r, c)));
+
     // and with no retries left it reports the divergence
     backend.maxRetries = 0;
     BOOST_CHECK_THROW(backend.solve(p, &com, []() {},

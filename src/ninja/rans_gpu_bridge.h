@@ -27,8 +27,12 @@
 #ifndef RANS_GPU_BRIDGE_H
 #define RANS_GPU_BRIDGE_H
 
+#include <vector>
+
+#include "gpu_multigrid.h"
 #include "gpu_rans.h"
 #include "rans_grid.h"
+#include "rans_multigrid.h"
 #include "rans_solver.h"
 
 /*
@@ -47,5 +51,9 @@ gpu::RansSolver::TurbulenceModel GpuTurbulenceModel(const RansTurbulenceModel &m
 // epsilon, nut when turbulent).  Throws std::invalid_argument for a dirichlet
 // boundary, which has no GPU version.
 void CopyToGpu(const RansSolver &cpu, gpu::RansSolver &gpu);
+
+// The coarse levels of a CPU multigrid hierarchy (non-owning: mg must
+// outlive their use)
+std::vector<gpu::RansMultigrid::Level> GpuMultigridLevels(const RansMultigrid &mg);
 
 #endif /* RANS_GPU_BRIDGE_H */

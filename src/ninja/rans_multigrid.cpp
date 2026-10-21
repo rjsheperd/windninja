@@ -91,6 +91,7 @@ RansMultigrid::RansMultigrid(RansSolver &fine, int maxLevels, int minCells)
                     z.push_back(g.z[n]);
                 }
         grids.emplace_back(new RansGrid(RansGrid::FromNodes(nx, ny, nz, x, y, z)));
+        nodeIdx.push_back({ix, iy, iz});
         const RansGrid &cg = *grids.back();
 
         std::vector<int> mx = CellMap(ix), my = CellMap(iy), mz = CellMap(iz);

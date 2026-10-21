@@ -79,7 +79,8 @@ RansSolver::RansSolver(Context &context, const GridView &view, double nu, double
     : context(context), grid(context, view), fields(context, grid.nCells),
       gradients(context, 12 * grid.nCells * sizeof(float)),
       residuals(context, 10 * grid.nCells * sizeof(float)),
-      norms(context, 6 * grid.nCells * sizeof(float)), nu_(nu), beta_(beta),
+      norms(context, 6 * grid.nCells * sizeof(float)),
+      forcing(context, 4 * grid.nCells * sizeof(float)), nu_(nu), beta_(beta),
       params_{Buffer(context, sizeof(ParamsBlock), Buffer::Uniform),
               Buffer(context, sizeof(ParamsBlock), Buffer::Uniform),
               Buffer(context, sizeof(ParamsBlock), Buffer::Uniform)},
@@ -98,6 +99,12 @@ RansSolver::RansSolver(Context &context, const GridView &view, double nu, double
 void RansSolver::setTurbulence(bool on)
 {
     setTurbulence(on, TurbulenceModel());
+}
+
+void RansSolver::setFrozenTurbulence(bool frozen)
+{
+    frozen_ = frozen;
+    paramsDirty_ = true;
 }
 
 void RansSolver::setTurbulence(bool on, const TurbulenceModel &model)
@@ -125,7 +132,7 @@ void RansSolver::uploadParams()
     b.beta = static_cast<float>(beta_);
     b.sigmaK = static_cast<float>(model_.sigmaK);
     b.sigmaEpsilon = static_cast<float>(model_.sigmaEpsilon);
-    b.turbulent = turbulent_ ? 1u : 0u;
+    b.turbulent = turbulent_ ? (frozen_ ? 2u : 1u) : 0u;
     b.yPlusLam = static_cast<float>(WallYPlusLam());
     b.cfl = static_cast<float>(cfl_);
     b.cmu = static_cast<float>(model_.cmu);
@@ -188,7 +195,8 @@ void RansSolver::computeResiduals()
                   &faceValues_[d]},
                  grid.nFaces[d]);
     dispatch(fluxCells_,
-             {&params_[0], &faceValues_[0], &faceValues_[1], &faceValues_[2], &residuals},
+             {&params_[0], &faceValues_[0], &faceValues_[1], &faceValues_[2], &residuals,
+              &forcing},
              grid.nCells);
 }
 
@@ -201,7 +209,7 @@ void RansSolver::step()
              grid.nCells);
 }
 
-RansSolver::Residuals RansSolver::iterate(int n, double cfl)
+void RansSolver::steps(int n, double cfl)
 {
     if(cfl != cfl_)
     {
@@ -210,11 +218,21 @@ RansSolver::Residuals RansSolver::iterate(int n, double cfl)
     }
     for(int it = 0; it < n; it++)
         step();
-    Residuals r;
+}
+
+RansSolver::Residuals RansSolver::iterate(int n, double cfl)
+{
+    steps(n, cfl);
     if(n == 0)
-        return r;
+        return Residuals();
+    return lastResiduals();
+}
+
+RansSolver::Residuals RansSolver::lastResiduals()
+{
+    Residuals r;
     double *slots[6] = {&r.p, &r.u, &r.v, &r.w, &r.k, &r.epsilon};
-    for(int s = 0; s < (turbulent_ ? 6 : 4); s++)
+    for(int s = 0; s < (turbulent_ && !frozen_ ? 6 : 4); s++)
         *slots[s] = std::sqrt(reducer_.sum(norms, s * grid.nCells, grid.nCells, true) /
                               grid.nCells);
     return r;

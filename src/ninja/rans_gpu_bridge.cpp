@@ -111,3 +111,17 @@ void CopyToGpu(const RansSolver &cpu, gpu::RansSolver &gpu)
         gpu.fields.upload(gpu::fieldNut, cpu.nut);
     }
 }
+
+std::vector<gpu::RansMultigrid::Level> GpuMultigridLevels(const RansMultigrid &mg)
+{
+    std::vector<gpu::RansMultigrid::Level> levels;
+    for(int l = 1; l < mg.levels(); l++)
+    {
+        gpu::RansMultigrid::Level level;
+        level.grid = GpuGridView(mg.grid(l));
+        for(int d = 0; d < 3; d++)
+            level.nodes[d] = mg.coarseNodes(l - 1, d);
+        levels.push_back(level);
+    }
+    return levels;
+}

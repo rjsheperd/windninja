@@ -27,6 +27,7 @@
 #ifndef RANS_MULTIGRID_H
 #define RANS_MULTIGRID_H
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -61,7 +62,12 @@ public:
     double correctionDamping = 0.6;
 
     int levels() const { return (int)solvers.size(); }
+
+    /* The hierarchy, for the GPU port: level 0 is the fine grid.
+    ** coarseNodes(level, d): for coarse level + 1, the level's node index
+    ** along direction d (0-2 = i, j, k) of each coarse node. */
     const RansGrid &grid(int level) const { return solvers[level]->grid; }
+    const std::vector<int> &coarseNodes(int level, int d) const { return nodeIdx[level][d]; }
 
 private:
     std::vector<std::unique_ptr<RansGrid>> grids;      // coarse grids (levels 1..)
@@ -73,6 +79,7 @@ private:
     struct Lean { std::vector<int> nb; std::vector<double> w; };
     std::vector<Lean> leanX, leanY, leanZ;
     std::vector<std::vector<double>> q0;               // restricted state per coarse level
+    std::vector<std::array<std::vector<int>, 3>> nodeIdx;  // kept nodes per level and direction
 
     RansSolver::Residuals vcycle(int level, double cfl, int preSmooth, int postSmooth, int coarsest);
     void restrictState(int level);

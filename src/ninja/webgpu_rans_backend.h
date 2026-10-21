@@ -33,16 +33,21 @@
 ** MomentumBackend running the RANS solver's GPU port (gpu::RansSolver) on
 ** the CpuRansBackend's grid, with its boundary conditions and initial state,
 ** so the two differ only in where (and in what precision) they iterate.
-** Single grid for now (multigrid is WEBGPU_PLAN 4.3).  Results follow the
-** same contract: u, v, k of the ground cell on the DEM grid.
+** FAS multigrid V-cycles (gpu::RansMultigrid, on the CPU multigrid's
+** hierarchy) or single grid.  Results follow the same contract: u, v, k of
+** the ground cell on the DEM grid.
 */
 class WebGpuRansBackend : public MomentumBackend
 {
 public:
     int layers = 20;               // as CpuRansBackend
     double growth = 1.1;
-    int maxIterations = 20000;     // pseudo-time steps
-    int checkEvery = 100;          // steps between residual readbacks
+    // including the fine grid; 1 = single grid.  Single grid by default: on
+    // the GPU, multigrid gives the same answers more slowly (WEBGPU_PLAN 4.3)
+    int multigridLevels = 1;
+    // limits in pseudo-time steps (single grid) or V-cycles (multigrid)
+    int maxIterations = 20000;
+    int checkEvery = 100;          // between residual readbacks
     double tolerance = 1e-5;       // residual drop, relative to each equation's peak
     double cfl = 0.5;              // pseudo-time CFL number
     int maxRetries = 3;            // restarts at half the CFL after a divergence

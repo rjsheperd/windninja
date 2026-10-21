@@ -14,12 +14,14 @@
 
 #include "gpu_context.h"
 #include "gpu_grid.h"
+#include "gpu_multigrid.h"
 #include "gpu_kernels.h"
 #include "gpu_rans.h"
 #include "gpu_reduce.h"
 #include "rans_abl.h"
 #include "rans_gpu_bridge.h"
 #include "rans_grid.h"
+#include "rans_multigrid.h"
 #include "rans_solver.h"
 #include "rans_wind.h"
 
@@ -466,6 +468,38 @@ BOOST_AUTO_TEST_CASE( iterate_deterministic )
     }
     for(int slot = 0; slot < gpu::fieldSlots; slot++)
         BOOST_CHECK(runs[0][slot] == runs[1][slot]);
+}
+
+BOOST_AUTO_TEST_CASE( multigrid_matches_cpu )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    // the CPU and GPU FAS V-cycles on the same hierarchy and state
+    RansGrid g = RidgeGrid(40, 12, 10);
+    ::RansSolver cpu(g, 1.58946e-5, 25.0);
+    PerturbedWindState(cpu);
+    gpu::RansSolver gs(*c, GpuGridView(g), cpu.nu, cpu.beta);
+    CopyToGpu(cpu, gs);
+    ::RansMultigrid mg(cpu, 4);
+    gpu::RansMultigrid gm(gs, GpuMultigridLevels(mg));
+    BOOST_REQUIRE_EQUAL(gm.levels(), mg.levels());
+    BOOST_TEST_MESSAGE("levels: " << mg.levels());
+
+    mg.cycle(0.5);
+    gm.cycle(0.5);
+    BOOST_TEST_MESSAGE("after 1 V-cycle:");
+    double one = FieldsDiff(cpu, gs);
+    BOOST_CHECK_LE(one, 1e-5);
+
+    for(int i = 0; i < 30; i++)
+    {
+        mg.cycle(0.5);
+        gm.cycle(0.5);
+    }
+    BOOST_TEST_MESSAGE("after 31 V-cycles:");
+    double many = FieldsDiff(cpu, gs);
+    BOOST_CHECK_LE(many, 1e-4);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
