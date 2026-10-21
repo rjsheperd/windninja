@@ -141,18 +141,6 @@ Big Butte coarse 0° vs 270° (speed RMSE 1.67 m/s, direction 80.2°, k rel RMSE
 - =momentum_compare_known_offset=: a +1 m/s shift gives RMSE 1. A 10°
   rotation gives a direction diff of 10° (including the 355° vs 5° wrap case).
 
-** BLOCKED GATE 0: tolerances agreed
-Blocked (2026-10-20): needs (a) tolerance sign-off from the WindNinja science
-team and (b) a Linux OpenFOAM-11 run for the cross-platform noise floor. The
-same-machine noise floor is 0 (bitwise identical, 0.3). Phase 0 tooling is
-ready: =scripts/make_momentum_golden.sh= and =compare_momentum=.
-- [ ] Run =scripts/make_momentum_golden.sh= on Linux (Ubuntu 24.04, OpenFOAM-11)
-      and compare it with the macOS set using the 0.4 tool. Record the
-      differences here as the cross-platform noise floor (moved from 0.3).
-- Speed RMSE, max speed diff, direction diff and k relative RMSE limits are
-  signed off.
-- The noise floor from 0.3 is recorded.
-
 * Phase 1: Cut the =MomentumBackend= seam (no behaviour change)
 Goal: OpenFOAM becomes one implementation behind an interface.
 
@@ -218,6 +206,24 @@ Goal: OpenFOAM becomes one implementation behind an interface.
   =simulate_wind= throw a =std::runtime_error= naming the version.
 - A macOS configure and build with no extra =CMAKE_*_FLAGS= succeeds and runs
   the suite (update =scripts/build_deps_macos.sh= to drop the flags).
+
+* Gate before Phase 2
+** BLOCKED GATE 0: tolerances agreed (before Phase 2)
+Moved (2026-10-20) from the end of Phase 0. Phase 1 is a no-behaviour-change
+refactor checked by bitwise match against the golden set, so it doesn't need
+tolerances. Tolerances first matter when a second backend is compared
+(Phase 2), which matches the Conventions note.
+Blocked (2026-10-20): needs (a) tolerance sign-off from the WindNinja science
+team and (b) a Linux OpenFOAM-11 run for the cross-platform noise floor. The
+same-machine noise floor is 0 (bitwise identical, 0.3). Phase 0 tooling is
+ready: =scripts/make_momentum_golden.sh= and =compare_momentum=.
+- [ ] Run =scripts/make_momentum_golden.sh= on Linux (Ubuntu 24.04, OpenFOAM-11)
+      and compare it with the macOS set using the 0.4 tool. Record the
+      differences here as the cross-platform noise floor (moved from 0.3).
+- Speed RMSE, max speed diff, direction diff and k relative RMSE limits are
+  signed off.
+- The noise floor from 0.3 is recorded.
+
 
 * Phase 2: CPU reference structured RANS (=CpuRansBackend=)
 Goal: prove the numerics on the CPU, where debugging is cheap, before any GPU
