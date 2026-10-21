@@ -1,0 +1,21 @@
+case: flat_coarse_270
+dem: flat.tif
+mesh_choice: coarse
+input: 10 mph from 270 deg at 20 ft, grass
+number_of_iterations: 300
+mesh_resolution_m: 58.98
+refinement_rounds: 1
+first_cell_height_m: 58.98
+output_height_resolved: no
+openfoam_version: 11
+windninja_commit: 2020750e571332a5ecd36a1e4b390960ccd15963
+platform: Darwin arm64
+retries: 0
+final_time: 347s
+final_initial_residuals:
+  epsilon: 8.176766641e-08
+  k: 8.633334649e-07
+  Ux: 1.403888672e-07
+  Uy: 4.952676129e-07
+  Uz: 1.33682385e-05
+  p: 1.802172974e-05

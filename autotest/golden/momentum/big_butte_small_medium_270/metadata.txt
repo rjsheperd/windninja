@@ -1,0 +1,21 @@
+case: big_butte_small_medium_270
+dem: big_butte_small.tif
+mesh_choice: medium
+input: 10 mph from 270 deg at 20 ft, grass
+number_of_iterations: 300
+mesh_resolution_m: 63.48
+refinement_rounds: 1
+first_cell_height_m: 63.48
+output_height_resolved: no
+openfoam_version: 11
+windninja_commit: 2020750e571332a5ecd36a1e4b390960ccd15963
+platform: Darwin arm64
+retries: 0
+final_time: 351s
+final_initial_residuals:
+  epsilon: 0.0007396104337
+  k: 0.000470362641
+  Ux: 4.053219047e-05
+  Uy: 0.0001696332669
+  Uz: 6.122547699e-05
+  p: 0.00286449936

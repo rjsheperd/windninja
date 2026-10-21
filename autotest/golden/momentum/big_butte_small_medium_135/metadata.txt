@@ -1,0 +1,21 @@
+case: big_butte_small_medium_135
+dem: big_butte_small.tif
+mesh_choice: medium
+input: 10 mph from 135 deg at 20 ft, grass
+number_of_iterations: 300
+mesh_resolution_m: 63.48
+refinement_rounds: 1
+first_cell_height_m: 63.48
+output_height_resolved: no
+openfoam_version: 11
+windninja_commit: 2020750e571332a5ecd36a1e4b390960ccd15963
+platform: Darwin arm64
+retries: 0
+final_time: 351s
+final_initial_residuals:
+  k: 1.95250043e-05
+  Ux: 8.502624264e-06
+  Uy: 8.23670262e-06
+  Uz: 3.051354704e-05
+  p: 4.876506115e-05
+smoothSolver:  Solving for epsilon, Initial residual = 5.619100308e-06

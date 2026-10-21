@@ -1,0 +1,21 @@
+case: mackay_small_coarse_270
+dem: mackay_small.tif
+mesh_choice: coarse
+input: 10 mph from 270 deg at 20 ft, grass
+number_of_iterations: 300
+mesh_resolution_m: 285.61
+refinement_rounds: 1
+first_cell_height_m: 285.61
+output_height_resolved: no
+openfoam_version: 11
+windninja_commit: 2020750e571332a5ecd36a1e4b390960ccd15963
+platform: Darwin arm64
+retries: 0
+final_time: 347s
+final_initial_residuals:
+  Ux: 8.440535838e-05
+  Uy: 0.0005867902463
+  Uz: 0.0002288673753
+  p: 0.004857788039
+  epsilon: 0.001969647608
+  k: 0.001251028446

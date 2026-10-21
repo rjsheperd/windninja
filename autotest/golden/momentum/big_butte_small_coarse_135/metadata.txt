@@ -1,0 +1,21 @@
+case: big_butte_small_coarse_135
+dem: big_butte_small.tif
+mesh_choice: coarse
+input: 10 mph from 135 deg at 20 ft, grass
+number_of_iterations: 300
+mesh_resolution_m: 79.98
+refinement_rounds: 1
+first_cell_height_m: 79.98
+output_height_resolved: no
+openfoam_version: 11
+windninja_commit: 2020750e571332a5ecd36a1e4b390960ccd15963
+platform: Darwin arm64
+retries: 0
+final_time: 351s
+final_initial_residuals:
+  epsilon: 2.959150982e-06
+  k: 8.559651994e-06
+  Ux: 3.790761826e-06
+  Uy: 3.595492266e-06
+  Uz: 1.501499433e-05
+  p: 2.731782603e-05
