@@ -671,7 +671,13 @@ resumes only if the GPU backend fails the golden cases the same way.
       only. Applying it to the gradients' face values too broke flat-terrain
       convergence (residual 0.94), because U·n flips sign on faces parallel to
       the wind and the tangential velocity jumps; in the flux the jump is
-      multiplied by the mass flux, which is ~0 there. Re-run pending.
+      multiplied by the mass flux, which is ~0 there.
+      Result: ridge speed RMSE 2.70 → 0.49 m/s, max 15.1 → 2.24, direction
+      16.9° → 7.5°, k 2.21 → 0.35. It converges to 1e-5 in 1,225 cycles (3
+      min) instead of stalling. It still fails GATE 0. *Big Butte is
+      unchanged* (0.554 m/s, 5.37 max, 5.7°, k 0.48; stalls at residual 0.109
+      after 5,000 cycles), so backflow was the ridge's problem, not Big
+      Butte's.
 - [ ] Fix it and re-run =big_butte_small_coarse_270= against GATE 0.
 - [ ] Measure grid skew and aspect ratio (=Mesh::get_equiangle_skew= and
       =Mesh::get_aspect_ratio= already exist).
@@ -898,7 +904,7 @@ N iterations only.
   4.2 per-kernel tests compare f32 GPU stages with the f64 CPU, which
   localises any precision problem.
 
-** NEXT 4.2 Kernels, one per solver stage
+** DONE 4.2 Kernels, one per solver stage
 Design: the CPU solver scatters each face's contribution to both cells
 (three race-free OpenMP passes). On the GPU that scatter would race, so each
 stage is a *face pass* (one thread per face, writing per-face values to a
@@ -935,13 +941,26 @@ summing its six faces with signs). No atomics; results are deterministic.
       exercising backflow. All 9 arrays agree within 3.0e-6 relative
       (tolerance 1e-5), and the wall-face counts match exactly. Mutations
       caught: no backflow (0.016), no ν_t ∇Uᵀ term (0.35).
-- [ ] Pseudo-compressibility update with local Δτ.
-- [ ] k-ε source terms and the wall-function cells.
-- [ ] Boundary conditions: inlet log profiles, outlets, top, ground.
-- [ ] Residual norms.
-- [ ] Add tests
-- [ ] Tests pass
-- [ ] Documentation updates
+- [X] Pseudo-compressibility update with local Δτ (kernel =update=, in place,
+      one thread per cell).
+- [X] k-ε source terms and the wall-function cells: RNG production and R
+      term, point-implicit sinks, wall cells taking G and ε from the wall
+      functions, ν_t refreshed in the same kernel.
+- [X] Boundary conditions: inlet log profiles, outlets, top, ground. They're
+      in the gradient and flux stages: wall, slip, velocity and log-profile
+      inlets (k and ε too), and pressure outlets with backflow. The test-only
+      Dirichlet boundary has no GPU version.
+- [X] Residual norms: =update= writes the per-cell residuals, and
+      =iterate(n, cfl)= reduces them once at the end with =gpu::Reducer= (one
+      wait).
+- [-] Frozen turbulence and the FAS forcing: with 4.3 (multigrid).
+- [X] Add tests: =gpu/kernel_gradients_matches_cpu=,
+      =kernel_residuals_matches_cpu=, =kernel_iterate_matches_cpu=.
+- [X] Tests pass: one step matches the CPU within 7.2e-7 (fields) and 6.8e-8
+      (residual norms). After 201 steps the f32 GPU is still within 5.3e-6 of
+      the f64 CPU (tolerances 1e-5 and 1e-4). Mutation caught: no wall-cell G
+      override (0.29).
+- [X] Documentation updates: kernel and class comments.
 *** Tests
 For each kernel, a =gpu_kernel_<stage>_matches_cpu= test:
 - run one stage on a random field on the Big Butte coarse mesh;
@@ -949,6 +968,9 @@ For each kernel, a =gpu_kernel_<stage>_matches_cpu= test:
 - require max relative diff 1e-5 (=TBD=).
 
 ** TODO 4.3 Geometric multigrid
+Order (2026-10-21, assumption recorded): 4.4 first, single-grid. The user's
+priority is comparing the GPU with OpenFOAM, and 4.2 gives a complete
+single-grid solver. Multigrid follows once the golden comparison runs.
 - [ ] Coarsen the structured grid (2× in i, j and k where possible), with
       restriction and prolongation kernels.
 - [ ] Use a V-cycle around the pseudo-time smoother.
@@ -958,7 +980,7 @@ For each kernel, a =gpu_kernel_<stage>_matches_cpu= test:
 - =gpu_multigrid_speedup=: the cavity reaches the 2.2 residual target in at
   least 3× fewer fine-grid sweeps than single-grid.
 
-** TODO 4.4 End-to-end GPU backend
+** NEXT 4.4 End-to-end GPU backend
 - [ ] Host loop: iterate until converged or out of iterations, read back
       residuals every N steps, and honour =checkCancel=.
 - [ ] Read back the output-height sample and the optional 3-D fields.

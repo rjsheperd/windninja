@@ -49,10 +49,11 @@ struct ParamsBlock
     uint32_t nx, ny, nz, dir;
     float nu, beta, sigmaK, sigmaEpsilon;
     uint32_t turbulent;
-    float yPlusLam, pad0, pad1;
+    float yPlusLam, cfl, pad0;
+    float cmu, c1, c2, eta0, rngBeta, pad1, pad2, pad3;
     BcBlock bc[6];
 };
-static_assert(sizeof(BcBlock) == 48 && sizeof(ParamsBlock) == 48 + 6 * 48,
+static_assert(sizeof(BcBlock) == 48 && sizeof(ParamsBlock) == 80 + 6 * 48,
               "must match the WGSL Params layout");
 
 // the wall functions' laminar / log-layer switch (as WallYPlusLam, with
@@ -77,7 +78,8 @@ const std::size_t maxGroupsX = 65535;
 RansSolver::RansSolver(Context &context, const GridView &view, double nu, double beta)
     : context(context), grid(context, view), fields(context, grid.nCells),
       gradients(context, 12 * grid.nCells * sizeof(float)),
-      residuals(context, 10 * grid.nCells * sizeof(float)), nu_(nu), beta_(beta),
+      residuals(context, 10 * grid.nCells * sizeof(float)),
+      norms(context, 6 * grid.nCells * sizeof(float)), nu_(nu), beta_(beta),
       params_{Buffer(context, sizeof(ParamsBlock), Buffer::Uniform),
               Buffer(context, sizeof(ParamsBlock), Buffer::Uniform),
               Buffer(context, sizeof(ParamsBlock), Buffer::Uniform)},
@@ -87,15 +89,21 @@ RansSolver::RansSolver(Context &context, const GridView &view, double nu, double
       gradientFaces_(context, source(kernels::gradientFaces).c_str()),
       gradientCells_(context, source(kernels::gradientCells).c_str()),
       fluxFaces_(context, source(kernels::fluxFaces).c_str()),
-      fluxCells_(context, source(kernels::fluxCells).c_str())
+      fluxCells_(context, source(kernels::fluxCells).c_str()),
+      update_(context, source(kernels::update).c_str()),
+      reducer_(context)
 {
 }
 
-void RansSolver::setTurbulence(bool on, double sigmaK, double sigmaEpsilon)
+void RansSolver::setTurbulence(bool on)
+{
+    setTurbulence(on, TurbulenceModel());
+}
+
+void RansSolver::setTurbulence(bool on, const TurbulenceModel &model)
 {
     turbulent_ = on;
-    sigmaK_ = sigmaK;
-    sigmaEpsilon_ = sigmaEpsilon;
+    model_ = model;
     paramsDirty_ = true;
 }
 
@@ -115,10 +123,16 @@ void RansSolver::uploadParams()
     b.nz = grid.nz;
     b.nu = static_cast<float>(nu_);
     b.beta = static_cast<float>(beta_);
-    b.sigmaK = static_cast<float>(sigmaK_);
-    b.sigmaEpsilon = static_cast<float>(sigmaEpsilon_);
+    b.sigmaK = static_cast<float>(model_.sigmaK);
+    b.sigmaEpsilon = static_cast<float>(model_.sigmaEpsilon);
     b.turbulent = turbulent_ ? 1u : 0u;
     b.yPlusLam = static_cast<float>(WallYPlusLam());
+    b.cfl = static_cast<float>(cfl_);
+    b.cmu = static_cast<float>(model_.cmu);
+    b.c1 = static_cast<float>(model_.c1);
+    b.c2 = static_cast<float>(model_.c2);
+    b.eta0 = static_cast<float>(model_.eta0);
+    b.rngBeta = static_cast<float>(model_.beta);
     for(int s = 0; s < 6; s++)
     {
         const Boundary &bc = bc_[s];
@@ -176,6 +190,34 @@ void RansSolver::computeResiduals()
     dispatch(fluxCells_,
              {&params_[0], &faceValues_[0], &faceValues_[1], &faceValues_[2], &residuals},
              grid.nCells);
+}
+
+void RansSolver::step()
+{
+    computeGradients();
+    computeResiduals();
+    dispatch(update_,
+             {&params_[0], &grid.cells, &fields.buffer, &gradients, &residuals, &norms},
+             grid.nCells);
+}
+
+RansSolver::Residuals RansSolver::iterate(int n, double cfl)
+{
+    if(cfl != cfl_)
+    {
+        cfl_ = cfl;
+        paramsDirty_ = true;
+    }
+    for(int it = 0; it < n; it++)
+        step();
+    Residuals r;
+    if(n == 0)
+        return r;
+    double *slots[6] = {&r.p, &r.u, &r.v, &r.w, &r.k, &r.epsilon};
+    for(int s = 0; s < (turbulent_ ? 6 : 4); s++)
+        *slots[s] = std::sqrt(reducer_.sum(norms, s * grid.nCells, grid.nCells, true) /
+                              grid.nCells);
+    return r;
 }
 
 std::vector<double> RansSolver::residual(int slot)

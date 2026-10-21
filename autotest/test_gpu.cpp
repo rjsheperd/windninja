@@ -135,6 +135,15 @@ void CopyBoundaries(const RansSolver &cpu, gpu::RansSolver &g)
     }
 }
 
+gpu::RansSolver::TurbulenceModel ModelOf(const RansSolver &cpu)
+{
+    gpu::RansSolver::TurbulenceModel m;
+    m.cmu = cpu.model.cmu; m.c1 = cpu.model.c1; m.c2 = cpu.model.c2;
+    m.sigmaK = cpu.model.sigmaK; m.sigmaEpsilon = cpu.model.sigmaEpsilon;
+    m.eta0 = cpu.model.eta0; m.beta = cpu.model.beta;
+    return m;
+}
+
 // max |a - b| over max |b|
 double RelativeDiff(const std::vector<double> &a, const std::vector<double> &b)
 {
@@ -145,6 +154,51 @@ double RelativeDiff(const std::vector<double> &a, const std::vector<double> &b)
         scale = std::max(scale, std::fabs(b[i]));
     }
     return scale > 0.0 ? diff / scale : diff;
+}
+
+// The turbulent wind setup on the ridge grid with a smooth perturbation, so
+// every term is active (w changes sign on the top outlet: backflow).
+void PerturbedWindState(RansSolver &cpu)
+{
+    const RansGrid &g = cpu.grid;
+    const double z0 = 0.01, ustar = AblFrictionVelocity(4.47, 6.1, z0);
+    ApplyWindBoundaries(cpu, ustar, z0, 280.0);
+    InitializeLogProfile(cpu, ustar, z0, 280.0);
+    for(int i = 0; i < g.nCells(); i++)
+    {
+        double x = g.cx[i], y = g.cy[i], z = g.cz[i];
+        cpu.p[i] = 3.0 * std::sin(x / 500.0) * std::cos(y / 300.0);
+        cpu.u[i] += std::sin(y / 200.0);
+        cpu.v[i] += -1.0 + 0.5 * std::cos(x / 350.0 + z / 400.0);
+        cpu.w[i] = 0.3 * std::sin(x / 250.0);
+        cpu.k[i] *= 1.0 + 0.5 * std::sin(x / 300.0) * std::cos(z / 500.0);
+        cpu.epsilon[i] *= 1.0 + 0.3 * std::cos(y / 250.0);
+        cpu.nut[i] = cpu.model.cmu * cpu.k[i] * cpu.k[i] / cpu.epsilon[i];
+    }
+}
+
+void UploadState(const RansSolver &cpu, gpu::RansSolver &gs)
+{
+    const std::vector<double> *f[7] = {&cpu.p, &cpu.u, &cpu.v, &cpu.w, &cpu.k,
+                                       &cpu.epsilon, &cpu.nut};
+    for(int slot = 0; slot < 7; slot++)
+        gs.fields.upload(gpu::FieldSlot(slot), *f[slot]);
+}
+
+// worst RelativeDiff over the 7 fields
+double FieldsDiff(const RansSolver &cpu, gpu::RansSolver &gs)
+{
+    const std::vector<double> *f[7] = {&cpu.p, &cpu.u, &cpu.v, &cpu.w, &cpu.k,
+                                       &cpu.epsilon, &cpu.nut};
+    const char *names[7] = {"p", "u", "v", "w", "k", "epsilon", "nut"};
+    double worst = 0.0;
+    for(int slot = 0; slot < 7; slot++)
+    {
+        double r = RelativeDiff(gs.fields.download(gpu::FieldSlot(slot)), *f[slot]);
+        BOOST_TEST_MESSAGE("  field " << names[slot] << ": " << r);
+        worst = std::max(worst, r);
+    }
+    return worst;
 }
 
 } // namespace
@@ -403,32 +457,14 @@ BOOST_AUTO_TEST_CASE( kernel_residuals_matches_cpu )
         return;
     RansGrid g = RidgeGrid(40, 12, 10);
     ::RansSolver cpu(g, 1.58946e-5, 25.0);
-    const double z0 = 0.01, ustar = AblFrictionVelocity(4.47, 6.1, z0);
-    ApplyWindBoundaries(cpu, ustar, z0, 280.0);
-    InitializeLogProfile(cpu, ustar, z0, 280.0);   // turbulent, log profile
-    // a smooth, non-trivial state on top; w changes sign along the top, so
-    // part of the top outlet sees backflow
-    for(int i = 0; i < g.nCells(); i++)
-    {
-        double x = g.cx[i], y = g.cy[i], z = g.cz[i];
-        cpu.p[i] = 3.0 * std::sin(x / 500.0) * std::cos(y / 300.0);
-        cpu.u[i] += std::sin(y / 200.0);
-        cpu.v[i] += -1.0 + 0.5 * std::cos(x / 350.0 + z / 400.0);
-        cpu.w[i] = 0.3 * std::sin(x / 250.0);
-        cpu.k[i] *= 1.0 + 0.5 * std::sin(x / 300.0) * std::cos(z / 500.0);
-        cpu.epsilon[i] *= 1.0 + 0.3 * std::cos(y / 250.0);
-        cpu.nut[i] = cpu.model.cmu * cpu.k[i] * cpu.k[i] / cpu.epsilon[i];
-    }
+    PerturbedWindState(cpu);
     cpu.computeGradients();
     cpu.computeResiduals();
 
     gpu::RansSolver gs(*c, ViewOf(g), cpu.nu, cpu.beta);
     CopyBoundaries(cpu, gs);
-    gs.setTurbulence(true, cpu.model.sigmaK, cpu.model.sigmaEpsilon);
-    const std::vector<double> *f[7] = {&cpu.p, &cpu.u, &cpu.v, &cpu.w, &cpu.k,
-                                       &cpu.epsilon, &cpu.nut};
-    for(int slot = 0; slot < 7; slot++)
-        gs.fields.upload(gpu::FieldSlot(slot), *f[slot]);
+    gs.setTurbulence(true, ModelOf(cpu));
+    UploadState(cpu, gs);
     gs.computeGradients();
     gs.computeResiduals();
 
@@ -446,6 +482,41 @@ BOOST_AUTO_TEST_CASE( kernel_residuals_matches_cpu )
         BOOST_CHECK_EQUAL(walls[i], double(cpu.wallFaces()[i]));
     BOOST_TEST_MESSAGE("worst relative difference " << worst);
     BOOST_CHECK_LE(worst, 1e-5);   // measured 3.0e-6 on Apple M3 Max
+}
+
+BOOST_AUTO_TEST_CASE( kernel_iterate_matches_cpu )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    RansGrid g = RidgeGrid(40, 12, 10);
+    ::RansSolver cpu(g, 1.58946e-5, 25.0);
+    PerturbedWindState(cpu);
+    gpu::RansSolver gs(*c, ViewOf(g), cpu.nu, cpu.beta);
+    CopyBoundaries(cpu, gs);
+    gs.setTurbulence(true, ModelOf(cpu));
+    UploadState(cpu, gs);
+
+    // one step: the update itself
+    ::RansSolver::Residuals rc = cpu.iterate(1, 0.5);
+    gpu::RansSolver::Residuals rg = gs.iterate(1, 0.5);
+    BOOST_TEST_MESSAGE("after 1 step:");
+    double one = FieldsDiff(cpu, gs);
+    double norms[6][2] = {{rc.p, rg.p}, {rc.u, rg.u}, {rc.v, rg.v}, {rc.w, rg.w},
+                          {rc.k, rg.k}, {rc.epsilon, rg.epsilon}};
+    double worstNorm = 0.0;
+    for(auto &nrm : norms)
+        worstNorm = std::max(worstNorm, std::fabs(nrm[1] / nrm[0] - 1.0));
+    BOOST_TEST_MESSAGE("  residual norms: worst relative " << worstNorm);
+    BOOST_CHECK_LE(one, 1e-5);
+    BOOST_CHECK_LE(worstNorm, 1e-5);
+
+    // 200 more: f32 drift from the f64 CPU stays small
+    cpu.iterate(200, 0.5);
+    gs.iterate(200, 0.5);
+    BOOST_TEST_MESSAGE("after 201 steps:");
+    double many = FieldsDiff(cpu, gs);
+    BOOST_CHECK_LE(many, 1e-4);   // measured 5.3e-6 on Apple M3 Max
 }
 
 BOOST_AUTO_TEST_SUITE_END()

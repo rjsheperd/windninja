@@ -402,7 +402,8 @@ if(WITH_WEBGPU)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=gpu/dawn_instance)
     foreach(gputest device_create buffer_roundtrip kernel_saxpy
                     validation_error_throws reduction_sum grid_pack fields_slots
-                    kernel_gradients_matches_cpu kernel_residuals_matches_cpu)
+                    kernel_gradients_matches_cpu kernel_residuals_matches_cpu
+                    kernel_iterate_matches_cpu)
         add_test(gpu_${gputest}
                  ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=gpu/${gputest})
         # machines without a WebGPU adapter skip rather than fail

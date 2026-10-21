@@ -77,8 +77,17 @@ struct Params {
     sigmaEpsilon : f32,
     turbulent : u32,    // 0 laminar, 1 k-epsilon
     yPlusLam : f32,     // wall-function laminar / log switch
+    cfl : f32,
     pad0 : f32,
+    // RNG k-epsilon
+    cmu : f32,
+    c1 : f32,
+    c2 : f32,
+    eta0 : f32,
+    rngBeta : f32,
     pad1 : f32,
+    pad2 : f32,
+    pad3 : f32,
     bc : array<Bc, 6>,
 }
 
@@ -545,6 +554,90 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
         }
         residuals[slot * n + c] = sum;
     }
+}
+)wgsl";
+
+// Local pseudo-time update of each cell (the body of RansSolver::iterate),
+// in place: p, u, v, w by the flux residuals; k and epsilon point-implicitly
+// with the RNG sources (wall cells take G and epsilon from the wall
+// functions); then nut.  Also writes the per-cell residuals the norms use,
+// 6 slots of nCells: rp/V, ru/V, rv/V, rw/V and the k and epsilon residuals.
+constexpr const char *update = R"wgsl(
+@group(0) @binding(1) var<storage, read> cells : array<f32>;
+@group(0) @binding(2) var<storage, read_write> fields : array<f32>;
+@group(0) @binding(3) var<storage, read> gradients : array<f32>;
+@group(0) @binding(4) var<storage, read> residuals : array<f32>;
+@group(0) @binding(5) var<storage, read_write> norms : array<f32>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>,
+        @builtin(num_workgroups) groups : vec3<u32>) {
+    let n = nCells();
+    let c = threadIndex(gid, groups);
+    if (c >= n) {
+        return;
+    }
+    let V = cells[VOLUME * n + c];
+    // local pseudo time step: dtau / V = cfl / spectral radius
+    let dt = P.cfl / residuals[6u * n + c];
+    let rp = residuals[c];
+    let ru = residuals[n + c];
+    let rv = residuals[2u * n + c];
+    let rw = residuals[3u * n + c];
+    var resK = 0.0;
+    var resE = 0.0;
+    if (P.turbulent == 1u) {
+        // production nut * (dev(twoSymm(grad U)) && grad U)
+        var sum = 0.0;
+        var trace = 0.0;
+        for (var i = 0u; i < 3u; i++) {
+            trace += gradients[((1u + i) * 3u + i) * n + c];
+            for (var j = 0u; j < 3u; j++) {
+                let gij = gradients[((1u + i) * 3u + j) * n + c];
+                let gji = gradients[((1u + j) * 3u + i) * n + c];
+                sum += gij * (gij + gji);
+            }
+        }
+        let s2 = sum - 2.0 / 3.0 * trace * trace;
+        let kc = fields[FK * n + c];
+        let ec = fields[FEPSILON * n + c];
+        let walls = residuals[9u * n + c];
+        var G = fields[FNUT * n + c] * s2;
+        if (walls > 0.0) {
+            G = residuals[8u * n + c] / walls;
+        }
+        let eta = sqrt(abs(s2)) * kc / ec;
+        let R = eta * (1.0 - eta / P.eta0) / (P.rngBeta * eta * eta * eta + 1.0);
+        let rk = residuals[4u * n + c];
+        let re = residuals[5u * n + c];
+        let kSrc = G - ec;
+        let eSrc = (P.c1 - R) * G * ec / kc - P.c2 * ec * ec / kc;
+        // point-implicit sinks (as fvm::Sp) keep k and epsilon positive
+        let kn = (kc - dt * rk + dt * V * G) / (1.0 + dt * V * ec / kc);
+        var en = (ec - dt * re + dt * V * (P.c1 - R) * G * ec / kc) /
+                 (1.0 + dt * V * P.c2 * ec / kc);
+        resK = rk / V - kSrc;
+        resE = re / V - eSrc;
+        if (walls > 0.0) {
+            en = residuals[7u * n + c] / walls;
+            resE = 0.0;
+        }
+        let k = max(kn, 1e-12);
+        let e = max(en, 1e-12);
+        fields[FK * n + c] = k;
+        fields[FEPSILON * n + c] = e;
+        fields[FNUT * n + c] = P.cmu * k * k / e;
+    }
+    fields[FP * n + c] -= dt * rp;
+    fields[FU * n + c] -= dt * ru;
+    fields[FV * n + c] -= dt * rv;
+    fields[FW * n + c] -= dt * rw;
+    norms[c] = rp / V;
+    norms[n + c] = ru / V;
+    norms[2u * n + c] = rv / V;
+    norms[3u * n + c] = rw / V;
+    norms[4u * n + c] = resK;
+    norms[5u * n + c] = resE;
 }
 )wgsl";
 

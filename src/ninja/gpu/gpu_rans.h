@@ -32,6 +32,7 @@
 
 #include "gpu_context.h"
 #include "gpu_grid.h"
+#include "gpu_reduce.h"
 
 namespace gpu {
 
@@ -56,11 +57,30 @@ public:
         double k = 0.0, epsilon = 0.0;   // velocity inlets, when turbulent
     };
 
+    // RNG k-epsilon coefficients (as RansTurbulenceModel)
+    struct TurbulenceModel
+    {
+        double cmu = 0.085, c1 = 0.92, c2 = 1.68;
+        double sigmaK = 0.7179, sigmaEpsilon = 0.7179;
+        double eta0 = 4.38, beta = 0.012;
+    };
+
+    // RMS over cells of the residual per unit volume (as RansSolver's)
+    struct Residuals
+    {
+        double p = 0.0, u = 0.0, v = 0.0, w = 0.0, k = 0.0, epsilon = 0.0;
+    };
+
     RansSolver(Context &context, const GridView &view, double nu, double beta);
 
     void setBoundary(Side side, const Boundary &bc);
-    // RNG k-epsilon (RansTurbulenceModel's sigmas); off means laminar
-    void setTurbulence(bool on, double sigmaK = 0.7179, double sigmaEpsilon = 0.7179);
+    // off means laminar; the one-argument form uses the default model
+    void setTurbulence(bool on, const TurbulenceModel &model);
+    void setTurbulence(bool on);
+
+    /* Take n pseudo-time steps; returns the residuals of the last step (one
+    ** wait on the GPU, at the end). */
+    Residuals iterate(int n, double cfl);
 
     // Green-Gauss gradients of p, u, v, w into gradients: slot
     // field * 3 + direction (field 0-3 = p, u, v, w) of nCells floats.
@@ -79,20 +99,23 @@ public:
     Fields fields;
     Buffer gradients;
     Buffer residuals;
+    Buffer norms;          // per-cell residuals of the last step, 6 slots
 
 private:
     void dispatch(Kernel &kernel, const std::vector<const Buffer *> &bindings,
                   std::size_t threads);
     void uploadParams();
+    void step();
 
-    double nu_, beta_;
+    double nu_, beta_, cfl_ = 0.0;
     bool turbulent_ = false;
-    double sigmaK_ = 0.7179, sigmaEpsilon_ = 0.7179;
+    TurbulenceModel model_;
     Boundary bc_[6];
     bool paramsDirty_ = true;
     Buffer params_[3];       // per face direction (Params.dir)
     Buffer faceValues_[3];   // per-face scratch, 12 slots
-    Kernel gradientFaces_, gradientCells_, fluxFaces_, fluxCells_;
+    Kernel gradientFaces_, gradientCells_, fluxFaces_, fluxCells_, update_;
+    Reducer reducer_;
 };
 
 } // namespace gpu
