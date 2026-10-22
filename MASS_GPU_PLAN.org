@@ -1,0 +1,228 @@
+#+TITLE: WebGPU mass solver: findings and plan
+#+DATE: 2026-10-22
+#+TODO: TODO IN-PROGRESS BLOCKED | DONE CANCELLED
+
+How WebGPU could speed up WindNinja's mass-consistent solver, especially in
+the browser (WebAssembly). Builds on the momentum work in
+[[file:WEBGPU_PLAN.org][WEBGPU_PLAN.org]] and on jessie-fire-simulation's
+=cljs-webgpu= layer (=../jessie-fire-simulation/cljs-webgpu/=).
+
+* Summary
+- The mass solve is one sparse, symmetric positive-definite linear system per
+  run, which suits the GPU well.
+- The gain is larger in the browser than natively, because WebAssembly CPU
+  code is slower there.
+- The bigger opportunity is systemic: wind could flow straight into
+  jessie-fire-simulation's GPU fire spread without leaving the GPU.
+  =FARSITE_GPU.org= currently rules gridded WindNinja winds out of the browser
+  ("could be imported as precomputed rasters"); that limit would go away.
+
+* Baseline
+- *The system*: finite elements (8-node hexahedra) on the terrain-following
+  mesh, a 27-point stencil, symmetric positive-definite, stored as the upper
+  half in CSR.
+  - Equation: ∂x(Rx ∂Φ/∂x) + ∂y(Ry ∂Φ/∂y) + ∂z(Rz ∂Φ/∂z) + ∇·u₀ = 0, with
+    Rx = Ry = 1/(2αh²) and Rz = 1/(2αv²).
+  - Velocity recovery: u = u₀ + Rx ∂Φ/∂x, and likewise for v and w.
+  - Φ = 0 on the sides and top; the ground is impermeable (natural BC).
+- *The solver*: conjugate gradient preconditioned with SSOR (an inherently
+  sequential smoother; Jacobi fallback, then MINRES), stopping when the
+  residual's 2-norm is 0.1.
+- *Native speed* (Big Butte, 8 threads, linear solve dominates):
+
+  | mesh   | DEM × layers | nodes | solve  | total  |
+  |--------+--------------+-------+--------+--------|
+  | coarse | 61×66×20     | ≈80k  | 0.15 s | 0.18 s |
+  | medium | 97×104×20    | ≈200k | 0.37 s | 0.43 s |
+  | fine   | 137×147×20   | ≈400k | 0.75 s | 0.85 s |
+
+- *In the browser*: WebAssembly runs single-threaded unless the page is
+  cross-origin isolated, and without native vectorisation. The same solve is
+  likely several seconds there (an estimate, not measured).
+- *Not ported yet*: the WASM module (=src/ninja/gpu/wasm/=) holds only the
+  RANS momentum solver, not the mass solver.
+
+* Ways WebGPU could speed it up
+** 1. Keep the whole conjugate-gradient loop on the GPU, with no readbacks
+- *Per-iteration work*: one sparse matrix-vector product, two dot products
+  and three vector updates.
+- *The real cost is waiting*: measured on this branch, a dispatch costs about
+  23 µs but a wait costs 0.2–0.5 ms. A naive port that reads α, β and the
+  residual back each iteration would be wait-bound.
+- *Fix*: compute α and β in a tiny single-thread kernel that writes them to a
+  buffer the next kernels read, and check convergence only every N
+  iterations.
+- *Stopping without asking the CPU*: jessie's eikonal (FIM) solver already
+  uses the trick: =dispatchWorkgroupsIndirect= with a GPU-written workgroup
+  count. A convergence kernel can write zero workgroups once the residual is
+  below tolerance.
+- Consider pipelined CG variants (one fused reduction per iteration) if
+  dispatch count dominates.
+
+** 2. Treat the matrix as a structured 27-point stencil
+- *Layout*: the mesh is a regular rows × columns × layers grid, so store the
+  coefficients per node in packed structure-of-arrays slots, as =gpu::Grid=
+  does. Since the matrix is symmetric, 14 of the 27 are enough.
+- *Size*: about 22–43 MB at 400k nodes, within the 128 MiB default limit per
+  binding.
+- *The multiply* becomes a gather over neighbours, with no indirection arrays.
+- *Assembly* can move to the GPU too. Per-element stiffness integration is
+  fully parallel; summing into nodes can use the race-free gather pattern
+  from the RANS kernels, or jessie's compare-and-swap float trick
+  generalised from minimum to addition.
+
+** 3. Swap the preconditioner
+SSOR doesn't parallelise, so it has to go.
+- *Jacobi*: trivial on the GPU, and WindNinja already has it as a fallback.
+  The first step.
+- *Multicolour Gauss-Seidel / SSOR*: 8 colours for a 27-point stencil, so
+  each colour updates in parallel.
+- *Geometric multigrid as a preconditioner* on the structured mesh: near
+  constant iteration counts. The RANS work showed small coarse levels are
+  dispatch-bound, so use few levels, or solve the coarsest on the CPU.
+
+** 4. Precision: f32 with targeted df64
+WGSL has no 64-bit floats. Plain 32-bit CG on 400k unknowns can lose
+accuracy in its long dot products. =cljs-webgpu= already has the remedy:
+- *Selective precision*: guarded df64 (~48-bit, about 4–6× the cost of f32)
+  only for the dot products and residual sums, not the whole solve.
+- *Mixed-precision refinement* (recommended in =cljs-webgpu/PLAN.org=): solve
+  in f32 on the GPU; compute an outer residual correction in df64 or on the
+  CPU.
+- *The guard is mandatory*: without =bitcast(x ^ params.zero)=, Apple's
+  Metal compiler reassociates the arithmetic and df64 comes out worse than
+  f32.
+
+** 5. Fuse the pipeline, and hand the wind to the fire model on the GPU
+- *The pipeline*: initial log-profile field, divergence right-hand side,
+  solve, velocity from ∇Φ, outputs. All per-node or per-element, so all of it
+  can stay on the GPU.
+- *Hand-off*: pass the u and v buffers directly to jessie's GPU fire-spread
+  kernels (Rothermel, FIM), with no download and re-upload.
+- *One shared device*: buffers can't cross devices, so the WASM module and
+  the page must use the same =GPUDevice=. emdawnwebgpu can import a
+  JavaScript-created device.
+
+** 6. Batch and warm-start repeated solves
+That's where the time adds up:
+- point initialization repeats the solve up to 150 times to match stations;
+- forecast time series and diurnal runs solve once per time step;
+- fire-scenario ensembles solve once per wind direction.
+
+Two things help:
+- start each solve from the previous Φ instead of zero;
+- solve several right-hand sides at once (e.g. 8 directions in one pass): the
+  matrix is the same, so one stencil read serves 8 vectors, a clear win for a
+  bandwidth-bound kernel.
+
+* Expected gain (estimates, to be measured)
+- *Per iteration* at 400k nodes: about 50 MB of memory traffic, roughly
+  0.3 ms at M3-class bandwidth, plus 4–6 dispatches.
+- *Whole solve*: with a few hundred Jacobi-preconditioned iterations, about
+  0.1–0.3 s.
+- *Compared with*: native CPU about 0.75 s; WebAssembly in the browser likely
+  several seconds.
+- *Upshot*: maybe 10–30× in the browser and 2–5× natively, more for repeated
+  solves. The Jacobi iteration count decides most of this, so measure it
+  first (Phase 0).
+
+* Which code to build on
+- *C++ path (this branch)*: extend =windninja_wasm= with the mass solver.
+  First extract the mesh and FEM assembly into core-free code, as was done
+  for RANS (=TerrainGrid=, =SolveDemOnGpu=). Reuses =gpu::Buffer=,
+  =gpu::Reducer=, the race-free pattern and the test discipline, and can be
+  tested against native WindNinja.
+- *ClojureScript path (=cljs-webgpu=)*: its =linalg= already provides =axpy!=,
+  =dot=, =nrm2= and df64. A Jacobi-preconditioned CG is mostly those calls
+  plus one stencil multiply kernel that it lacks. Lives next to the fire
+  simulation, which simplifies sharing one device.
+- *Hybrid*: the C++ module as the correctness reference (as the hill
+  self-test does for RANS), whichever runtime the app prefers in production.
+
+* Phase 0: Measure before building
+** TODO 0.1 Baseline iteration counts and phase times [0/5]
+- [ ] Log SSOR-PCG iteration counts and per-phase times (assembly, solve,
+      velocity recovery) on Big Butte coarse/medium/fine.
+- [ ] Re-run with the existing Jacobi preconditioner; record its iteration
+      counts and times.
+- [ ] Time the same runs on a single thread (a proxy for WebAssembly).
+- [ ] Add tests (SKIP: measurement only)
+- [ ] Documentation updates: record the table here.
+
+** TODO 0.2 GATE: is the GPU mass solver worth building?
+Decide from 0.1: if Jacobi needs so many iterations that the GPU estimate
+falls below the browser CPU time by less than ~5×, start with a multicolour
+or multigrid preconditioner instead, or stop.
+
+* Phase 1: Core-free mass solver (no behaviour change)
+** TODO 1.1 Extract mesh, assembly and solve from =ninja= [0/5]
+- [ ] Move mesh construction, FEM assembly and the CG solve behind a
+      core-free API (DEM + initial wind in, Φ and u/v/w out), like
+      =SolveDemOnGpu=.
+- [ ] Keep the native path calling the extracted code.
+- [ ] Add tests: byte-identical output on the existing mass-solver cfg tests.
+- [ ] Tests pass
+- [ ] Documentation updates
+
+* Phase 2: GPU solve (native Dawn)
+** TODO 2.1 Stencil SpMV kernel [0/4]
+- [ ] Per-node 14-coefficient SoA layout from the CPU-assembled matrix.
+- [ ] Add tests: SpMV against the CSR product on a non-trivial vector;
+      mutation check (drop one neighbour).
+- [ ] Tests pass
+- [ ] Documentation updates
+
+** TODO 2.2 Jacobi-PCG with on-GPU α/β and periodic convergence checks [0/5]
+- [ ] Scalar kernel for α/β; residual read back every N iterations.
+- [ ] Indirect-dispatch stop (optional, after measuring the readback cost).
+- [ ] Add tests: Φ and u/v/w against the CPU solver with measured
+      tolerances; NaN residual fails loudly.
+- [ ] Tests pass
+- [ ] Documentation updates
+
+** TODO 2.3 Precision [0/4]
+- [ ] Compare f32 dot products with guarded df64 (port the =cljs-webgpu=
+      approach) on fine meshes; adopt df64 only where it changes results.
+- [ ] Add tests: f32 vs df64 vs f64 CPU on a 400k-node case.
+- [ ] Tests pass
+- [ ] Documentation updates
+
+** TODO 2.4 GPU assembly and velocity recovery [0/4]
+- [ ] Element stiffness and RHS on the GPU (gather, no atomics).
+- [ ] Add tests: assembled coefficients equal the CPU matrix within f32
+      tolerance.
+- [ ] Tests pass
+- [ ] Documentation updates
+
+** TODO 2.5 GATE: native speed and accuracy recorded
+Record times vs the 8-thread CPU and accuracy vs the CPU solver.
+
+* Phase 3: Browser
+** TODO 3.1 Mass solver in =windninja_wasm= [0/4]
+- [ ] Export a suspending =windninja_mass_solve=; shared native/browser
+      self-test fixture.
+- [ ] Add tests: headless browser run (=run_browser_test.sh=) matches native.
+- [ ] Tests pass
+- [ ] Documentation updates (=src/ninja/gpu/README.org=)
+
+** TODO 3.2 Shared device with the fire simulation [0/4]
+- [ ] Accept a JavaScript-created =GPUDevice=; expose u/v buffers to the page.
+- [ ] Add tests: a page reads the wind buffer without a CPU copy.
+- [ ] Tests pass
+- [ ] Documentation updates
+
+* Phase 4: Repeated solves
+** TODO 4.1 Warm starts and multi-RHS batching [0/4]
+- [ ] Warm-start point initialization and time series from the previous Φ.
+- [ ] Batched SpMV for k right-hand sides (directions, ensembles).
+- [ ] Add tests: same answers as separate solves; iteration-count drop.
+- [ ] Tests pass / Documentation updates
+
+** TODO 4.2 Better preconditioner (only if Phase 0/2 numbers call for it)
+Multicolour SSOR or a shallow geometric multigrid V-cycle.
+
+* Open questions
+- Does the mass solver's 0.1 stop tolerance hold in f32 on 400k+ nodes, or
+  does it need df64 residuals? (2.3)
+- Should the browser production path be C++/WASM or =cljs-webgpu=? Decide
+  after 3.1, with the jessie-fire-simulation side.
