@@ -562,7 +562,7 @@ See the Inbox.
 - [X] Documentation updates (=src/ninja/gpu/README.org=,
       =src/ninja/gpu/wasm/README.org=)
 
-** IN-PROGRESS 3.1a DEM in, wind out in the browser [2/5]
+** IN-PROGRESS 3.1a DEM in, wind out in the browser [4/6]
 - [X] Core-free mass mesh from a DEM (=Mesh='s terrain-following layers:
       layer heights, growth, domain height), like =TerrainGrid= for RANS;
       native =Mesh= vs the core-free one, node by node.
@@ -583,7 +583,7 @@ See the Inbox.
 - [X] Core-free domain-average initialization (log profile from the input
       speed, height and roughness; neutral αV), matching
       =domainAverageInitialization= without stability.
-      =src/ninja/mass_wind.{h,cpp}=: =InitialWind()= with
+      =src/ninja/mass_wind.{h,cpp}= (was =mass_wind_init=): =InitialWind()= with
       =DomainAverageWind= (speed, direction, input height, z₀, canopy and
       displacement heights, latitude, the DEM's angle from north). Reuses
       WindNinja's own =windProfile=, =wind_sd_to_uv= and =wrap0to360=
@@ -596,10 +596,28 @@ See the Inbox.
       its sign, u* without the displacement, wrong default Coriolis: each
       caught. Neutral αV is αH (no stability), as =discretize()= without
       stability.
-- [ ] =windninja_mass_dem_solve=: DEM, speed, direction, height, roughness
-      in; the output-height wind per cell out (as WindNinja's 20 ft output).
-- [ ] Add tests: browser output vs WindNinja CLI on Big Butte (ASCII
-      grids) within the GPU-vs-CPU tolerance of 2.5
+- [X] The output-height wind and the whole path, core-free and native.
+      =OutputWind()= (=mass_wind=: =ninja::interp_uvw=, the profile within
+      the first layer, linear above) and =src/ninja/mass_dem.{h,cpp}=
+      (=SolveMassDem()=: mesh, initial wind, a pluggable solve, output
+      wind; =SolveMassWindOnCpu()=). Native tool =autotest/mass_dem_solve=
+      (DEM file in, ASCII grids out; CPU, CPU Jacobi or GPU; angle from
+      north and latitude via WindNinja's own GDAL helpers).
+- [X] Add tests: =scripts/check_mass_dem.sh= (ctest =mass_dem_cpu=,
+      =mass_gpu_dem=): a 30 m crop of Big Butte, three cases (grass 237° and
+      trees 90° at 6.096 m; grass 300° at 1 m, inside the first layer). On
+      the CPU the core-free path writes *exactly* the CLI's ASCII values,
+      every cell, speed and direction. On the GPU it lands as close to the
+      CLI as CPU Jacobi does (speed RMSE 0.043 / 0.031 / 0.045 m/s vs
+      Jacobi's 0.048 / 0.037 / 0.044; required ≤ 1.25×). Mutations in the
+      output stage: canopy ignored, interpolation offset, angle formula,
+      first-layer profile height (caught only once the 1 m case exercised
+      that branch): each caught. Found on the way: the CLI pads its output
+      grids by a row and a column to cover the DEM
+      (=BufferToOverlapGrid=); the comparison skips them.
+- [ ] =windninja_mass_dem_solve= in the browser: DEM, speed, direction,
+      heights, vegetation in; the output-height wind per cell out; checked
+      against the CLI values in the browser self-test.
 - [ ] Tests pass / Documentation updates
 
 ** TODO 3.2 Shared device with the fire simulation [0/4]
