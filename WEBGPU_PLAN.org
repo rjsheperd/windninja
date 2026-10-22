@@ -1342,9 +1342,31 @@ today.
 - =momentum_gpu_army_3_runs=: three directions in one army give three output
   sets, with no cross-run state leakage (run order doesn't change the results).
 
-** TODO 5.3 Fallback behaviour
-- [ ] No adapter, device lost, or out of memory → a clear message, then fall
+** DONE 5.3 Fallback behaviour
+- [X] No adapter, device lost, or out of memory → a clear message, then fall
       back to the CPU backend (or OpenFOAM if configured). Never fail silently.
+      Done 2026-10-22 (CPU fallback; OpenFOAM isn't a fallback target):
+      - =WebGpuRansBackend= throws =MomentumBackendUnavailableError= for no
+        adapter or device, and for any =gpu::Error= during the solve
+        (device lost, a rejected allocation);
+      - =NinjaFoam= warns "<reason>. Falling back to the CPU momentum
+        backend." and reruns on =CpuRansBackend=;
+        =NINJA_MOMENTUM_FALLBACK=NO= turns this off, and the GPU test
+        scripts and the cfg runner set it so they still skip without an
+        adapter;
+      - test hooks: =NINJA_WEBGPU_DISABLE= (no adapter) and
+        =NINJA_WEBGPU_TEST_ALLOC_BYTES= (allocate first). WebGPU won't create
+        a device with limits below the defaults, so a forced allocation is the
+        practical way to test this;
+      - WebGPU messages are now one line (Dawn's span lines and end in a
+        newline).
+*** Tests (done)
+- =momentum_gpu_fallback_no_adapter= and =momentum_gpu_fallback_oom=
+  (=scripts/check_momentum_fallback.sh=, a small hill, about 6 s each): the
+  run completes on the CPU backend, and the warning names the reason. For
+  OOM, that's the requested size: "WebGPU buffer of 1000000000000 bytes:
+  Buffer size (1000000000000) exceeds the max buffer size limit
+  (268435456)".
 *** Tests
 - =momentum_gpu_fallback_no_adapter=: with an env var forcing no adapter, the
   run completes with the CPU backend and logs a warning.

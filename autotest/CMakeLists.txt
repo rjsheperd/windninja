@@ -448,6 +448,14 @@ if(WITH_WEBGPU)
             set_tests_properties(momentum_gpu_golden_${goldencase} PROPERTIES
                                  SKIP_RETURN_CODE 77)
         endforeach(goldencase)
+        # fallback to the CPU backend when the GPU can't run (plan 5.3)
+        foreach(mode no_adapter oom)
+            add_test(NAME momentum_gpu_fallback_${mode}
+                     COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_fallback.sh
+                             $<TARGET_FILE:WindNinja_cli> ${mode})
+            set_tests_properties(momentum_gpu_fallback_${mode} PROPERTIES
+                                 SKIP_RETURN_CODE 77)
+        endforeach(mode)
         # steep-terrain robustness: Mackay fine finishes, with no more
         # DEM-smoothing retries than OpenFOAM (about 3.5 min)
         add_test(NAME momentum_gpu_steep_converges

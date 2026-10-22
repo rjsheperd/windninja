@@ -28,11 +28,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "cpl_conv.h"
 #include "cpu_rans_backend.h"
 #include "gpu_context.h"
 #include "gpu_multigrid.h"
@@ -53,11 +55,14 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
     std::unique_ptr<gpu::Context> context;
     try
     {
+        // NINJA_WEBGPU_DISABLE: behave as if there were no adapter (tests)
+        if(CPLTestBool(CPLGetConfigOption("NINJA_WEBGPU_DISABLE", "NO")))
+            throw gpu::Unavailable("WebGPU: no adapter (NINJA_WEBGPU_DISABLE)");
         context.reset(new gpu::Context());
     }
     catch(const gpu::Unavailable &e)
     {
-        throw std::runtime_error(std::string("momentum backend 'webgpu': ") + e.what());
+        throw MomentumBackendUnavailableError(std::string("momentum backend 'webgpu': ") + e.what());
     }
     com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS adapter: %s.",
                   context->adapterName().c_str());
@@ -81,6 +86,10 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
     DemWind wind;
     try
     {
+        // NINJA_WEBGPU_TEST_ALLOC_BYTES: first allocate a buffer of this size,
+        // to exercise allocation failures (tests)
+        if(const char *bytes = CPLGetConfigOption("NINJA_WEBGPU_TEST_ALLOC_BYTES", NULL))
+            gpu::Buffer probe(*context, std::strtoull(bytes, NULL, 10));
         wind = SolveDemOnGpu(*context, CpuRansBackend::terrainDem(problem), p, options,
             [com](const std::string &message, bool warning)
             {
@@ -93,6 +102,11 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
     {
         // lets NinjaFoam retry on a smoothed DEM
         throw MomentumDivergedError(e.what());
+    }
+    catch(const gpu::Error &e)
+    {
+        // device lost, out of memory, ...: lets NinjaFoam fall back
+        throw MomentumBackendUnavailableError(std::string("momentum backend 'webgpu': ") + e.what());
     }
     lastCfl = wind.report.cfl;
 

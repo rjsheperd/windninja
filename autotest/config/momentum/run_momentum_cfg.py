@@ -65,8 +65,11 @@ def main(cli, cfg_file):
     for stale in glob.glob("*_vel.asc") + glob.glob("*_ang.asc"):
         os.remove(stale)
 
+    env = dict(os.environ)
+    if backend == "webgpu":
+        env["NINJA_MOMENTUM_FALLBACK"] = "NO"   # test the GPU, not the fallback
     run = subprocess.run([cli, cfg_file], stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT, universal_newlines=True)
+                         stderr=subprocess.STDOUT, universal_newlines=True, env=env)
     print(run.stdout)
     if backend == "webgpu" and "no adapter" in run.stdout:
         print("no WebGPU adapter; skipping")

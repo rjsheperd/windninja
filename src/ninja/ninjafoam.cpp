@@ -338,7 +338,6 @@ bool NinjaFoam::simulate_wind()
             throw std::runtime_error("momentum backend '" + get_momentumBackendName(input.momentumBackend) +
                                      "' is not available in this build of WindNinja");
     }
-    MomentumBackend &backend = *selected;
     MomentumResult result;
     bool solutionStatus = false;
     // a RANS backend that diverges is retried on a smoothed DEM, with the
@@ -349,11 +348,23 @@ bool NinjaFoam::simulate_wind()
     {
         try
         {
-            solutionStatus = backend.solve(MakeMomentumProblem(input), input.Com,
+            solutionStatus = selected->solve(MakeMomentumProblem(input), input.Com,
                     [this]() { checkCancel(); },
                     [this](const MomentumResult &r) { return ApplyMomentumResult(r); },
                     result);
             break;
+        }
+        catch(const MomentumBackendUnavailableError &e)
+        {
+            // a GPU backend that can't run here falls back to the CPU backend
+            // (NINJA_MOMENTUM_FALLBACK=NO turns this off, e.g. for GPU tests)
+            if(selected == &cpuRans ||
+               !CPLTestBool(CPLGetConfigOption("NINJA_MOMENTUM_FALLBACK", "YES")))
+                throw;
+            input.Com->ninjaCom(ninjaComClass::ninjaWarning,
+                                "%s. Falling back to the CPU momentum backend.", e.what());
+            selected = &cpuRans;
+            tryIdx--;   // not a DEM-smoothing try
         }
         catch(const MomentumDivergedError &e)
         {

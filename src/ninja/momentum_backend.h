@@ -88,6 +88,16 @@ public:
     explicit MomentumDivergedError(const std::string &what) : std::runtime_error(what) {}
 };
 
+/*
+** A backend can't run here: no device, the device was lost, or it ran out of
+** memory.  The caller may fall back to another backend.
+*/
+class MomentumBackendUnavailableError : public std::runtime_error
+{
+public:
+    explicit MomentumBackendUnavailableError(const std::string &what) : std::runtime_error(what) {}
+};
+
 class MomentumBackend
 {
 public:

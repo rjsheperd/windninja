@@ -20,6 +20,7 @@ OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
 export WINDNINJA_DATA="$WN_SRC_DIR/data"
+export NINJA_MOMENTUM_FALLBACK=NO   # a GPU test: no fallback to the CPU backend
 cp "$WINDNINJA_DATA/mackay_small.tif" "$OUT/"
 cat > "$OUT/steep.cfg" << CFG
 num_threads                = 2

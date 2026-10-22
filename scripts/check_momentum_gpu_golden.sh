@@ -31,6 +31,8 @@ MAX_SPEED_RMSE=0.25
 MAX_DIRECTION=5
 MAX_K_RMSE=0.25
 
+# a GPU test: no fallback to the CPU backend
+export NINJA_MOMENTUM_FALLBACK=NO
 if ! MOMENTUM_BACKEND=webgpu MOMENTUM_CASES="^$CASE\$" \
      "$SCRIPT_DIR/make_momentum_golden.sh" "$CLI" "$OUT" > "$OUT/log" 2>&1; then
     if grep -q "no adapter" "$OUT/log"; then

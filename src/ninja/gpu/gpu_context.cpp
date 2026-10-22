@@ -40,13 +40,18 @@ WGPUStringView view(const char *s)
     return v;
 }
 
+// on one line: Dawn's messages can span lines (" - While calling ...") and
+// end in a newline, and they end up in one-line log messages
 std::string str(WGPUStringView v)
 {
     if(v.data == nullptr)
         return std::string();
-    if(v.length == WGPU_STRLEN)
-        return std::string(v.data);
-    return std::string(v.data, v.length);
+    std::string s = v.length == WGPU_STRLEN ? std::string(v.data) : std::string(v.data, v.length);
+    s.erase(s.find_last_not_of(" \t\r\n") + 1);
+    for(char &c : s)
+        if(c == '\n' || c == '\r')
+            c = ' ';
+    return s;
 }
 
 struct AdapterRequest
