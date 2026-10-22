@@ -828,3 +828,9 @@ cleanup calls =spel --session … close=, which closes the browser but not
 the daemon: 22 idle daemons had piled up on this machine (the oldest 1.4
 days). Stop the daemon too in =cleanup()= (and check spel for the right
 command), then stop the leftovers.
+2026-10-22: leftovers stopped at RJ's request (31 by then). Findings for
+the fix: spel has no command to stop a daemon (=close= closes only the
+browser; =session list= doesn't show these sessions); the daemons ignore
+SIGTERM and needed SIGKILL; each leaves =$TMPDIR/spel-<session>.log=
+(removed with them). So =cleanup()= has to find the daemon's PID by its
+=--session= argument and kill it, then remove its log.
