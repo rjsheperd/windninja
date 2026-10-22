@@ -147,7 +147,7 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
         if(!diverged)
             break;
         if(attempt == maxRetries)
-            throw std::runtime_error(std::string("WebGPU RANS diverged by ") + unit + " " +
+            throw MomentumDivergedError(std::string("WebGPU RANS diverged by ") + unit + " " +
                                      std::to_string(it) +
                                      " at CFL " + std::to_string(runCfl) + " after " +
                                      std::to_string(maxRetries) + " retries");

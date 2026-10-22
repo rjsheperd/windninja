@@ -28,6 +28,8 @@
 #define MOMENTUM_BACKEND_H
 
 #include <functional>
+#include <stdexcept>
+#include <string>
 
 #include "ascii_grid.h"
 #include "Elevation.h"
@@ -73,6 +75,17 @@ struct MomentumResult
     double sampleHeight;     // m above the ground that u, v, k represent when
                              // !outputHeightResolved (the caller converts to
                              // height above the canopy per cell)
+};
+
+/*
+** A backend's solution diverged (non-finite residuals after its own
+** retries).  The caller may retry on a smoothed DEM, as the OpenFOAM path
+** does (SIMPLEFOAM_NTRIES).
+*/
+class MomentumDivergedError : public std::runtime_error
+{
+public:
+    explicit MomentumDivergedError(const std::string &what) : std::runtime_error(what) {}
 };
 
 class MomentumBackend

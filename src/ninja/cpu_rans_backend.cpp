@@ -125,7 +125,7 @@ bool CpuRansBackend::solve(const MomentumProblem &problem,
         // NaN compares false, so without this a diverged run would stop as
         // if converged
         if(!std::isfinite(r.u) || !std::isfinite(r.v) || !std::isfinite(r.k))
-            throw std::runtime_error("CPU RANS diverged by cycle " + std::to_string(it));
+            throw MomentumDivergedError("CPU RANS diverged by cycle " + std::to_string(it));
         if(it % 200 == 0)
             com->ninjaCom(ninjaComClass::ninjaNone, "CPU RANS cycle %d, residual %g", it, worst);
     }

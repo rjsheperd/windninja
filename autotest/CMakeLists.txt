@@ -428,12 +428,12 @@ if(WITH_WEBGPU)
         # GATE 0's tolerances; terrain no worse than OpenFOAM at the same
         # mesh, against OpenFOAM's fine mesh (scripts/check_momentum_gpu_golden.sh).
         # Not ridge_coarse_270: OpenFOAM's own solution there doesn't settle.
+        # Not mackay_small_coarse_270 yet: its fine OpenFOAM reference needs
+        # DEM-smoothing retries, so there is no fair one.
         foreach(goldencase flat_coarse_270
                            big_butte_small_coarse_0 big_butte_small_coarse_135
                            big_butte_small_coarse_270 big_butte_small_medium_0
                            big_butte_small_medium_135 big_butte_small_medium_270)
-            # (not mackay_small_coarse_270 yet: its fine OpenFOAM reference
-            # needs DEM-smoothing retries, so there is no fair one)
             add_test(NAME momentum_gpu_golden_${goldencase}
                      COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_gpu_golden.sh
                              $<TARGET_FILE:WindNinja_cli> $<TARGET_FILE:compare_momentum>
@@ -441,6 +441,13 @@ if(WITH_WEBGPU)
             set_tests_properties(momentum_gpu_golden_${goldencase} PROPERTIES
                                  SKIP_RETURN_CODE 77)
         endforeach(goldencase)
+        # steep-terrain robustness: Mackay fine finishes, with no more
+        # DEM-smoothing retries than OpenFOAM (about 3.5 min)
+        add_test(NAME momentum_gpu_steep_converges
+                 COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_gpu_steep.sh
+                         $<TARGET_FILE:WindNinja_cli>)
+        set_tests_properties(momentum_gpu_steep_converges PROPERTIES
+                             SKIP_RETURN_CODE 77)
     endif()
     add_test(gpu_overhead_bench_smoke
              ${EXECUTABLE_OUTPUT_PATH}/gpu_overhead_bench --quick)

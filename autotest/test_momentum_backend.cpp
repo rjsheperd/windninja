@@ -343,7 +343,7 @@ BOOST_AUTO_TEST_CASE( webgpu_cfl_backoff )
     backend.maxRetries = 0;
     BOOST_CHECK_THROW(backend.solve(p, &com, []() {},
                                     [](const MomentumResult &) { return true; }, result),
-                      std::runtime_error);
+                      MomentumDivergedError);
 }
 #endif /* WITH_WEBGPU */
 

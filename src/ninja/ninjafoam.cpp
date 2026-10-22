@@ -337,10 +337,32 @@ bool NinjaFoam::simulate_wind()
     }
     MomentumBackend &backend = *selected;
     MomentumResult result;
-    bool solutionStatus = backend.solve(MakeMomentumProblem(input), input.Com,
-            [this]() { checkCancel(); },
-            [this](const MomentumResult &r) { return ApplyMomentumResult(r); },
-            result);
+    bool solutionStatus = false;
+    // a RANS backend that diverges is retried on a smoothed DEM, with the
+    // OpenFOAM path's schedule (SIMPLEFOAM_NTRIES tries, smoothDist 1, 1, 2,
+    // ..., cumulative); OpenFOAM retries inside SolveWithOpenFoam
+    int nTries = atoi(CPLGetConfigOption("SIMPLEFOAM_NTRIES", "3"));
+    for(int tryIdx = 0; ; tryIdx++)
+    {
+        try
+        {
+            solutionStatus = backend.solve(MakeMomentumProblem(input), input.Com,
+                    [this]() { checkCancel(); },
+                    [this](const MomentumResult &r) { return ApplyMomentumResult(r); },
+                    result);
+            break;
+        }
+        catch(const MomentumDivergedError &e)
+        {
+            if(tryIdx >= nTries)
+                throw;
+            int smoothDist = (tryIdx + 2) / 2;
+            input.Com->ninjaCom(ninjaComClass::ninjaWarning,
+                                "%s. Smoothing the elevation (smoothDist = %d) and trying again.",
+                                e.what(), smoothDist);
+            input.dem.smooth_elevation(smoothDist);
+        }
+    }
 
     // optional raw result dump for backend comparisons (the golden u/v/k.asc)
     const char *pszResultDir = CPLGetConfigOption("NINJA_MOMENTUM_RESULT_DIR", NULL);

@@ -654,7 +654,7 @@ transports k and ε.
 - [X] Tests pass (full suite 105/105)
 - [X] Documentation updates (=rans_multigrid.h= header; damping rationale)
 
-** NEXT 2.5 Robustness on steep terrain
+** DONE 2.5 Robustness on steep terrain
 Resumed 2026-10-21 (user): with the GPU backend reproducing the CPU to about
 0.002 m/s in about 10 s per case, investigate the steep-terrain gap with GPU
 runs (ridge_coarse_270 and big_butte_small_coarse_270 against OpenFOAM).
@@ -664,7 +664,7 @@ defect (2.4) here *before* Phase 4, so the GPU port copies settled numerics.
 compare it with OpenFOAM directly. Parked here with the outlet backflow fix
 (below) in; the rest (the Big Butte near-wall question, skew and mitigations)
 resumes only if the GPU backend fails the golden cases the same way.
-- [ ] Find the near-wall defect: a CPU column on the butte has a stagnant
+- [X] Find the near-wall defect: a CPU column on the butte has a stagnant
       first ~100 m (0.98 vs 6.85 m/s) and k up to 3.5× OpenFOAM's (2.4).
       Candidates: the wall function on sloped faces (wall distance and
       tangential velocity relative to the face normal), wall-cell k production
@@ -801,18 +801,39 @@ resumes only if the GPU backend fails the golden cases the same way.
       unchanged* (0.554 m/s, 5.37 max, 5.7°, k 0.48; stalls at residual 0.109
       after 5,000 cycles), so backflow was the ridge's problem, not Big
       Butte's.
-- [ ] Fix it and re-run =big_butte_small_coarse_270= against GATE 0.
-- [ ] Measure grid skew and aspect ratio (=Mesh::get_equiangle_skew= and
+- [X] Resolved without a fix: no defect was found. Local terms (wall
+      functions, wall-face gradients, k/ε diffusion, the outlets) are ruled
+      out, and against OpenFOAM's fine mesh our steep-terrain results are
+      closer than OpenFOAM's own at the same mesh. The gap to coarse
+      OpenFOAM is OpenFOAM's mesh error. GATE 0 is replaced for terrain by the
+      GATE 2 criterion (user decision). The outlet backflow fix (above) was
+      the one real defect found.
+- [-] SKIP: measure grid skew and aspect ratio (=Mesh::get_equiangle_skew= and
       =Mesh::get_aspect_ratio= already exist).
-- [ ] Add mitigation options: vertical smoothing of the coordinate surfaces,
+- [X] Mitigations (done the robustness way, without measuring skew first):
+      - CFL back-off in the WebGPU backend (restart at half CFL, 3 times);
+      - *DEM-smoothing retry* for the RANS backends, with the OpenFOAM path's
+        schedule: =SIMPLEFOAM_NTRIES= (3) tries, smoothDist 1, 1, 2, ...
+        cumulative. =NinjaFoam= catches the new =MomentumDivergedError= that
+        both backends throw once their own retries are exhausted.
+      Mackay fine diverges at every CFL down to 0.0625, at the same
+      pseudo-time each run: a genuine instability, as for OpenFOAM, which
+      needs 3 smoothing retries there. With one smoothing (smoothDist 1) the
+      GPU finishes, in 3 min 25 s. Original item, kept for reference: add
+      mitigation options: vertical smoothing of the coordinate surfaces,
       CFL ramp-up, and DEM smoothing retry (parity with today's
       =SIMPLEFOAM_NTRIES=).
-- [ ] Add tests
-- [ ] Tests pass
-- [ ] Documentation updates
+- [X] Add tests: =momentum_gpu_steep_converges=
+      (=scripts/check_momentum_gpu_steep.sh=: Mackay fine on the WebGPU
+      backend finishes with at most OpenFOAM's 3 smoothing retries; it takes
+      1) and =momentum_backend_webgpu_cfl_backoff= (now expects
+      =MomentumDivergedError=).
+- [X] Tests pass: 63/63 of =gpu_|rans_|momentum_=.
+- [X] Documentation updates: this file and comments.
 *** Tests
 - =momentum_cpu_steep_converges=: the steep golden case converges without a
-  retry, or with the same number of retries as OpenFOAM.
+  retry, or with the same number of retries as OpenFOAM. (Done as
+  =momentum_gpu_steep_converges=: Mackay fine, 1 retry against OpenFOAM's 3.)
 - A unit test that pins the fixed near-wall behaviour on the reproduction
   case.
 
