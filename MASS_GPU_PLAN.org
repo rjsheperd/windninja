@@ -737,8 +737,19 @@ context, geometry and pipelines again.
 - [X] Tests pass / Documentation updates: 47/47 mass and GPU tests;
       =share.html=, =solver.html= pass; this entry.
 
-** TODO 4.2 Better preconditioner (only if Phase 0/2 numbers call for it)
+** CANCELLED 4.2 Better preconditioner (only if Phase 0/2 numbers call for it)
 Multicolour SSOR or a shallow geometric multigrid V-cycle.
+
+Decision (2026-10-22): the numbers don't call for it. Jacobi-PCG on the
+GPU is 0.05–0.07 s on Big Butte fine (2.4, 4.1), under half of the GPU
+run's simulation time, and its iterations are dispatch-bound (~0.25 ms
+each on the coarse mesh, ~0.05 ms of arithmetic; 2.2a). Multicolour SSOR
+would cut iterations ~2.8× (CPU SSOR 57 vs Jacobi 160) but add 16
+dispatches per iteration (8 colours, two sweeps), so it would likely be
+slower; a multigrid V-cycle adds coarse levels that the RANS work found
+dispatch-bound (WEBGPU_PLAN 4.3). The cheaper lever is fewer submits per
+iteration (Inbox). Revisit if a mesh much larger than ~400k nodes makes
+the iteration count dominate.
 
 * Open questions
 - +Does the mass solver's 0.1 stop tolerance hold in f32 on 400k+ nodes, or
