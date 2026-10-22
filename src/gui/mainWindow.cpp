@@ -323,6 +323,7 @@ void MainWindow::connectSignals()
 
     connect(ui->massSolverCheckBox, &QCheckBox::toggled, this, &MainWindow::massSolverCheckBoxToggled);
     connect(ui->momentumSolverCheckBox, &QCheckBox::toggled, this, &MainWindow::momentumSolverCheckBoxToggled);
+    setupMomentumBackendSelector();
     connect(ui->diurnalCheckBox, &QCheckBox::toggled, this, &MainWindow::diurnalCheckBoxToggled);
     connect(ui->stabilityCheckBox, &QCheckBox::toggled, this, &MainWindow::stabilityCheckBoxToggled);
     connect(ui->treeWidget, &QTreeWidget::itemDoubleClicked, this, &MainWindow::treeWidgetItemDoubleClicked);
@@ -426,8 +427,45 @@ void MainWindow::massSolverCheckBoxToggled()
     emit updateStabilityState();
 }
 
+void MainWindow::setupMomentumBackendSelector()
+{
+    QLabel *label = new QLabel("Solver backend:", ui->momentumSolverPage);
+    momentumBackendComboBox = new QComboBox(ui->momentumSolverPage);
+    momentumBackendComboBox->addItem("OpenFOAM", "openfoam");
+    momentumBackendComboBox->addItem("Built-in, CPU", "cpu");
+#ifdef WITH_WEBGPU
+    momentumBackendComboBox->addItem("Built-in, GPU (WebGPU)", "webgpu");
+#endif
+    momentumBackendComboBox->setToolTip(
+        "OpenFOAM runs the momentum solver as external OpenFOAM processes. The "
+        "built-in backends solve the same RANS equations inside WindNinja, on the "
+        "CPU or on the GPU.");
+    momentumBackendComboBox->setEnabled(false);
+    QHBoxLayout *row = new QHBoxLayout();
+    row->addWidget(label);
+    row->addWidget(momentumBackendComboBox);
+    row->addStretch(1);
+    // under the checkbox, before the description
+    ui->verticalLayout_4->insertLayout(1, row);
+    connect(momentumBackendComboBox, &QComboBox::currentIndexChanged, this,
+            &MainWindow::momentumBackendChanged);
+}
+
+QString MainWindow::momentumBackend() const
+{
+    return momentumBackendComboBox->currentData().toString();
+}
+
+void MainWindow::momentumBackendChanged()
+{
+    // an existing OpenFOAM case only applies to the OpenFOAM backend
+    ui->ninjafoamCaseGroupBox->setVisible(ui->momentumSolverCheckBox->isChecked() &&
+                                          momentumBackend() == "openfoam");
+}
+
 void MainWindow::momentumSolverCheckBoxToggled()
 {
+    momentumBackendComboBox->setEnabled(ui->momentumSolverCheckBox->isChecked());
     if(!ui->momentumSolverCheckBox->isChecked())
     {
         ui->stabilityCheckBox->setDisabled(false);
@@ -446,7 +484,7 @@ void MainWindow::momentumSolverCheckBoxToggled()
     ui->pointInitializationGroupBox->setChecked(false);
     ui->pointInitializationGroupBox->setDisabled(true);
     ui->pointInitializationGroupBox->setToolTip("The point initialization option is not currently available for the momentum solver.");
-    ui->ninjafoamCaseGroupBox->setVisible(true);
+    momentumBackendChanged();
 
     if(ui->numberOfProcessorsSpinBox->value() > nCores)
     {
@@ -1059,7 +1097,17 @@ bool MainWindow::prepareArmy(NinjaArmyH *ninjaArmy, int numNinjas, const char* i
         }
 
         #ifdef NINJAFOAM
-        if(ui->momentumSolverCheckBox->isChecked() && !ui->ninjafoamCaseLineEdit->text().isEmpty())
+        if(ui->momentumSolverCheckBox->isChecked())
+        {
+            ninjaErr = NinjaSetMomentumBackend(ninjaArmy, i, momentumBackend().toUtf8().constData(), papszOptions);
+            if(ninjaErr != NINJA_SUCCESS)
+            {
+                qDebug() << "NinjaSetMomentumBackend: ninjaErr =" << ninjaErr;
+                return false;
+            }
+        }
+        if(ui->momentumSolverCheckBox->isChecked() && momentumBackend() == "openfoam" &&
+           !ui->ninjafoamCaseLineEdit->text().isEmpty())
         {
             ninjaErr = NinjaSetExistingCaseDirectory(ninjaArmy, i, ui->ninjafoamCaseLineEdit->property("fullpath").toString().toUtf8().constData(), papszOptions);
             if(ninjaErr != NINJA_SUCCESS)
@@ -1627,6 +1675,7 @@ void MainWindow::writeSettings()
     QFileInfo demFileInfo(demFilePath);
     settings.setValue("inputFileDir", demFileInfo.absolutePath());
     settings.setValue("momentumFlag", ui->momentumSolverCheckBox->isChecked());
+    settings.setValue("momentumBackend", momentumBackend());
     settings.setValue("vegChoice", ui->vegetationComboBox->currentIndex());
     settings.setValue("meshChoice", ui->meshResolutionComboBox->currentIndex());
     settings.setValue("meshUnits", ui->meshResolutionUnitsComboBox->currentIndex());
@@ -1657,6 +1706,12 @@ void MainWindow::readSettings()
     if(settings.contains("momentumFlag") && settings.value("momentumFlag").toBool())
     {
         ui->momentumSolverCheckBox->click();
+    }
+    if(settings.contains("momentumBackend"))
+    {
+        int index = momentumBackendComboBox->findData(settings.value("momentumBackend").toString());
+        if(index >= 0)
+            momentumBackendComboBox->setCurrentIndex(index);
     }
     #endif
     if(settings.contains("vegChoice"))

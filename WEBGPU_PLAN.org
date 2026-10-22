@@ -1260,9 +1260,13 @@ today.
 ** NEXT 5.1 CLI, C API and GUI wiring
 - [X] Support =momentum_backend = webgpu= (CLI and C API, 4.4). The fallback
       to =cpu= is 5.3.
-- [ ] GUI: a backend selector in the momentum solver panel. Hide the OpenFOAM
-      case-directory picker when it doesn't apply. Let the processor count
-      control the CPU backend only.
+- [X] GUI: a backend selector in the momentum solver panel. Hide the OpenFOAM
+      case-directory picker when it doesn't apply. (A combo box under the
+      momentum checkbox: OpenFOAM, built-in CPU, and built-in GPU (WebGPU) in
+      =WITH_WEBGPU= builds. It calls =NinjaSetMomentumBackend=, shows the
+      existing-case picker for OpenFOAM only, and persists in the settings.
+      Builds; *not yet run through the manual checklist*.) [ ] Let the
+      processor count control the CPU backend only.
 - [ ] Lift the hwloc / =countNumCores= dependency when OpenFOAM isn't selected.
 - [ ] Move =nIterations= / =meshCount= out of =#ifdef NINJAFOAM= in
       =WindNinjaInputs.h= and build =momentum_backend.cpp= unconditionally
@@ -1361,6 +1365,18 @@ Without =USER= in the environment (e.g. under =env -i=), OpenFOAM's
 =FOAM_USER_LIBBIN= becomes =~/OpenFOAM/-11=. =libWindNinja= isn't loaded,
 and the run fails late and obscurely: =decomposePar= reports
 "Essential entry 'value' missing" for =logProfileDissipationRateInlet=.
+** TODO C API momentum run writes no output files
+Tried for 5.1 (2026-10-21): a domain-average army through the C API with the
+GUI's setters (=NinjaSetAsciiOutFlag=, =AsciiAaigridOutFlag=,
+=AsciiResolution=, =OutputPath=, buffer clipping, vertical layers, diurnal
+off) on the WebGPU backend. The solve completes and =NinjaStartRuns= returns
+1 (success, as the GUI expects), but no =_vel.asc= appears in the output
+path, while the CLI writes it for the same backend. Not yet traced
+(=NinjaFoam::WriteOutputFiles= → =SetOutputFilenames=). Check whether
+OpenFOAM through the C API writes output, to tell a pre-existing C API issue
+from a backend one.
+Smell noticed: =NinjaStartRuns= returns =startRuns='s bool, so 1 means
+success while =NINJA_SUCCESS= is 0.
 ** TODO =RUN_CFG_TESTS= configure fails where only =python3= exists
 =autotest/CMakeLists.txt:353= runs =pef.py= with a bare =python=, which stock
 macOS lacks, so =ELEV_FILE= is empty and =string(STRIP)= errors. Run it with

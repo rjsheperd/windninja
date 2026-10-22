@@ -49,6 +49,7 @@
 #include <QMessageBox>
 #include <QMainWindow>
 #include <QTreeWidgetItem>
+#include <QComboBox>
 #include <QDir>
 #include <QDirIterator>
 #include <QDateTime>
@@ -110,6 +111,7 @@ private slots:
     void writeToConsole(QString message, QColor color=Qt::black);
     void massSolverCheckBoxToggled();
     void momentumSolverCheckBoxToggled();
+    void momentumBackendChanged();
     void diurnalCheckBoxToggled();
     void stabilityCheckBoxToggled();
     void treeWidgetItemSelectionChanged();
@@ -122,6 +124,11 @@ private slots:
     void captureMapSnapshot();
 
 private:
+    // momentum solver backend selector (momentum solver page): item data is
+    // the momentum_backend name (openfoam, cpu, webgpu)
+    QComboBox *momentumBackendComboBox = nullptr;
+    void setupMomentumBackendSelector();
+    QString momentumBackend() const;
     Ui::MainWindow *ui;
     QWebEngineView *webEngineView;
     QWebChannel *webChannel;
