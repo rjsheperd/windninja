@@ -212,7 +212,7 @@ Assumptions to check, because the decision rests on them:
 - [X] Documentation updates: decision recorded here.
 
 * Phase 1: Core-free mass solver (no behaviour change)
-** IN-PROGRESS 1.1 Extract assembly, solve and velocity recovery from =ninja= [0/7]
+** DONE 1.1 Extract assembly, solve and velocity recovery from =ninja= [6/6]
 Design (2026-10-22):
 - =mass_fem.{h,cpp}= (no GDAL, no =ninja=, no =Mesh=):
   - =MassGrid=: =ncols=, =nrows=, =nlayers= and node coordinates x/y/z, node
@@ -240,21 +240,39 @@ Design (2026-10-22):
       gone (folded in), =computeUVWField()= calls =RecoverVelocity=; −600
       lines in =ninja.cpp=. A folded element (=DETJ <= 0=) used to throw
       inside an OpenMP loop (=std::terminate=); it now throws after the loop.
-- [ ] =mass_pcg= (PCG, Jacobi/SSOR, callbacks); =ninja::solve()= calls it.
-- [-] Builds without core headers: =mass_fem.cpp= compiles with only the
-      standard library, natively and with =em++= (=mass_pcg= to do).
+- [X] =mass_pcg= (PCG, Jacobi/SSOR, callbacks); =ninja::solve()= calls it.
+      =ninja::solve()= now takes the =MassSystem= and keeps only the GUI
+      progress arithmetic (a callback), the config option and the errors.
+- [X] Builds without core headers: =mass_fem=, =mass_pcg= and
+      =preconditioner= compile with only the standard library, natively and
+      with =em++=; a small program linking just those three solves a
+      sloped-grid problem.
 - [X] Add tests: =autotest/test_mass_fem.cpp=, 7 cases: unit-cube
       stiffness and divergence RHS against hand values, uniform flow over
       sloped terrain has no source, CSR pattern and boundary rows, Φ = 0
       keeps u₀, linear Φ gives the exact gradient on sloped terrain, folded
       element throws. Mutation checks: RZ from αH, no BCs, w recovered with
       αH, RHS without the volume: each caught by exactly its test.
-- [X] Tests pass: 7/7; full ctest 166/169 (the 3 failures are NOMADS/UCAR
-      downloads). CLI output (ASCII and the double-precision volume VTK) is
-      byte-identical to the pre-change binary at 1 thread on coarse and fine
-      Big Butte; at 8 threads, fine is identical too. Assembly 0.029 s vs
-      0.035 s before (fine, 8 threads).
-- [ ] Documentation updates
+      =autotest/test_mass_pcg.cpp=, 4 cases: both preconditioners reach
+      1e-10 (checked with an independent residual) and agree on Φ; a zero
+      RHS returns at once; the iteration cap reports non-convergence and the
+      true residual; progress every N and a throwing cancel. Mutation
+      checks: SpMV without its transpose half, residual updated with p,
+      always "converged", progress every iteration, wrong preconditioner
+      reported: each caught.
+- [X] Tests pass: 11/11 mass tests. Full ctest after =mass_pcg=: 169/173
+      (2 NOMADS/UCAR download failures, 2 OpenFOAM skips; after =mass_fem=:
+      166/169, 3 download failures). After =mass_pcg=: CLI
+      output (ASCII and the double-precision volume VTK) is byte-identical
+      to the pre-change binary at 1 thread on coarse and fine Big Butte,
+      with the same iteration counts as 0.1 (SSOR 52/57, Jacobi 158). At 8
+      threads, two runs are byte-identical to each other; against the
+      1-thread reference the ASCII output is identical and the VTK differs
+      by ≤ 2e-11 m/s (OpenMP reduction order; the pre-change binary at 8
+      threads wasn't kept, so that pair wasn't compared). Assembly 0.029 s
+      vs 0.035 s before (fine, 8 threads).
+- [X] Documentation updates: =src/ninja/gpu/README.org= lists =mass_fem=
+      and =mass_pcg= with the other core-free files; this entry.
 
 * Phase 2: GPU solve (native Dawn)
 ** TODO 2.1 Stencil SpMV kernel [0/4]
@@ -334,3 +352,15 @@ last bits between runs (not seen on Big Butte fine). A deterministic
 gather (as in the GPU kernels) would fix it.
 ** TODO Solver comment says "2-norm of residual"; it is relative to ‖b‖
 =ninja.cpp= (=stop_tol=): the test is ‖r‖₂/‖b‖₂ ≤ 0.1.
+** TODO MINRES fallback is unreachable
+=ninja::solve()= returns true or throws, never false, so
+=if(solve(...)==false) solveMinres(...)= never runs. =solveMinres()= and the
+=ninja::cblas_*= / =mkl_*dcsrmv= helpers (~350 lines) exist only for it.
+Either delete them or make a non-converged CG fall back to MINRES as
+intended (ask RJ which).
+** TODO Half of the CPU matrix-vector product is serial
+The symmetric upper-triangle product (=SymmetricMultiply=, formerly
+=ninja::mkl_dcsrmv=) scatters each row's transpose in a serial loop, which
+is why the solve barely speeds up with threads (0.1). Storing the full
+matrix (or the 27-point stencil, as Phase 2 does on the GPU) would let the
+CPU product run fully in parallel too.

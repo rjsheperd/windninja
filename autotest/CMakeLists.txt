@@ -50,6 +50,7 @@ set(TEST_SOURCES test_main.cpp
                  momentum_compare.cpp
                  test_momentum_compare.cpp
                  test_mass_fem.cpp
+                 test_mass_pcg.cpp
                  test_rans_abl.cpp
                  test_rans_grid.cpp
                  test_rans_solver.cpp
@@ -421,6 +422,14 @@ add_test(mass_fem_linear_phi_gradient
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/linear_phi_gradient)
 add_test(mass_fem_inverted_element_throws
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/inverted_element_throws)
+add_test(mass_pcg_solves_to_tolerance
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_pcg/solves_to_tolerance)
+add_test(mass_pcg_zero_rhs_returns_immediately
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_pcg/zero_rhs_returns_immediately)
+add_test(mass_pcg_iteration_cap
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_pcg/iteration_cap)
+add_test(mass_pcg_progress_and_cancel
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_pcg/progress_and_cancel)
 add_test(rans_solver_freestream
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/freestream)
 add_test(rans_solver_mms_laminar

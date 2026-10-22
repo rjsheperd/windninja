@@ -39,6 +39,7 @@ endif(NINJAFOAM)
 set(NINJA_SOURCES air.cpp
                   mass_fem.cpp
                   mass_grid_mesh.cpp
+                  mass_pcg.cpp
                   rans_abl.cpp
                   rans_grid.cpp
                   rans_grid_mesh.cpp

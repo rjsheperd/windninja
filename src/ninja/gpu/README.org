@@ -33,7 +33,13 @@ them (=src/ninja/=):
 - =rans_gpu_bridge= :: CPU solver types to GPU ones;
 - =rans_gpu_solve= :: =SolveOnGpu()=, the loop: CFL back-off, residual and
   output-change stops;
-- =rans_dem_solve= :: =SolveDemOnGpu()=, DEM in, ground-layer wind out.
+- =rans_dem_solve= :: =SolveDemOnGpu()=, DEM in, ground-layer wind out;
+- =mass_fem= :: the mass solver's =MassGrid=, =AssembleMass()= (system
+  and boundary conditions) and =RecoverVelocity()= (=MASS_GPU_PLAN.org=
+  1.1); =MassGrid::FromMesh()= in =mass_grid_mesh.cpp= is the only part that
+  sees =Mesh=;
+- =mass_pcg= :: =SolveMassPcg()=, the mass solver's SSOR/Jacobi conjugate
+  gradient (with =preconditioner.cpp=).
 
 =WebGpuRansBackend= (=src/ninja/webgpu_rans_backend.*=) is the momentum
 backend that runs them inside WindNinja.

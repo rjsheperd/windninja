@@ -59,7 +59,7 @@
 #include "cpl_string.h"
 
 #include "ninja_conv.h"
-#include "mass_fem.h"
+#include "mass_pcg.h"
 
 #include "constants.h"
 #include "ascii_grid.h"
@@ -423,8 +423,7 @@ private:
 
     double getSmallestRadiusOfInfluence();
     void get_rootname(const char *NAME,char *shortname);
-    bool solve(double *SK, double *RHS, double *PHI, int *row_ptr,
-               int *col_ind, int NUMNP, int MAXITS, int print_iters, double stop_tol);
+    bool solve(const MassSystem &system, double *PHI, int NUMNP, int MAXITS, int print_iters, double stop_tol);
 
     /*-----------------------------------------------------------------------------
      * alternative solvers                                                           

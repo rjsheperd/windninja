@@ -420,8 +420,7 @@ do
 
 		//if the CG solver diverges, try the minres solver
 
-		if(solve(massSystem.SK.data(), massSystem.RHS.data(), PHI,
-		          massSystem.row_ptr.data(), massSystem.col_ind.data(), mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
+		if(solve(massSystem, PHI, mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
 		    if(solveMinres(massSystem.SK.data(), massSystem.RHS.data(), PHI,
 		          massSystem.row_ptr.data(), massSystem.col_ind.data(), mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
 			throw std::runtime_error("Solver returned false.");
@@ -628,199 +627,55 @@ double ninja::getSmallestRadiusOfInfluence()
  * @param tol Convergence tolerance to stop at.
  * @return Returns true if solver converges and completes properly.
  */
-bool ninja::solve(double *A, double *b, double *x, int *row_ptr, int *col_ind, int NUMNP, int max_iter, int print_iters, double tol)
+bool ninja::solve(const MassSystem &system, double *x, int NUMNP, int max_iter, int print_iters, double tol)
 {
-    //stuff for sparse BLAS MV multiplication
-    char transa='n';
-    double one=1.E0, zero=0.E0;
-    char matdescra[6];
-    matdescra[0]='s';	//symmetric
-    matdescra[1]='u';	//upper triangle stored
-    matdescra[2]='n';	//non-unit diagonal
-    matdescra[3]='c';	//c-style array (ie 0 is index of first element, not 1 like in Fortran)
-
-    FILE *convergence_history;
-    int i, j;
-    double *p, *z, *q, *r;
-    double alpha, beta, rho, rho_1, normb, resid;
-    double residual_percent_complete, residual_percent_complete_old, time_percent_complete, start_resid;
-    residual_percent_complete = 0.0;
-
-    residual_percent_complete_old = -1.;
-
-    Preconditioner M;
+    MassSolveOptions options;
+    options.tol = tol;
+    options.maxIterations = max_iter;
+    options.progressEvery = print_iters;
     //NINJA_MASS_PRECOND=JACOBI skips SSOR (for measuring GPU-friendly preconditioners)
-    const bool useJacobi = EQUAL(CPLGetConfigOption("NINJA_MASS_PRECOND", "SSOR"), "JACOBI");
-    if(useJacobi)
-    {
-        if(M.initialize(NUMNP, A, row_ptr, col_ind, M.Jacobi, matdescra)==false)
-            throw std::runtime_error("Initialization of Jacobi preconditioner failed.");
-    }
-    else if(M.initialize(NUMNP, A, row_ptr, col_ind, M.SSOR, matdescra)==false)
-    {
-        input.Com->ninjaCom(ninjaComClass::ninjaWarning, "Initialization of SSOR preconditioner failed, trying Jacobi preconditioner...");
-        if(M.initialize(NUMNP, A, row_ptr, col_ind, M.Jacobi, matdescra)==false)
-            throw std::runtime_error("Initialization of Jacobi preconditioner failed.");
-    }
-
-//#define NINJA_DEBUG_VERBOSE
+    options.jacobi = EQUAL(CPLGetConfigOption("NINJA_MASS_PRECOND", "SSOR"), "JACOBI");
+    options.checkCancel = [this]() { checkCancel(); };
+    options.warn = [this](const std::string &message) {
+        input.Com->ninjaCom(ninjaComClass::ninjaWarning, message.c_str());
+    };
+    double residual_percent_complete_old = -1.;
+    options.progress = [&](int i, double resid, double start_resid) {
 #ifdef NINJA_DEBUG_VERBOSE
-    if((convergence_history = fopen ("convergence_history.txt", "w")) == NULL)
-        throw std::runtime_error("A convergence_history file to write to cannot be created.\nIt may be in use by another program.");
-
-    fprintf(convergence_history,"\nIteration\tResidual\tResidual_check");
+        input.Com->ninjaCom(ninjaComClass::ninjaDebug, "Iteration = %d\tResidual = %lf\ttol = %lf", i, resid, tol);
 #endif //NINJA_DEBUG_VERBOSE
+        double residual_percent_complete=100-100*((resid-tol)/(start_resid-tol));
 
-    p=new double[NUMNP];
-    z=new double[NUMNP];
-    q=new double[NUMNP];
-    r=new double[NUMNP];
-    //Ax=new double[NUMNP];
-    //Ap=new double[NUMNP];
-    //Anorm=new double[NUMNP];
+        if(residual_percent_complete<residual_percent_complete_old)
+            residual_percent_complete=residual_percent_complete_old;
+        if(residual_percent_complete<0.)
+            residual_percent_complete=0.;
+        else if(residual_percent_complete>100.)
+            residual_percent_complete=100.0;
 
-    //matrix vector multiplication A*x=Ax
-    mkl_dcsrmv(&transa, &NUMNP, &NUMNP, &one, matdescra, A, col_ind, row_ptr, &row_ptr[1], x, &zero, r);
-
-    for(i=0;i<NUMNP;i++){
-        r[i]=b[i]-r[i];                  //calculate the initial residual
-    }
-
-    normb = cblas_dnrm2(NUMNP, b, 1);		//calculate the 2-norm of b
-    //normb = nrm2(NUMNP, b);
-
-    if (normb == 0.0)
-        normb = 1.;
-
-    //compute 2 norm of r
-    resid = cblas_dnrm2(NUMNP, r, 1) / normb;
-    //resid = nrm2(NUMNP, r) / normb;
-
-    if (resid <= tol)
-    {
-        tol = resid;
-        max_iter = 0;
-        return true;
-    }
-
-    //start iterating---------------------------------------------------------------------------------------
-    for (i = 1; i <= max_iter; i++)
-    {
-        checkCancel();
-
-        M.solve(r, z, row_ptr, col_ind);	//apply preconditioner
-
-        rho = cblas_ddot(NUMNP, z, 1, r, 1);
-        //rho = dot(NUMNP, z, r);
-
-        if (i == 1)
+        double time_percent_complete=1.8*exp(0.0401*residual_percent_complete);
+        if(time_percent_complete >= 99.0)
+            time_percent_complete = 99.0;
+        residual_percent_complete_old=residual_percent_complete;
+        //If its a foam+diurnal run, progressWeight==0.80, which means we need to modify the
+        //diurnal time_percent_complete
+        if(input.Com->progressWeight!=1.0)
         {
-            cblas_dcopy(NUMNP, z, 1, p, 1);
-        }else {
-            beta = rho / rho_1;
-
-#pragma omp parallel for
-            for(j=0; j<NUMNP; j++)
-                p[j] = z[j] + beta*p[j];
+            time_percent_complete = (input.Com->progressWeight*100)+(1.0-input.Com->progressWeight)*time_percent_complete;
         }
+        input.Com->ninjaCom(ninjaComClass::ninjaSolverProgress, "%d",(int) (time_percent_complete+0.5)); //Tell the GUI what the percentage to complete for the ninja is
+    };
 
-        //matrix vector multiplication!!!		q = A*p;
-        mkl_dcsrmv(&transa, &NUMNP, &NUMNP, &one, matdescra, A, col_ind, row_ptr, &row_ptr[1], p, &zero, q);
-
-        alpha = rho / cblas_ddot(NUMNP, p, 1, q, 1);
-        //alpha = rho / dot(NUMNP, p, q);
-
-        cblas_daxpy(NUMNP, alpha, p, 1, x, 1);	//x = x + alpha * p;
-        //axpy(NUMNP, alpha, p, x);
-
-        cblas_daxpy(NUMNP, -alpha, q, 1, r, 1);	//r = r - alpha * q;
-        //axpy(NUMNP, -alpha, q, r);
-
-        resid = cblas_dnrm2(NUMNP, r, 1) / normb;	//compute resid
-        //resid = nrm2(NUMNP, r) / normb;
-
-        if(i==1) {
-            start_resid = resid;
-        }
-
-        if((i%print_iters)==0)
-        {
-
-#ifdef NINJA_DEBUG_VERBOSE
-            input.Com->ninjaCom(ninjaComClass::ninjaDebug, "Iteration = %d\tResidual = %lf\ttol = %lf", i, resid, tol);
-            fprintf(convergence_history,"\n%ld\t%lf\t%lf",i,resid,tol);
-#endif //NINJA_DEBUG_VERBOSE
-
-            residual_percent_complete=100-100*((resid-tol)/(start_resid-tol));
-
-            if(residual_percent_complete<residual_percent_complete_old)
-                residual_percent_complete=residual_percent_complete_old;
-            if(residual_percent_complete<0.)
-                residual_percent_complete=0.;
-            else if(residual_percent_complete>100.)
-                residual_percent_complete=100.0;
-
-            time_percent_complete=1.8*exp(0.0401*residual_percent_complete);
-            if(time_percent_complete >= 99.0)
-                time_percent_complete = 99.0;
-            residual_percent_complete_old=residual_percent_complete;
-            //fprintf(convergence_history,"\n%ld\t%lf\t%lf",i,residual_percent_complete, time_percent_complete);
-            //If its a foam+diurnal run, progressWeight==0.80, which means we need to modify the
-            //diurnal time_percent_complete
-            if(input.Com->progressWeight!=1.0)
-            {
-                time_percent_complete = (input.Com->progressWeight*100)+(1.0-input.Com->progressWeight)*time_percent_complete;
-            }
-            input.Com->ninjaCom(ninjaComClass::ninjaSolverProgress, "%d",(int) (time_percent_complete+0.5)); //Tell the GUI what the percentage to complete for the ninja is
-        }
-
-        if (resid <= tol)	//check residual against tolerance
-        {
-            break;
-        }
-
-        //cout<<"resid = "<<resid<<endl;
-
-        rho_1 = rho;
-
-    }	//end iterations--------------------------------------------------------------------------------------------
-
-    if(p)
-    {
-        delete[] p;
-        p=NULL;
-    }
-    if(z)
-    {
-        delete[] z;
-        z=NULL;
-    }
-    if(q)
-    {
-        delete[] q;
-        q=NULL;
-    }
-    if(r)
-    {
-        delete[] r;
-        r=NULL;
-    }
-
-#ifdef NINJA_DEBUG_VERBOSE
-    fclose(convergence_history);
-#endif //NINJA_DEBUG_VERBOSE
+    MassSolveResult result = SolveMassPcg(system, x, options);
 
     CPLDebug("NINJA_MASS_SOLVER", "PCG (%s): %d iterations, relative residual %g, NUMNP %d",
-             useJacobi ? "Jacobi" : "SSOR", std::min(i, max_iter), resid, NUMNP);
+             result.jacobi ? "Jacobi" : "SSOR", result.iterations, result.residual, NUMNP);
 
-    if(resid>tol)
-    {
+    if(!result.converged)
         throw std::runtime_error("Solution did not converge.\nMAXITS reached.");
-    }else{
-        time_percent_complete = 100; //When the solver finishes, set it to 100
-        input.Com->ninjaCom(ninjaComClass::ninjaSolverProgress, "%d",(int) (time_percent_complete+0.5));
-        return true;
-    }
+
+    input.Com->ninjaCom(ninjaComClass::ninjaSolverProgress, "%d", 100); //When the solver finishes, set it to 100
+    return true;
 }
 
 //  MINRES from PetSc (found in google code search)
