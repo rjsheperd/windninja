@@ -42,7 +42,7 @@
 #include "gdal_alg.h"
 #include "cpl_spawn.h"
 
-#ifndef WIN32
+#if defined(NINJAFOAM) && !defined(WIN32)
 #include <hwloc.h>
 #endif
 

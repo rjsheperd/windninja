@@ -300,7 +300,6 @@ public:
     /*-----------------------------------------------------------------------------
      *  NinjaFOAM section
      *-----------------------------------------------------------------------------*/
-#ifdef NINJAFOAM
     static constexpr int defaultMomentumIterations = 300; //used by the core, CLI and GUI
     int nIterations; //number of iterations for a ninjafoam simulation
     int meshCount; //mesh count for a ninjafoam simulation
@@ -315,7 +314,6 @@ public:
     bool writeTurbulence;
     double colMax_colHeightAGL;
     lengthUnits::eLengthUnits colMax_colHeightAGL_units;
-#endif
 };
 
 #endif	/* WINDNINJAINPUTS_H */

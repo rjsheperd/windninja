@@ -1291,13 +1291,11 @@ double SurfaceInput::computeMeshResolution(int index, bool isMomemtumChecked)
         return meshResolution;
     }
 
-#ifdef NINJAFOAM
     if (isMomemtumChecked) {
         coarse = 25000;
         medium = 50000;
         fine = 100000;
     }
-#endif //NINJAFOAM
 
     int targetNumHorizCells = fine;
     switch (index)
@@ -1327,7 +1325,6 @@ double SurfaceInput::computeMeshResolution(int index, bool isMomemtumChecked)
 
     meshResolution = (XCellSize + YCellSize) / 2;
 
-#ifdef NINJAFOAM
     if (isMomemtumChecked)
     {
         XLength = GDALXSize * GDALCellSize;
@@ -1363,7 +1360,6 @@ double SurfaceInput::computeMeshResolution(int index, bool isMomemtumChecked)
 
         meshResolution = side/(nRoundsRefinement*2.0);
     }
-#endif //NINJAFOAM
 
     return meshResolution;
 }

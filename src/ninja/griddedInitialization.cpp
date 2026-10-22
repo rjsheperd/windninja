@@ -76,7 +76,6 @@ void griddedInitialization::initializeFields(WindNinjaInputs &input,
     cloud = cloudCoverGrid;
 }
 
-#ifdef NINJAFOAM
 /**
  * Sets input speed and direction from input grids.
  * @param input WindNinjaInputs object storing necessary input information.
@@ -116,7 +115,6 @@ void griddedInitialization::ninjaFoamInitializeFields(WindNinjaInputs &input,
 
     cloud = cloudCoverGrid;
 }
-#endif //NINJAFOAM
 
 void griddedInitialization::setInitializationGrids(WindNinjaInputs &input)
 {

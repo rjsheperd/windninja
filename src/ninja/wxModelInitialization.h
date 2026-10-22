@@ -98,10 +98,8 @@ class wxModelInitialization : public initialize
 
     wxModelInitialization& operator= ( wxModelInitialization const& A );
 
-#ifdef NINJAFOAM
     virtual void ninjaFoamInitializeFields( WindNinjaInputs &input,
                                             AsciiGrid<double> &cloud );
-#endif //NINJAFOAM
 
     virtual void initializeFields( WindNinjaInputs &input, Mesh const& mesh,
                            wn_3dScalarField& u0, wn_3dScalarField& v0,

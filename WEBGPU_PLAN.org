@@ -1291,10 +1291,27 @@ today.
       existing-case picker for OpenFOAM only, and persists in the settings.
       Builds; *not yet run through the manual checklist*.) [ ] Let the
       processor count control the CPU backend only.
-- [ ] Lift the hwloc / =countNumCores= dependency when OpenFOAM isn't selected.
-- [ ] Move =nIterations= / =meshCount= out of =#ifdef NINJAFOAM= in
+- [X] Lift the hwloc / =countNumCores= dependency when OpenFOAM isn't selected.
+- [X] Move =nIterations= / =meshCount= out of =#ifdef NINJAFOAM= in
       =WindNinjaInputs.h= and build =momentum_backend.cpp= unconditionally
-      (deferred from 1.5).
+      (deferred from 1.5). Done as a full decoupling (user decision,
+      2026-10-22):
+      - the momentum path (the =NinjaFoam= run driver, the backends, the foam
+        initializations, and the CLI, C API, army and GUI options) now
+        builds in every configuration: 63 =#ifdef NINJAFOAM= blocks were
+        unwrapped (or, for =#ifndef= "not compiled with momentum support",
+        removed);
+      - =NINJAFOAM= now means only the OpenFOAM backend, hwloc core counting
+        (falling back to OpenMP or =std::thread::hardware_concurrency=), the
+        packaged OpenFOAM environment (=ninja_init.cpp=) and the OpenFOAM
+        characterization tests;
+      - without it, =openfoam= is rejected as unavailable, the default
+        backend is =cpu=, and the GUI doesn't offer OpenFOAM.
+      Verified:
+      - =NINJAFOAM=ON=: 112/112 non-network tests, and an OpenFOAM Big
+        Butte run byte-identical to its golden output;
+      - =NINJAFOAM=OFF=: builds (CLI, GUI, tests) without linking hwloc,
+        and 63/63 momentum tests pass, with the OpenFOAM cfgs skipped.
 - [X] CLI cfg test: =autotest/config/momentum/momentum_webgpu_bigbutte.cfg=
       (=cfg_momentum_webgpu_bigbutte=, 12 s). =run_momentum_cfg.py= is now
       backend-aware: it needs an OpenFOAM environment only for

@@ -1277,7 +1277,6 @@ WINDNINJADLL_EXPORT NinjaErr NinjaSetAlphaStability
 /*-----------------------------------------------------------------------------
  *  NinjaFoam Methods
  *-----------------------------------------------------------------------------*/
-#ifdef NINJAFOAM
 /**
  * \brief Set the number of iterations for a simulation.
  *
@@ -1381,7 +1380,6 @@ WINDNINJADLL_EXPORT const char * NinjaGetMomentumBackend(NinjaArmyH * army, cons
 
     return strdup( reinterpret_cast<ninjaArmy*>( army )->getMomentumBackendString( nIndex ).c_str() );
 }
-#endif //NINJAFOAM
 
 /*-----------------------------------------------------------------------------
  *  Mesh Methods

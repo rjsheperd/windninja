@@ -112,15 +112,11 @@ void ninjaArmy::makeDomainAverageArmy( int nSize, bool momentumFlag )
         delete ninjas[i];
     ninjas.resize( nSize );
     for( i = 0; i < nSize; i++ ){
-#ifdef NINJAFOAM
         if(momentumFlag){
             ninjas[i] = new NinjaFoam();
         }else{
             ninjas[i] = new ninja();
         }
-#else
-        ninjas[i] = new ninja();
-#endif //NINJAFOAM
 
         setNinjaCommunication( i, i );
     }
@@ -280,16 +276,12 @@ void ninjaArmy::makeWeatherModelArmy(std::string forecastFilename, std::string t
     //reallocate ninjas after resizing
     for(unsigned int i = 0; i < timeList.size(); i++)
     {
-#ifdef NINJAFOAM
         if(momentumFlag == true){
             ninjas[i] = new NinjaFoam();
         }
         else{
              ninjas[i] = new ninja();
         }
-#else
-        ninjas[i] = new ninja();
-#endif
 
         setNinjaCommunication( i, i );
     }
@@ -345,7 +337,6 @@ bool ninjaArmy::startRuns(int numProcessors)
         }
     }
 
-#ifdef NINJAFOAM
     //if it's a ninjafoam run and the user specified an existing case dir, set it here
     if(ninjas[0]->isMomentumSolver() && ninjas[0]->input.existingCaseDirectory != "!set"){
         NinjaFoam::SetFoamPath(ninjas[0]->input.existingCaseDirectory.c_str());
@@ -363,7 +354,6 @@ bool ninjaArmy::startRuns(int numProcessors)
             throw std::runtime_error("Error generating the NINJAFOAM directory.");
         }
     }
-#endif //NINJAFOAM
 
 #ifdef _OPENMP
     omp_set_nested(false);
@@ -518,7 +508,6 @@ bool ninjaArmy::startRuns(int numProcessors)
             //start the run
             if(!ninjas[0]->simulate_wind())
                printf("Return of false from simulate_wind()\n");
-#ifdef NINJAFOAM
             //if it's a ninjafoam run and diurnal is turned on, link the ninjafoam with
             //a ninja run to add diurnal flow after the cfd solution is computed
             if (ninjas[0]->isMomentumSolver() && ninjas[0]->input.diurnalWinds){
@@ -588,7 +577,6 @@ bool ninjaArmy::startRuns(int numProcessors)
                 #endif
             }
 
-#endif //NINJAFOAM
 
             //store data for atmosphere file
             if(ninjas[0]->input.atmOutFlag)
@@ -638,7 +626,6 @@ bool ninjaArmy::startRuns(int numProcessors)
             throw;
         }
     }
-#ifdef NINJAFOAM
     else if ((ninjas.size() > 1) && ninjas[0]->isMomentumSolver())
     {
 #ifdef _OPENMP
@@ -807,7 +794,6 @@ bool ninjaArmy::startRuns(int numProcessors)
             throw;
         }
     }
-#endif //NINJAFOAM
     else
     {
         for(unsigned int i = 0; i < ninjas.size(); i++)
@@ -1094,12 +1080,6 @@ int ninjaArmy::NinjaMakeDomainAverageArmyThermalParameterization( int numNinjas,
     try
     {
 
-#ifndef NINJAFOAM
-        if(momentumFlag == true)
-        {
-            throw std::runtime_error("momentumFlag cannot be set to true. WindNinja was not compiled with mass and momentum support.");
-        }
-#endif
 
         if( numNinjas < 1 )
         {
@@ -1188,12 +1168,6 @@ int ninjaArmy::NinjaMakeDomainAverageArmy( int numNinjas, bool momentumFlag, con
     try
     {
 
-#ifndef NINJAFOAM
-        if(momentumFlag == true)
-        {
-            throw std::runtime_error("momentumFlag cannot be set to true. WindNinja was not compiled with mass and momentum support.");
-        }
-#endif
 
         if( numNinjas < 1 )
         {
@@ -1315,12 +1289,6 @@ int ninjaArmy::NinjaMakeWeatherModelArmy( const char * forecastFilename, const c
     try
     {
 
-#ifndef NINJAFOAM
-        if(momentumFlag == true)
-        {
-            throw std::runtime_error("momentumFlag cannot be set to true. WindNinja was not compiled with mass and momentum support.");
-        }
-#endif
 
         // TODO: need to make a better error check for this than to disallow an empty inputTimeList
         // Need to setup a check to compare inputTimeList size to the input timeListSize
@@ -1497,7 +1465,6 @@ int ninjaArmy::setDustFlag( const int nIndex, const bool flag, char ** papszOpti
 }
 #endif //EMISSIONS
 
-#ifdef NINJAFOAM
 /*-----------------------------------------------------------------------------
  *  NinjaFOAM Methods
  *-----------------------------------------------------------------------------*/
@@ -1536,7 +1503,6 @@ std::string ninjaArmy::getMomentumBackendString( const int nIndex, char ** papsz
     }
     return "";
 }
-#endif
 /*-----------------------------------------------------------------------------
  *  Forecast Model Methods
  *-----------------------------------------------------------------------------*/
@@ -1677,21 +1643,15 @@ int ninjaArmy::setInitializationMethod( const int nIndex,
                 ( WindNinjaInputs::griddedInitializationFlag, matchPoints );
             retval = NINJA_SUCCESS;
         }
-#ifdef NINJAFOAM
         else if( method == "foamDomainAverageInitialization" )
         {
             ninjas[ nIndex ]->set_initializationMethod
                 ( WindNinjaInputs::foamDomainAverageInitializationFlag, matchPoints );
             retval = NINJA_SUCCESS;
         }
-#endif
         else
         {
-#ifdef NINJAFOAM
             ninjas[ nIndex ]->input.Com->ninjaCom(ninjaComClass::ninjaFailure, "Invalid input initialization_method '%s' in ninjaArmy::setInitializationMethod()\nchoices are: 'domain_average', 'domainAverage', 'domainaverageinitializationflag', 'domain',\n'point', 'pointinitializationflag', 'wxmodel', 'wxmodelinitializationflag', 'griddedInitialization'", method.c_str());
-#else
-            ninjas[ nIndex ]->input.Com->ninjaCom(ninjaComClass::ninjaFailure, "Invalid input initialization_method '%s' in ninjaArmy::setInitializationMethod()\nchoices are: 'domain_average', 'domainAverage', 'domainaverageinitializationflag', 'domain',\n'point', 'pointinitializationflag', 'wxmodel', 'wxmodelinitializationflag', 'griddedInitialization', 'foamDomainAverageInitialization'", method.c_str());
-#endif
             retval = NINJA_E_INVALID;
         }
     }
@@ -1969,10 +1929,6 @@ int ninjaArmy::setUniVegetation( const int nIndex, char ** papszOptions )
 int ninjaArmy::setMeshResolutionChoice( const int nIndex, const std::string choice,
                                         char ** papszOptions )
 {
-#ifndef NINJAFOAM
-    IF_VALID_INDEX_TRY( nIndex, ninjas,
-            ninjas[ nIndex ]->set_meshResChoice( choice ) );
-#else
     int retval = NINJA_E_INVALID;
     IF_VALID_INDEX( nIndex, ninjas )
     {
@@ -1995,7 +1951,6 @@ int ninjaArmy::setMeshResolutionChoice( const int nIndex, const std::string choi
         }
     }
     return retval;
-#endif
 }
 
 int ninjaArmy::setMeshResolutionChoice( const int nIndex, const Mesh::eMeshChoice choice,
@@ -2854,7 +2809,6 @@ void ninjaArmy::writeConsistentColorScaleOutputs()
                 angTempGrid->BufferToOverlapGrid(demGrid);
             }
 
-            #ifdef NINJAFOAM
             AsciiGrid<double> *turbTempGrid = nullptr;
             AsciiGrid<double> *colMaxTempGrid = nullptr;
             if(ninjas[i]->input.writeTurbulence)
@@ -2871,7 +2825,6 @@ void ninjaArmy::writeConsistentColorScaleOutputs()
                 //ninjaKmlFiles.setTurbulenceGrid(*turbTempGrid, ninjas[i]->input.outputSpeedUnits);
                 ninjaKmlFiles.setColMaxGrid(*colMaxTempGrid, ninjas[i]->input.outputSpeedUnits,  ninjas[i]->input.colMax_colHeightAGL, ninjas[i]->input.colMax_colHeightAGL_units);
             }
-            #endif //NINJAFOAM
             #ifdef FRICTION_VELOCITY
             AsciiGrid<double> *ustarTempGrid = nullptr;
             if(ninjas[i]->input.frictionVelocityFlag == 1 && !ninjas[i]->isMomentumSolver())
@@ -2929,12 +2882,10 @@ void ninjaArmy::writeConsistentColorScaleOutputs()
 
             delete angTempGrid;
             angTempGrid = nullptr;
-            #ifdef NINJAFOAM
             delete turbTempGrid;
             turbTempGrid = nullptr;
             delete colMaxTempGrid;
             colMaxTempGrid = nullptr;
-            #endif //NINJAFOAM
             #ifdef FRICTION_VELOCITY
             delete ustarTempGrid;
             ustarTempGrid = nullptr;
@@ -3010,12 +2961,10 @@ void ninjaArmy::writeConsistentColorScaleOutputs()
             {
                 output.setWxModel(ninjas[i]->init->getForecastIdentifier());
             }
-            #ifdef NINJAFOAM
             else if(ninjas[i]->input.initializationMethod == WindNinjaInputs::foamWxModelInitializationFlag)
             {
                 output.setWxModel(ninjas[i]->input.foamWxForecastIdentifier);
             }
-            #endif
 
             output.setSplitVals(finalSpeedSplitVals, static_cast<unsigned short>(numSplits));
 

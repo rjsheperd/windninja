@@ -94,9 +94,6 @@ MainWindow::MainWindow(QWidget *parent)
     ui->treeWidget->topLevelItem(2)->child(6)->setData(0, Qt::UserRole, 16);
     ui->treeWidget->topLevelItem(3)->setData(0, Qt::UserRole, 17);
 
-    #ifndef NINJAFOAM
-    ui->treeWidget->topLevelItem(0)->child(1)->setDisabled(true);
-    #endif
 
     connectSignals();
 
@@ -431,7 +428,9 @@ void MainWindow::setupMomentumBackendSelector()
 {
     QLabel *label = new QLabel("Solver backend:", ui->momentumSolverPage);
     momentumBackendComboBox = new QComboBox(ui->momentumSolverPage);
+#ifdef NINJAFOAM
     momentumBackendComboBox->addItem("OpenFOAM", "openfoam");
+#endif
     momentumBackendComboBox->addItem("Built-in, CPU", "cpu");
 #ifdef WITH_WEBGPU
     momentumBackendComboBox->addItem("Built-in, GPU (WebGPU)", "webgpu");
@@ -1096,7 +1095,6 @@ bool MainWindow::prepareArmy(NinjaArmyH *ninjaArmy, int numNinjas, const char* i
             return false;
         }
 
-        #ifdef NINJAFOAM
         if(ui->momentumSolverCheckBox->isChecked())
         {
             ninjaErr = NinjaSetMomentumBackend(ninjaArmy, i, momentumBackend().toUtf8().constData(), papszOptions);
@@ -1116,7 +1114,6 @@ bool MainWindow::prepareArmy(NinjaArmyH *ninjaArmy, int numNinjas, const char* i
                 return false;
             }
         }
-        #endif //NINJAFOAM
 
         ninjaErr = NinjaSetPosition(ninjaArmy, i, papszOptions);
         if(ninjaErr != NINJA_SUCCESS)
@@ -1702,7 +1699,6 @@ void MainWindow::readSettings()
             surfaceInput->setInputFileDir(dir.absoluteFilePath());
         }
     }
-    #ifdef NINJAFOAM
     if(settings.contains("momentumFlag") && settings.value("momentumFlag").toBool())
     {
         ui->momentumSolverCheckBox->click();
@@ -1713,7 +1709,6 @@ void MainWindow::readSettings()
         if(index >= 0)
             momentumBackendComboBox->setCurrentIndex(index);
     }
-    #endif
     if(settings.contains("vegChoice"))
     {
         ui->vegetationComboBox->setCurrentIndex(settings.value("vegChoice").toInt());

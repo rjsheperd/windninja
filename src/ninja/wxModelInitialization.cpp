@@ -1120,7 +1120,6 @@ void wxModelInitialization::deallocateTemp()
 }
 #endif
 
-#ifdef NINJAFOAM
 /**
  * Sets input speed, direction, temperature, and cloud from a surface wx model.
  * Also sets the boundary layer variables which are needed for log interpolation
@@ -1187,7 +1186,6 @@ void wxModelInitialization::ninjaFoamInitializeFields(WindNinjaInputs &input,
     cloud = cloudCoverGrid;
 }
 
-#endif //NINJAFOAM
 
 void wxModelInitialization::initializeFields(WindNinjaInputs &input,
                          Mesh const& mesh,

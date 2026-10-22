@@ -25,7 +25,6 @@
  *****************************************************************************/
 
 
-#ifdef NINJAFOAM
 
 #include "momentum_backend.h"
 #include "cpu_rans_backend.h"
@@ -80,12 +79,22 @@ BOOST_AUTO_TEST_CASE( problem_from_inputs )
     BOOST_CHECK_EQUAL(p.nThreads, 2);
 }
 
-BOOST_AUTO_TEST_CASE( backend_default_openfoam )
+// OpenFOAM is the default where it's built in (NINJAFOAM), else the CPU
+// backend
+#ifdef NINJAFOAM
+static const WindNinjaInputs::eMomentumBackend defaultBackend = WindNinjaInputs::openFoamBackend;
+static const char *defaultBackendName = "openfoam";
+#else
+static const WindNinjaInputs::eMomentumBackend defaultBackend = WindNinjaInputs::cpuBackend;
+static const char *defaultBackendName = "cpu";
+#endif
+
+BOOST_AUTO_TEST_CASE( backend_default )
 {
     WindNinjaInputs input;
-    BOOST_CHECK_EQUAL(input.momentumBackend, WindNinjaInputs::openFoamBackend);
+    BOOST_CHECK_EQUAL(input.momentumBackend, defaultBackend);
     WindNinjaInputs copy(input);
-    BOOST_CHECK_EQUAL(copy.momentumBackend, WindNinjaInputs::openFoamBackend);
+    BOOST_CHECK_EQUAL(copy.momentumBackend, defaultBackend);
 }
 
 BOOST_AUTO_TEST_CASE( default_iterations )
@@ -110,16 +119,21 @@ BOOST_AUTO_TEST_CASE( backend_names )
 BOOST_AUTO_TEST_CASE( backend_unavailable_throws )
 {
     ninja n;
+#ifdef NINJAFOAM
     BOOST_CHECK_NO_THROW(n.set_momentumBackend(WindNinjaInputs::openFoamBackend));
+#else
+    // the OpenFOAM backend needs a NINJAFOAM build
+    BOOST_CHECK_THROW(n.set_momentumBackend(WindNinjaInputs::openFoamBackend), std::invalid_argument);
+#endif
     BOOST_CHECK_NO_THROW(n.set_momentumBackend(WindNinjaInputs::cpuBackend));
-    n.set_momentumBackend(WindNinjaInputs::openFoamBackend);
+    n.set_momentumBackend(defaultBackend);
 #ifdef WITH_WEBGPU
     BOOST_CHECK_NO_THROW(n.set_momentumBackend(WindNinjaInputs::webGpuBackend));
     BOOST_CHECK_EQUAL(n.input.momentumBackend, WindNinjaInputs::webGpuBackend);
 #else
     // the WebGPU backend needs a WITH_WEBGPU build
     BOOST_CHECK_THROW(n.set_momentumBackend(WindNinjaInputs::webGpuBackend), std::invalid_argument);
-    BOOST_CHECK_EQUAL(n.input.momentumBackend, WindNinjaInputs::openFoamBackend);
+    BOOST_CHECK_EQUAL(n.input.momentumBackend, defaultBackend);
 #endif
 }
 
@@ -141,17 +155,20 @@ BOOST_AUTO_TEST_CASE( c_api_set_get_backend )
     BOOST_REQUIRE_EQUAL(NinjaMakeDomainAverageArmy(army, 1, true, speed, "mps", direction, NULL),
                         NINJA_SUCCESS);
 
-    BOOST_CHECK_EQUAL(GetBackend(army, 0), "openfoam");
-    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, "openfoam", NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(GetBackend(army, 0), defaultBackendName);
+    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, defaultBackendName, NULL), NINJA_SUCCESS);
+#ifndef NINJAFOAM
+    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, "openfoam", NULL), NINJA_E_INVALID);
+#endif
 #ifdef WITH_WEBGPU
     BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, "webgpu", NULL), NINJA_SUCCESS);
     BOOST_CHECK_EQUAL(GetBackend(army, 0), "webgpu");
-    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, "openfoam", NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, defaultBackendName, NULL), NINJA_SUCCESS);
 #else
     BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, "webgpu", NULL), NINJA_E_INVALID);
 #endif
     BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, "bogus", NULL), NINJA_E_INVALID);
-    BOOST_CHECK_EQUAL(GetBackend(army, 0), "openfoam");
+    BOOST_CHECK_EQUAL(GetBackend(army, 0), defaultBackendName);
 
     BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, NULL, NULL), NINJA_E_NULL_PTR);
     BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(NULL, 0, "openfoam", NULL), NINJA_E_NULL_PTR);
@@ -349,4 +366,3 @@ BOOST_AUTO_TEST_CASE( webgpu_cfl_backoff )
 
 BOOST_AUTO_TEST_SUITE_END()
 
-#endif /* NINJAFOAM */

@@ -65,7 +65,6 @@ void domainAverageInitialization::initializeFields(WindNinjaInputs &input,
     cloud = cloudCoverGrid;
 }
 
-#ifdef NINJAFOAM
 /**
  * Sets boundary layer information needed for log interpolation of the output wind.
  * @param input WindNinjaInputs object storing necessary input information.
@@ -79,7 +78,6 @@ void domainAverageInitialization::ninjaFoamInitializeFields(WindNinjaInputs &inp
 
     initializeBoundaryLayer(input);
 }
-#endif //NINJAFOAM
 
 void domainAverageInitialization::setInitializationGrids(WindNinjaInputs& input)
 {

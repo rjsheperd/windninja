@@ -28,6 +28,9 @@
  *****************************************************************************/
 
 #include "ninjafoam.h"
+
+#include <algorithm>
+#include <thread>
 #include "openfoam_backend.h"
 #include "cpu_rans_backend.h"
 #ifdef WITH_WEBGPU
@@ -130,19 +133,19 @@ NinjaFoam::~NinjaFoam()
 
 int NinjaFoam::countNumCores()
 {
-    int coresCount;
+    // physical cores via hwloc in OpenFOAM builds (NINJAFOAM), otherwise
+    // the logical processors
+    int coresCount = std::max(1u, std::thread::hardware_concurrency());
 
-    #ifndef WIN32
+    #if defined(NINJAFOAM) && !defined(WIN32)
     hwloc_topology_t topology;
     hwloc_topology_init(&topology);
     hwloc_topology_load(topology);
     coresCount = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_CORE);
     hwloc_topology_destroy(topology);
-    #else // WIN32
-    #ifdef _OPENMP
+    #elif defined(_OPENMP)
     coresCount = omp_get_num_procs();
-    #endif // _OPENMP
-    #endif // WIN32
+    #endif
 
     return coresCount;
 }

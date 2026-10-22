@@ -161,11 +161,14 @@ WindNinjaInputs::WindNinjaInputs()
     dustFile = "!set";
     ustarFile = "!set";
 #endif
-#ifdef NINJAFOAM
     nIterations = defaultMomentumIterations;
     meshCount = -1;
     ninjafoamMeshChoice = WindNinjaInputs::fine;
+#ifdef NINJAFOAM
     momentumBackend = WindNinjaInputs::openFoamBackend;
+#else
+    momentumBackend = WindNinjaInputs::cpuBackend;   // no OpenFOAM in this build
+#endif
     existingCaseDirectory = "!set";
     stlFile = "!set";
     speedInitGridFilename = "!set";
@@ -176,7 +179,6 @@ WindNinjaInputs::WindNinjaInputs()
     writeTurbulence = false;
     colMax_colHeightAGL = 457.2;  // default value of 457.2 m is 1500 ft
     colMax_colHeightAGL_units = lengthUnits::meters;
-#endif
     
     outputPointsFilename = "!set";
     inputPointsFilename = "!set";
@@ -240,7 +242,6 @@ WindNinjaInputs::WindNinjaInputs(const WindNinjaInputs &rhs)
     dustFile = rhs.dustFile;
     ustarFile = rhs.ustarFile;
 #endif
-#ifdef NINJAFOAM
     nIterations = rhs.nIterations;
     meshCount = rhs.meshCount;
     ninjafoamMeshChoice = rhs.ninjafoamMeshChoice;
@@ -254,7 +255,6 @@ WindNinjaInputs::WindNinjaInputs(const WindNinjaInputs &rhs)
     writeTurbulence = rhs.writeTurbulence;
     colMax_colHeightAGL = rhs.colMax_colHeightAGL;
     colMax_colHeightAGL_units = rhs.colMax_colHeightAGL_units;
-#endif
     outputPointsFilename = rhs.outputPointsFilename;
     inputPointsFilename = rhs.inputPointsFilename;
     pointsNamesList = rhs.pointsNamesList;
@@ -468,7 +468,6 @@ WindNinjaInputs &WindNinjaInputs::operator=(const WindNinjaInputs &rhs)
       dustFile = rhs.dustFile;
       ustarFile = rhs.ustarFile;
 #endif
-#ifdef NINJAFOAM
       nIterations = rhs.nIterations;
       meshCount = rhs.meshCount;
       ninjafoamMeshChoice = rhs.ninjafoamMeshChoice;
@@ -482,7 +481,6 @@ WindNinjaInputs &WindNinjaInputs::operator=(const WindNinjaInputs &rhs)
       writeTurbulence = rhs.writeTurbulence;
       colMax_colHeightAGL = rhs.colMax_colHeightAGL;
       colMax_colHeightAGL_units = rhs.colMax_colHeightAGL_units;
-#endif
       outputPointsFilename = rhs.outputPointsFilename;
       inputPointsFilename = rhs.inputPointsFilename;
       pointsNamesList = rhs.pointsNamesList;

@@ -96,10 +96,8 @@ ninja::ninja(const ninja &rhs)
 : AngleGrid(rhs.AngleGrid)
 , VelocityGrid(rhs.VelocityGrid)
 , CloudGrid(rhs.CloudGrid)
-#ifdef NINJAFOAM
 , TurbulenceGrid(rhs.TurbulenceGrid)
 , colMaxGrid(rhs.colMaxGrid)
-#endif
 , outputSpeedArray(rhs.outputSpeedArray)
 , outputDirectionArray(rhs.outputDirectionArray)
 #ifdef EMISSIONS
@@ -172,10 +170,8 @@ ninja &ninja::operator=(const ninja &rhs)
         AngleGrid = rhs.AngleGrid;
         VelocityGrid = rhs.VelocityGrid;
         CloudGrid = rhs.CloudGrid;
-#ifdef NINJAFOAM
         TurbulenceGrid = rhs.TurbulenceGrid;
         colMaxGrid = rhs.colMaxGrid;
-#endif
         outputSpeedArray=rhs.outputSpeedArray;
         outputDirectionArray = rhs.outputDirectionArray;
         #ifdef EMISSIONS
@@ -615,10 +611,8 @@ if(input.frictionVelocityFlag == 1){
 	     AngleGrid.deallocate();
          VelocityGrid.deallocate();
 	     CloudGrid.deallocate();
-#ifdef NINJAFOAM
              TurbulenceGrid.deallocate();
              colMaxGrid.deallocate();
-#endif
 	     #ifdef FRICTION_VELOCITY
 	     if(input.frictionVelocityFlag == 1){
             UstarGrid.deallocate();
@@ -803,14 +797,12 @@ bool ninja::solve(double *A, double *b, double *x, int *row_ptr, int *col_ind, i
                 time_percent_complete = 99.0;
             residual_percent_complete_old=residual_percent_complete;
             //fprintf(convergence_history,"\n%ld\t%lf\t%lf",i,residual_percent_complete, time_percent_complete);
-#ifdef NINJAFOAM
             //If its a foam+diurnal run, progressWeight==0.80, which means we need to modify the
             //diurnal time_percent_complete
             if(input.Com->progressWeight!=1.0)
             {
                 time_percent_complete = (input.Com->progressWeight*100)+(1.0-input.Com->progressWeight)*time_percent_complete;
             }
-#endif //NINJAFOAM
             input.Com->ninjaCom(ninjaComClass::ninjaSolverProgress, "%d",(int) (time_percent_complete+0.5)); //Tell the GUI what the percentage to complete for the ninja is
         }
 
@@ -2241,7 +2233,6 @@ void ninja::prepareOutput()
     VelocityGrid.set_headerData(input.dem.get_nCols(),input.dem.get_nRows(), input.dem.get_xllCorner(), input.dem.get_yllCorner(), input.dem.get_cellSize(), input.dem.get_noDataValue(), 0, input.dem.prjString);
 	AngleGrid.set_headerData(input.dem.get_nCols(),input.dem.get_nRows(), input.dem.get_xllCorner(), input.dem.get_yllCorner(), input.dem.get_cellSize(), input.dem.get_noDataValue(), 0, input.dem.prjString);
 
-#ifdef NINJAFOAM
         if(input.writeTurbulence)
         {
             // um, the only way it ever gets to this point is for a diurnal run on a ninjafoam run, represented by if input.writeTurbulence is set for a mass solver run
@@ -2254,7 +2245,6 @@ void ninja::prepareOutput()
             //colMaxGrid.set_headerData(input.dem.get_nCols(),input.dem.get_nRows(), input.dem.get_xllCorner(),
             //        input.dem.get_yllCorner(), input.dem.get_cellSize(), input.dem.get_noDataValue(), 0, input.dem.prjString);
         }
-#endif
 	
 	if(!isNullRun)
 		interp_uvw();
@@ -2293,10 +2283,8 @@ void ninja::prepareOutput()
 	//Clip off bounding doughnut if desired
 	VelocityGrid.clipGridInPlaceSnapToCells(input.outputBufferClipping);
 	AngleGrid.clipGridInPlaceSnapToCells(input.outputBufferClipping);
-#ifdef NINJAFOAM
 	TurbulenceGrid.clipGridInPlaceSnapToCells(input.outputBufferClipping);
 	colMaxGrid.clipGridInPlaceSnapToCells(input.outputBufferClipping);
-#endif
 
 	//Clip cloud cover grid if it's a wxModel intitialization (since it's gridded)
 	//	if not wxModel initialization, don't clip since it's just one cell anyway
@@ -2306,13 +2294,11 @@ void ninja::prepareOutput()
 	}
 	//change windspeed units back to what is specified by speed units switch
 	velocityUnits::fromBaseUnits(VelocityGrid, input.outputSpeedUnits);
-#ifdef NINJAFOAM
         if(input.writeTurbulence)
         {
             velocityUnits::fromBaseUnits(TurbulenceGrid, input.outputSpeedUnits);
             velocityUnits::fromBaseUnits(colMaxGrid, input.outputSpeedUnits);
         }
-#endif
 
 	/*
 	 * Interpolate u, v, w to specific locations if an input_points_file is provided
@@ -3259,15 +3245,11 @@ void ninja::writeOutputFiles()
         if(input.googOutFlag == true && input.googUseConsistentColorScale == false)
         {
             AsciiGrid<double> *velTempGrid, *angTempGrid;
-#ifdef NINJAFOAM
             AsciiGrid<double> *turbTempGrid, *colMaxTempGrid;
-#endif
             velTempGrid=NULL;
             angTempGrid=NULL;
-#ifdef NINJAFOAM
             turbTempGrid=NULL;
             colMaxTempGrid=NULL;
-#endif
 
             KmlVector ninjaKmlFiles;
 
@@ -3280,7 +3262,6 @@ void ninja::writeOutputFiles()
                 velTempGrid->BufferToOverlapGrid(demGrid);
             }
 
-#ifdef NINJAFOAM
                         if(input.writeTurbulence)
                         {
                             //turbTempGrid = new AsciiGrid<double> (TurbulenceGrid.resample_Grid(input.kmzResolution, AsciiGrid<double>::order0));
@@ -3295,7 +3276,6 @@ void ninja::writeOutputFiles()
                             //ninjaKmlFiles.setTurbulenceGrid(*turbTempGrid, input.outputSpeedUnits);
                             ninjaKmlFiles.setColMaxGrid(*colMaxTempGrid, input.outputSpeedUnits,  input.colMax_colHeightAGL, input.colMax_colHeightAGL_units);
                         }
-#endif //NINJAFOAM
 
             #ifdef FRICTION_VELOCITY
             if(input.frictionVelocityFlag == 1){
@@ -3363,12 +3343,10 @@ void ninja::writeOutputFiles()
                 std::vector<boost::local_time::local_date_time> times(init->getTimeList(input.ninjaTimeZone));
                 ninjaKmlFiles.setWxModel(init->getForecastIdentifier(), times[0]);
             }
-#ifdef NINJAFOAM
             else if(input.initializationMethod == WindNinjaInputs::foamWxModelInitializationFlag)
             {
                 ninjaKmlFiles.setWxModel(input.foamWxForecastIdentifier, input.foamWxTimeList[0]);
             }
-#endif
 
             if(ninjaKmlFiles.writeKml())
             {
@@ -3387,7 +3365,6 @@ void ninja::writeOutputFiles()
                 delete velTempGrid;
                 velTempGrid=NULL;
             }
-#ifdef NINJAFOAM
             if(turbTempGrid)
             {
                 delete turbTempGrid;
@@ -3398,7 +3375,6 @@ void ninja::writeOutputFiles()
                 delete colMaxTempGrid;
                 colMaxTempGrid=NULL;
             }
-#endif
         }
     }catch (exception& e)
     {
@@ -3489,12 +3465,10 @@ void ninja::writeOutputFiles()
                 {
                     output.setWxModel(init->getForecastIdentifier());
                 }
-#ifdef NINJAFOAM
                 else if(input.initializationMethod == WindNinjaInputs::foamWxModelInitializationFlag)
                 {
                     output.setWxModel(input.foamWxForecastIdentifier);
                 }
-#endif
 
                 output.write(input.fgbzFile, "FlatGeoBufZip");
 
@@ -3894,7 +3868,6 @@ void ninja::set_alphaStability(double stability_)
     }
 }
 
-#ifdef NINJAFOAM
 void ninja::set_NumberOfIterations(int nIterations)
 {
     input.nIterations = nIterations;
@@ -3923,8 +3896,10 @@ void ninja::set_MeshCount(WindNinjaInputs::eNinjafoamMeshChoice meshChoice)
 
 void ninja::set_momentumBackend(WindNinjaInputs::eMomentumBackend backend)
 {
-    bool available = backend == WindNinjaInputs::openFoamBackend ||
-                     backend == WindNinjaInputs::cpuBackend;
+    bool available = backend == WindNinjaInputs::cpuBackend;
+#ifdef NINJAFOAM
+    available = available || backend == WindNinjaInputs::openFoamBackend;
+#endif
 #ifdef WITH_WEBGPU
     available = available || backend == WindNinjaInputs::webGpuBackend;
 #endif
@@ -4007,7 +3982,6 @@ void ninja::set_colMaxSampleHeightAGL( double colMaxSampleHeightAGL, lengthUnits
     input.colMax_colHeightAGL = colMaxSampleHeightAGL;
     input.colMax_colHeightAGL_units = units;
 }
-#endif // NINJAFOAM
 
 void ninja::set_speedFile(std::string speedFile, velocityUnits::eVelocityUnits units)
 {

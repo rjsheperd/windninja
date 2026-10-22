@@ -35,9 +35,7 @@
 #endif
 
 #include "ninja.h"
-#ifdef NINJAFOAM
 #include "ninjafoam.h"
-#endif
 
 #include "ninjaUnits.h"
 #include "ninja_init.h"
@@ -328,7 +326,6 @@ public:
     int setDustFlag( const int nIndex, const bool flag, char ** papszOptions=NULL );
 #endif //EMISSIONS
 
-#ifdef NINJAFOAM
     /*-----------------------------------------------------------------------------
      *  NinjaFOAM Methods
      *-----------------------------------------------------------------------------*/
@@ -396,7 +393,6 @@ public:
     * \return errval Returns NINJA_SUCCESS upon success
     */
     int setWriteTurbulenceFlag( const int nIndex, const bool flag, char ** papszOptions=NULL );
-#endif //NINJAFOAM
 
     /*-----------------------------------------------------------------------------
      *  Forecast Model Methods

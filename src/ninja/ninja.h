@@ -84,11 +84,9 @@
 
 
 
-#ifdef NINJAFOAM
 #include "foamDomainAverageInitialization.h"
 #include "foamWxModelInitialization.h"
 #include "foamGriddedInitialization.h"
-#endif
 
 #include "wxStation.h"
 #include "ninjaUnits.h"
@@ -139,10 +137,8 @@ public:
     AsciiGrid<double>AngleGrid;
     AsciiGrid<double>VelocityGrid;
     AsciiGrid<double>CloudGrid;
-#ifdef NINJAFOAM
     AsciiGrid<double>TurbulenceGrid; //this needs to be a member of ninja since we need to write this for ninjafoam runs with diurnal 
     AsciiGrid<double> colMaxGrid; // same as for TurbulenceGrid
-#endif
 
     wn_3dScalarField alphaVfield; //store spatially varying alphaV variable
 
@@ -268,7 +264,6 @@ public:
     void computeDustEmissions();
     const std::string get_DustFileName() const; //returns the name of the dust file name
 #endif
-#ifdef NINJAFOAM
     void set_NumberOfIterations(int nIterations); //number of iterations for a ninjafoam run
     void set_MeshCount(int meshCount); //mesh count for a ninjafoam run
     void set_MeshCount(WindNinjaInputs::eNinjafoamMeshChoice meshChoice); //mesh count for a ninjafoam run
@@ -281,7 +276,6 @@ public:
     void set_foamAngleGrid(AsciiGrid<double> angleGrid);
     void set_writeTurbulenceFlag(bool flag);
     void set_colMaxSampleHeightAGL( double colMaxSampleHeightAGL, lengthUnits::eLengthUnits units );
-#endif
 
     void set_speedFile(std::string speedFile, velocityUnits::eVelocityUnits units);
     void set_dirFile(std::string dirFile);

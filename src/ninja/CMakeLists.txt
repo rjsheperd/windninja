@@ -131,23 +131,20 @@ set(NINJA_SOURCES air.cpp
                   ninja.h
                   KmlVector.h
                   wxModelInitialization.h)
-if(NINJAFOAM)
-    set(NINJA_SOURCES ${NINJA_SOURCES}
-                    ninjafoam.cpp
-                    momentum_backend.cpp
-                    openfoam_backend.cpp
-                    cpu_rans_backend.cpp
-                    foamDomainAverageInitialization.cpp
-                    foamWxModelInitialization.cpp
-                    foamGriddedInitialization.cpp)
-endif(NINJAFOAM)
+# The momentum solver's driver and backends build in every configuration;
+# NINJAFOAM only enables the OpenFOAM backend (and hwloc core counting).
+set(NINJA_SOURCES ${NINJA_SOURCES}
+                ninjafoam.cpp
+                momentum_backend.cpp
+                openfoam_backend.cpp
+                cpu_rans_backend.cpp
+                foamDomainAverageInitialization.cpp
+                foamWxModelInitialization.cpp
+                foamGriddedInitialization.cpp)
 
 if(WITH_WEBGPU)
     set(NINJA_SOURCES ${NINJA_SOURCES} rans_gpu_bridge.cpp rans_gpu_solve.cpp
-                                   rans_dem_solve.cpp)
-    if(NINJAFOAM)
-        set(NINJA_SOURCES ${NINJA_SOURCES} webgpu_rans_backend.cpp)
-    endif(NINJAFOAM)
+                                   rans_dem_solve.cpp webgpu_rans_backend.cpp)
 endif(WITH_WEBGPU)
 
 if(WITH_NOMADS_SUPPORT)

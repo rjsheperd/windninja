@@ -67,10 +67,11 @@ if(WITH_NOMADS_SUPPORT)
                      test_utctime.cpp)
 endif(WITH_NOMADS_SUPPORT)
 
+# the momentum backends build in every configuration; the OpenFOAM
+# characterization tests need NINJAFOAM
+set(TEST_SOURCES ${TEST_SOURCES} test_momentum_backend.cpp)
 if(NINJAFOAM)
-    set(TEST_SOURCES ${TEST_SOURCES}
-                     test_foam.cpp
-                     test_momentum_backend.cpp)
+    set(TEST_SOURCES ${TEST_SOURCES} test_foam.cpp)
 endif(NINJAFOAM)
 
 if(WITH_WEBGPU)
@@ -343,38 +344,39 @@ if(NINJAFOAM)
         add_test(ninjafoam_unknown_version
                  ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=ninjafoam/unknown_version)
     endif()
-    add_test(momentum_backend_problem_from_inputs
-             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/problem_from_inputs)
-    add_test(momentum_backend_backend_default_openfoam
-             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_default_openfoam)
-    add_test(momentum_backend_cpu_build_grid
-             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/cpu_build_grid)
-    add_test(momentum_backend_default_iterations
-             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/default_iterations)
-    add_test(momentum_backend_backend_names
-             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_names)
-    add_test(momentum_backend_backend_unavailable_throws
-             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_unavailable_throws)
-    add_test(momentum_backend_c_api_set_get_backend
-             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/c_api_set_get_backend)
-    # NinjaInit needs the data directory
-    set_tests_properties(momentum_backend_c_api_set_get_backend PROPERTIES
-                         ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data")
-    if(WITH_WEBGPU)
-        add_test(momentum_backend_webgpu_cancel
-                 ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/webgpu_cancel)
-        set_tests_properties(momentum_backend_webgpu_cancel PROPERTIES
-                             SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
-        add_test(momentum_backend_webgpu_cfl_backoff
-                 ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/webgpu_cfl_backoff)
-        set_tests_properties(momentum_backend_webgpu_cfl_backoff PROPERTIES
-                             SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
-    endif(WITH_WEBGPU)
     add_test(stl_1
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=stl/stl_1)
     add_test(stl_2
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=stl/stl_2)
 endif(NINJAFOAM)
+
+add_test(momentum_backend_problem_from_inputs
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/problem_from_inputs)
+add_test(momentum_backend_backend_default
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_default)
+add_test(momentum_backend_cpu_build_grid
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/cpu_build_grid)
+add_test(momentum_backend_default_iterations
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/default_iterations)
+add_test(momentum_backend_backend_names
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_names)
+add_test(momentum_backend_backend_unavailable_throws
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/backend_unavailable_throws)
+add_test(momentum_backend_c_api_set_get_backend
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/c_api_set_get_backend)
+# NinjaInit needs the data directory
+set_tests_properties(momentum_backend_c_api_set_get_backend PROPERTIES
+                     ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data")
+if(WITH_WEBGPU)
+    add_test(momentum_backend_webgpu_cancel
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/webgpu_cancel)
+    set_tests_properties(momentum_backend_webgpu_cancel PROPERTIES
+                         SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
+    add_test(momentum_backend_webgpu_cfl_backoff
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/webgpu_cfl_backoff)
+    set_tests_properties(momentum_backend_webgpu_cfl_backoff PROPERTIES
+                         SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
+endif(WITH_WEBGPU)
 
 add_test(rans_abl_bc_port_matches_openfoam
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_abl/bc_port_matches_openfoam)
@@ -423,7 +425,7 @@ if(WITH_WEBGPU)
         set_tests_properties(gpu_${gputest} PROPERTIES
                              SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
     endforeach(gputest)
-    if(NINJAFOAM AND NINJA_CLI)
+    if(NINJA_CLI)
         # the WebGPU backend against OpenFOAM's golden output: flat with
         # GATE 0's tolerances; terrain no worse than OpenFOAM at the same
         # mesh, against OpenFOAM's fine mesh (scripts/check_momentum_gpu_golden.sh).
@@ -513,13 +515,14 @@ if(RUN_CFG_TESTS)
 endif(RUN_CFG_TESTS)
 
 # Momentum solver cfg tests: run the CLI and sanity-check the ascii output.
-# Skipped (exit 77) unless an OpenFOAM environment is loaded.
-if(RUN_CFG_TESTS AND NINJAFOAM)
+# Skipped (exit 77) where the backend can't run: openfoam without an OpenFOAM
+# environment loaded, webgpu without an adapter.
+if(RUN_CFG_TESTS)
     find_program(UV_EXECUTABLE uv)
 endif()
-if(RUN_CFG_TESTS AND NINJAFOAM AND NOT UV_EXECUTABLE)
+if(RUN_CFG_TESTS AND NOT UV_EXECUTABLE)
     message(WARNING "uv not found; momentum solver cfg tests will not be added")
-elseif(RUN_CFG_TESTS AND NINJAFOAM)
+elseif(RUN_CFG_TESTS)
     file(GLOB momentumtests ${PROJECT_SOURCE_DIR}/autotest/config/momentum/*.cfg)
     foreach(cfgtest ${momentumtests})
         get_filename_component(base ${cfgtest} NAME_WE)
@@ -543,7 +546,7 @@ endif()
 # Asking for a momentum backend that isn't built in must fail cleanly, before
 # any solve (so it doesn't need OpenFOAM).
 # (only without WITH_WEBGPU, where webgpu is the unavailable backend)
-if(RUN_CFG_TESTS AND NINJAFOAM AND NOT WITH_WEBGPU)
+if(RUN_CFG_TESTS AND NOT WITH_WEBGPU)
     set(testdir ${PROJECT_BINARY_DIR}/autotest/config/momentum_backend_unavailable)
     file(MAKE_DIRECTORY ${testdir})
     file(COPY ${PROJECT_SOURCE_DIR}/autotest/config/momentum_backend_unavailable.cfg

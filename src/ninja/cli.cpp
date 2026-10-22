@@ -29,6 +29,8 @@
 *****************************************************************************/
 
 #include "cli.h"
+
+#include <thread>
 #include <string>
 
 /**
@@ -156,6 +158,8 @@ int countNumCores()
     #else // NINJAFOAM
     #ifdef _OPENMP
     coresCount = omp_get_num_procs();
+    #else
+    coresCount = std::max(1u, std::thread::hardware_concurrency());
     #endif // _OPENMP
     #endif // NINJAFOAM
 
@@ -358,14 +362,12 @@ int windNinjaCLI(int argc, char* argv[])
                 #endif
                 ("input_points_file", po::value<std::string>(), "input file containing lat,long,z for requested output points (z in m above ground)")
                 ("output_points_file", po::value<std::string>(), "file to write containing output for requested points")
-                #ifdef NINJAFOAM
                 ("existing_case_directory", po::value<std::string>(), "path to an existing OpenFOAM case directory")
                 ("momentum_flag", po::value<bool>()->default_value(false), "use momentum solver (true, false)")
                 ("momentum_backend", po::value<std::string>()->default_value("openfoam"), "CFD backend for the momentum solver (openfoam, cpu, webgpu)")
                 ("number_of_iterations", po::value<int>()->default_value(WindNinjaInputs::defaultMomentumIterations), "number of iterations for momentum solver")
                 ("mesh_count", po::value<int>(), "number of cells in the mesh")
                 ("turbulence_output_flag", po::value<bool>()->default_value(false), "write turbulence output (true, false)")
-                #endif
                 #ifdef NINJA_SPEED_TESTING
                 ("initialization_speed_dampening_ratio", po::value<double>()->default_value(1.0), "initialization speed dampening ratio (0.0 - 1.0)")
                 ("downslope_drag_coefficient", po::value<double>()->default_value(0.0001), "downslope drag coefficient for diurnal calculations")
@@ -629,7 +631,6 @@ int windNinjaCLI(int argc, char* argv[])
             }
         }
 
-        #ifdef NINJAFOAM
         if(vm["momentum_flag"].as<bool>())
         {
             int nMaxCores = countNumCores();
@@ -656,17 +657,6 @@ int windNinjaCLI(int argc, char* argv[])
             }
             #endif
         }
-        #else // NINJAFOAM
-        #ifdef _OPENMP
-        int nMaxThreads = omp_get_num_procs();
-        if(vm["num_threads"].as<int>() > nMaxThreads)
-        {
-            ostringstream os;
-            os << "Option 'num_threads' '" << vm["num_threads"].as<int>() << "' is greater than maxNumThreads '" << nMaxThreads << ".";
-            throw std::range_error(os.str());
-        }
-        #endif // _OPENMP
-        #endif // NINJAFOAM
 
         const std::string* elevation_file = get_checked_elevation_file(vm); // might either be NULL or set dynamically
         std::string output_path = vm.count("output_path") ? vm["output_path"].as<std::string>() : "";
@@ -1044,7 +1034,6 @@ int windNinjaCLI(int argc, char* argv[])
         //---------------------------------------------------------------------
         //  only some options are possible with momentum solver
         //---------------------------------------------------------------------
-#ifdef NINJAFOAM
 
         if(vm["initialization_method"].as<std::string>()==string("pointInitialization") &&
            vm["momentum_flag"].as<bool>()){
@@ -1062,7 +1051,6 @@ int windNinjaCLI(int argc, char* argv[])
         #endif
         conflicting_options(vm, "momentum_flag", "non_neutral_stability");
 
-#endif //NINJAFOAM
 
         if(vm["initialization_method"].as<std::string>() == string("wxModelInitialization"))
         {
@@ -1254,17 +1242,10 @@ int windNinjaCLI(int argc, char* argv[])
                         }
                     }
 
-#ifdef NINJAFOAM
                     windsim.makeWeatherModelArmy( forecastFileName,
                                                   osTimeZone,
                                                   timeList,
                                                   vm["momentum_flag"].as<bool>() );
-#else
-                    windsim.makeWeatherModelArmy( forecastFileName,
-                                                  osTimeZone,
-                                                  timeList,
-                                                  false );
-#endif
                 }
                 catch (exception& e)
                 {
@@ -1281,18 +1262,10 @@ int windNinjaCLI(int argc, char* argv[])
             option_dependency(vm, "forecast_filename", "time_zone");
             if(vm.count("forecast_filename"))   //if a forecast file already exists
             {
-#ifdef NINJAFOAM
                 windsim.makeWeatherModelArmy(vm["forecast_filename"].as<std::string>(),
                                              osTimeZone,
                                              timeList,
                                              vm["momentum_flag"].as<bool>());
-#else
-
-                windsim.makeWeatherModelArmy(vm["forecast_filename"].as<std::string>(),
-                                             osTimeZone,
-                                             timeList,
-                                             false);
-#endif
             }
         }
 //STATION_FETCH
@@ -1565,19 +1538,11 @@ int windNinjaCLI(int argc, char* argv[])
         }
         if(vm["initialization_method"].as<std::string>() == string("domainAverageInitialization"))
         {
-#ifdef NINJAFOAM
                 windsim.makeDomainAverageArmy(1, vm["momentum_flag"].as<bool>());
-#else
-                windsim.makeDomainAverageArmy(1, false);
-#endif
         }
         if(vm["initialization_method"].as<std::string>() == string("griddedInitialization"))
         {
-#ifdef NINJAFOAM
                 windsim.makeDomainAverageArmy(1, vm["momentum_flag"].as<bool>());
-#else
-                windsim.makeDomainAverageArmy(1, false);
-#endif
         }
 //STATION_FETCH
 
@@ -1592,7 +1557,6 @@ int windNinjaCLI(int argc, char* argv[])
             windsim.setDEM( i_, *elevation_file );
             windsim.setPosition( i_ );    //get position from DEM file
 
-            #ifdef NINJAFOAM
             if(vm["momentum_flag"].as<bool>()){
                 conflicting_options(vm, "mesh_choice", "mesh_count");
                 conflicting_options(vm, "mesh_choice", "mesh_resolution");
@@ -1627,7 +1591,6 @@ int windNinjaCLI(int argc, char* argv[])
                     windsim.setWriteTurbulenceFlag( i_, vm["turbulence_output_flag"].as<bool>() );
                 }
             }
-            #endif //NINJAFOAM
 
             //stuff for requested output locations
             if( vm.count("input_points_file") )
@@ -2064,15 +2027,10 @@ int windNinjaCLI(int argc, char* argv[])
                 windsim.setMeshResolution( i_, vm["mesh_resolution"].as<double>(), lengthUnits::getUnit(vm["units_mesh_resolution"].as<std::string>()));
             }
             else{
-#ifdef NINJAFOAM
                 if(!vm.count("mesh_count") && !vm.count("existing_case_directory")){
                     cout << "Mesh resolution has not been set.\nUse either 'mesh_choice' or 'mesh_resolution'.\n";
                     return -1;
                 }
-#else
-                cout << "Mesh resolution has not been set.\nUse either 'mesh_choice' or 'mesh_resolution'.\n";
-                return -1;
-#endif
             }
             windsim.setNumVertLayers( i_, 20);
 
