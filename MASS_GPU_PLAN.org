@@ -27,7 +27,8 @@ the browser (WebAssembly). Builds on the momentum work in
   - Φ = 0 on the sides and top; the ground is impermeable (natural BC).
 - *The solver*: conjugate gradient preconditioned with SSOR (an inherently
   sequential smoother; Jacobi fallback, then MINRES), stopping when the
-  residual's 2-norm is 0.1.
+  relative residual ‖r‖₂/‖b‖₂ is 0.1 (52–57 iterations on Big Butte; see
+  0.1).
 - *Native speed* (Big Butte, 8 threads, linear solve dominates):
 
   | mesh   | DEM × layers | nodes | solve  | total  |
@@ -140,14 +141,53 @@ Two things help:
   self-test does for RANS), whichever runtime the app prefers in production.
 
 * Phase 0: Measure before building
-** TODO 0.1 Baseline iteration counts and phase times [0/5]
-- [ ] Log SSOR-PCG iteration counts and per-phase times (assembly, solve,
+** DONE 0.1 Baseline iteration counts and phase times [6/6]
+- [X] Log SSOR-PCG iteration counts and per-phase times (assembly, solve,
       velocity recovery) on Big Butte coarse/medium/fine.
-- [ ] Re-run with the existing Jacobi preconditioner; record its iteration
-      counts and times.
-- [ ] Time the same runs on a single thread (a proxy for WebAssembly).
-- [ ] Add tests (SKIP: measurement only)
-- [ ] Documentation updates: record the table here.
+      =CPL_DEBUG=NINJA_MASS_SOLVER= now prints the preconditioner, iteration
+      count, final relative residual and node count (=ninja::solve()=; the
+      loop counter no longer shadows the outer =i=).
+- [X] Re-run with the existing Jacobi preconditioner; record its iteration
+      counts and times. =NINJA_MASS_PRECOND=JACOBI= skips SSOR.
+- [X] Time the same runs on a single thread (a proxy for WebAssembly).
+- [X] Add tests: SKIP (measurement hook only). Checked instead: the default
+      (SSOR) fine-mesh output is byte-identical to the pre-change run.
+- [X] Tests pass: SKIP (no tests added; byte-identical check above).
+- [X] Documentation updates: table and findings below;
+      =scripts/mass_solver_timing.sh= reproduces it.
+
+*** Results (2026-10-22, M3 Max, Big Butte, 10 mph from 270, domain average)
+=scripts/mass_solver_timing.sh <cli> big_butte.tif=; times in seconds.
+
+| mesh   |  nodes | precond | iters | solve 8 thr | solve 1 thr | total 8 thr |
+|--------+--------+---------+-------+-------------+-------------+-------------|
+| coarse |  78000 | SSOR    |    52 |        0.17 |        0.17 |        0.20 |
+| coarse |  78000 | Jacobi  |   125 |        0.13 |        0.15 |        0.16 |
+| medium | 197760 | SSOR    |    55 |        0.39 |        0.43 |        0.44 |
+| medium | 197760 | Jacobi  |   147 |        0.31 |        0.44 |        0.37 |
+| fine   | 397120 | SSOR    |    57 |        0.84 |        0.93 |        0.95 |
+| fine   | 397120 | Jacobi  |   158 |        0.69 |        0.93 |        0.79 |
+
+Findings:
+- *Few iterations*: 52–57 with SSOR, 125–158 with Jacobi, growing slowly
+  with mesh size. Iteration count is not the problem; cost per iteration is.
+- *Slow iterations*: fine Jacobi is ~4.3 ms per iteration at 400k nodes.
+  A GPU iteration should be ~0.3 ms of memory traffic plus ~0.15 ms of
+  dispatches.
+- *The CPU solve barely uses threads*: 1 thread is only 0–35% slower than 8.
+  SSOR's triangular solves are sequential, and the symmetric upper-half CSR
+  product doesn't parallelise well. So single-threaded WebAssembly loses
+  little to the thread count; it loses to wasm overhead instead (not
+  measured yet).
+- *Jacobi is already faster than SSOR on the CPU* (8 threads): 2.7× the
+  iterations, but cheaper ones. Its answer differs from SSOR's by 0.015 mph
+  RMSE, 0.27 mph max, on a 9.9 mph mean (fine mesh); both stop at the same
+  tolerance, so this is solver-tolerance noise, not a defect.
+- *The stopping test is relative*: =resid = ‖r‖₂ / ‖b‖₂ ≤ 0.1=, not the
+  absolute 2-norm the comment in =ninja.cpp= suggests.
+- *Rough GPU estimate* (fine, Jacobi): 158 × ~0.45 ms ≈ 0.07 s plus
+  readbacks every 10 iterations (~5 ms) ≈ 0.08 s, against 0.69 s native
+  (≈9×) and probably 1–3 s in single-threaded WebAssembly (≈15–35×).
 
 ** TODO 0.2 GATE: is the GPU mass solver worth building?
 Decide from 0.1: if Jacobi needs so many iterations that the GPU estimate

@@ -688,7 +688,14 @@ bool ninja::solve(double *A, double *b, double *x, int *row_ptr, int *col_ind, i
     residual_percent_complete_old = -1.;
 
     Preconditioner M;
-    if(M.initialize(NUMNP, A, row_ptr, col_ind, M.SSOR, matdescra)==false)
+    //NINJA_MASS_PRECOND=JACOBI skips SSOR (for measuring GPU-friendly preconditioners)
+    const bool useJacobi = EQUAL(CPLGetConfigOption("NINJA_MASS_PRECOND", "SSOR"), "JACOBI");
+    if(useJacobi)
+    {
+        if(M.initialize(NUMNP, A, row_ptr, col_ind, M.Jacobi, matdescra)==false)
+            throw std::runtime_error("Initialization of Jacobi preconditioner failed.");
+    }
+    else if(M.initialize(NUMNP, A, row_ptr, col_ind, M.SSOR, matdescra)==false)
     {
         input.Com->ninjaCom(ninjaComClass::ninjaWarning, "Initialization of SSOR preconditioner failed, trying Jacobi preconditioner...");
         if(M.initialize(NUMNP, A, row_ptr, col_ind, M.Jacobi, matdescra)==false)
@@ -736,7 +743,7 @@ bool ninja::solve(double *A, double *b, double *x, int *row_ptr, int *col_ind, i
     }
 
     //start iterating---------------------------------------------------------------------------------------
-    for (int i = 1; i <= max_iter; i++)
+    for (i = 1; i <= max_iter; i++)
     {
         checkCancel();
 
@@ -841,6 +848,9 @@ bool ninja::solve(double *A, double *b, double *x, int *row_ptr, int *col_ind, i
 #ifdef NINJA_DEBUG_VERBOSE
     fclose(convergence_history);
 #endif //NINJA_DEBUG_VERBOSE
+
+    CPLDebug("NINJA_MASS_SOLVER", "PCG (%s): %d iterations, relative residual %g, NUMNP %d",
+             useJacobi ? "Jacobi" : "SSOR", std::min(i, max_iter), resid, NUMNP);
 
     if(resid>tol)
     {
