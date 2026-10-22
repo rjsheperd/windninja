@@ -275,12 +275,30 @@ Design (2026-10-22):
       and =mass_pcg= with the other core-free files; this entry.
 
 * Phase 2: GPU solve (native Dawn)
-** TODO 2.1 Stencil SpMV kernel [0/4]
-- [ ] Per-node 14-coefficient SoA layout from the CPU-assembled matrix.
-- [ ] Add tests: SpMV against the CSR product on a non-trivial vector;
-      mutation check (drop one neighbour).
-- [ ] Tests pass
-- [ ] Documentation updates
+** DONE 2.1 Stencil SpMV kernel [4/4]
+- [X] Per-node 14-coefficient SoA layout from the CPU-assembled matrix.
+      =src/ninja/gpu/gpu_mass.{h,cpp}=, =gpu_mass_kernels.h=:
+      =PackMassStencil()= (CSR → slot 0 the diagonal, slots 1–13 the
+      neighbours after the node in node order; one f32 buffer, slot s at
+      s·N), =MassOperator::apply()= (each node adds its own 14 couplings
+      and, by symmetry, its 13 earlier neighbours' couplings toward it: a
+      gather, no atomics, deterministic). 4 bindings (params, coefficients,
+      x, y).
+- [X] Add tests (=autotest/test_gpu.cpp=): =gpu/mass_stencil_pack= (every
+      CSR entry lands in its slot, nothing extra, an entry outside the
+      stencil throws) and =gpu/kernel_mass_apply_matches_cpu= (40×33×12
+      ridge grid shaped like WindNinja's mesh: error ≤ 1e-5 of Σ|Aᵢⱼxⱼ| per
+      row; seen 2.7e-7). Mutation checks: no lower-neighbour couplings,
+      lower neighbour at +offset, upper coupling from the wrong slot,
+      packer slot off by one, host offsets out of order with WGSL: each
+      caught. =gpu/mass_apply_timing= (not in ctest) times it.
+- [X] Tests pass: =ctest -R ^gpu_= 17/17.
+- [X] Documentation updates: =src/ninja/gpu/README.org= Contents.
+
+Measured (M3 Max, Metal): *0.127 ms per y = A x at 402,780 nodes*
+(137×147×20, 200 back-to-back dispatches, dispatch overhead included),
+about 2.4× faster than the 0.3 ms assumed in the 0.2 gate. The CPU's whole
+Jacobi iteration is ~4.3 ms at that size.
 
 ** TODO 2.2 Jacobi-PCG with on-GPU α/β and periodic convergence checks [0/5]
 - [ ] Scalar kernel for α/β; residual read back every N iterations.

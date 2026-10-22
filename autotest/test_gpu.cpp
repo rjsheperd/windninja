@@ -1,6 +1,7 @@
 #ifdef WITH_WEBGPU
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -16,8 +17,10 @@
 #include "gpu_grid.h"
 #include "gpu_multigrid.h"
 #include "gpu_kernels.h"
+#include "gpu_mass.h"
 #include "gpu_rans.h"
 #include "gpu_reduce.h"
+#include "mass_fem.h"
 #include "rans_abl.h"
 #include "rans_gpu_bridge.h"
 #include "rans_grid.h"
@@ -517,6 +520,170 @@ BOOST_AUTO_TEST_CASE( dem_solve_hill )
                 s.meanSpeed, s.maxSpeed, s.meanK);
     BOOST_CHECK_EQUAL(w.u.size(), size_t(40 * 30));
     BOOST_CHECK(hill_selftest::Matches(s));
+}
+
+// A mass-solver grid shaped like WindNinja's: 60 m cells over a Gaussian
+// ridge at 1500 m, 20 m first layer growing 1.2x, flat top at 4000 m.
+static MassGrid MassRidgeGrid(int ncols, int nrows, int nlayers)
+{
+    MassGrid g;
+    g.ncols = ncols;
+    g.nrows = nrows;
+    g.nlayers = nlayers;
+    const double dx = 60.0, top = 4000.0;
+    std::vector<double> frac(nlayers, 0.0);
+    double h = 20.0, total = 0.0;
+    for(int k = 1; k < nlayers; k++) { total += h; frac[k] = total; h *= 1.2; }
+    for(int k = 0; k < nlayers; k++) frac[k] /= total;
+    for(int k = 0; k < nlayers; k++)
+        for(int i = 0; i < nrows; i++)
+            for(int j = 0; j < ncols; j++)
+            {
+                double x = j * dx, y = i * dx;
+                double cx = 0.5 * (ncols - 1) * dx, cy = 0.5 * (nrows - 1) * dx;
+                double ground = 1500.0 + 400.0 * std::exp(-((x - cx) * (x - cx) + (y - cy) * (y - cy)) /
+                                                          (2.0 * 300.0 * 300.0));
+                g.x.push_back(x);
+                g.y.push_back(y);
+                g.z.push_back(ground + (top - ground) * frac[k]);
+            }
+    return g;
+}
+
+// The system for a log-profile-like wind with some divergence.
+static MassSystem MassRidgeSystem(const MassGrid &g)
+{
+    int n = g.numNodes();
+    std::vector<double> u0(n), v0(n), w0(n, 0.0), alphaV(n, 1.0);
+    for(int i = 0; i < n; i++)
+    {
+        u0[i] = 5.0 + 0.002 * g.x[i];
+        v0[i] = 1.0 - 0.001 * g.y[i];
+    }
+    return AssembleMass(g, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0);
+}
+
+// y = A x from the upper-triangle CSR in double, and sum |A_ij x_j| per row
+static void CsrMultiply(const MassSystem &s, const std::vector<double> &x,
+                        std::vector<double> &y, std::vector<double> &rowAbs)
+{
+    int n = (int)s.RHS.size();
+    y.assign(n, 0.0);
+    rowAbs.assign(n, 0.0);
+    for(int i = 0; i < n; i++)
+        for(int l = s.row_ptr[i]; l < s.row_ptr[i + 1]; l++)
+        {
+            int j = s.col_ind[l];
+            y[i] += s.SK[l] * x[j];
+            rowAbs[i] += std::fabs(s.SK[l] * x[j]);
+            if(j != i)
+            {
+                y[j] += s.SK[l] * x[i];
+                rowAbs[j] += std::fabs(s.SK[l] * x[i]);
+            }
+        }
+}
+
+// Packing the CSR into the 14-slot stencil keeps every entry (rounded to
+// float) and adds none.
+BOOST_AUTO_TEST_CASE( mass_stencil_pack )
+{
+    MassGrid g = MassRidgeGrid(7, 6, 5);
+    MassSystem s = MassRidgeSystem(g);
+    gpu::MassStencil st = gpu::PackMassStencil(g.ncols, g.nrows, g.nlayers, s.SK.data(),
+                                               s.col_ind.data(), s.row_ptr.data());
+    const std::size_t n = st.nodes();
+    BOOST_REQUIRE_EQUAL(st.coef.size(), 14 * n);
+    // rebuild (row, col) -> value from the stencil
+    std::size_t stored = 0, matched = 0;
+    for(std::size_t row = 0; row < n; row++)
+        for(int l = s.row_ptr[row]; l < s.row_ptr[row + 1]; l++)
+        {
+            int col = s.col_ind[l];
+            int dc = col % g.ncols - (int)row % g.ncols;
+            int dr = (col / g.ncols) % g.nrows - ((int)row / g.ncols) % g.nrows;
+            int dl = col / (g.ncols * g.nrows) - (int)row / (g.ncols * g.nrows);
+            int slot = -1;
+            if(dc == 0 && dr == 0 && dl == 0)
+                slot = 0;
+            for(int k = 0; k < 13; k++)
+                if(gpu::massOffsets[k][0] == dc && gpu::massOffsets[k][1] == dr &&
+                   gpu::massOffsets[k][2] == dl)
+                    slot = k + 1;
+            BOOST_REQUIRE_GE(slot, 0);
+            BOOST_CHECK_EQUAL(st.coef[slot * n + row], (float)s.SK[l]);
+            matched++;
+        }
+    for(float c : st.coef)
+        stored += c != 0.0f;
+    std::size_t nonzero = 0;
+    for(double v : s.SK)
+        nonzero += (float)v != 0.0f;
+    BOOST_CHECK_EQUAL(stored, nonzero);   // nothing extra
+    BOOST_CHECK_EQUAL(matched, s.SK.size());
+
+    // an entry outside the stencil is rejected
+    std::vector<int> bad(s.col_ind);
+    bad[s.row_ptr[0] + 1] = 2 * g.ncols * g.nrows;   // two layers up
+    BOOST_CHECK_THROW(gpu::PackMassStencil(g.ncols, g.nrows, g.nlayers, s.SK.data(), bad.data(),
+                                           s.row_ptr.data()),
+                      gpu::Error);
+}
+
+// The GPU product matches the double CSR product to f32 rounding: within
+// 1e-5 of sum |A_ij x_j| per row (seen: 2.7e-7).
+BOOST_AUTO_TEST_CASE( kernel_mass_apply_matches_cpu )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    MassGrid g = MassRidgeGrid(40, 33, 12);
+    MassSystem s = MassRidgeSystem(g);
+    int n = g.numNodes();
+    std::vector<double> x(n);
+    for(int i = 0; i < n; i++)
+        x[i] = std::sin(0.37 * i) + 0.5 * std::cos(0.011 * i);   // fixed, varied
+    std::vector<double> yRef, rowAbs;
+    CsrMultiply(s, x, yRef, rowAbs);
+
+    gpu::MassOperator op(*c, gpu::PackMassStencil(g.ncols, g.nrows, g.nlayers, s.SK.data(),
+                                                  s.col_ind.data(), s.row_ptr.data()));
+    std::vector<float> xf(x.begin(), x.end());
+    gpu::Buffer xb(*c, n * sizeof(float)), yb(*c, n * sizeof(float));
+    xb.upload(xf);
+    op.apply(xb, yb);
+    std::vector<float> y = yb.download<float>(n);
+    double worst = 0.0;
+    for(int i = 0; i < n; i++)
+        worst = std::max(worst, std::fabs(y[i] - yRef[i]) / rowAbs[i]);
+    BOOST_TEST_MESSAGE("mass apply: worst |error| / sum|A x| = " << worst);
+    BOOST_CHECK_LT(worst, 1e-5);
+}
+
+// Not in ctest: times y = A x on a fine-mesh-sized grid (137 x 147 x 20).
+// Run with --run_test=gpu/mass_apply_timing --log_level=message.
+BOOST_AUTO_TEST_CASE( mass_apply_timing )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    MassGrid g = MassRidgeGrid(137, 147, 20);
+    MassSystem s = MassRidgeSystem(g);
+    int n = g.numNodes();
+    gpu::MassOperator op(*c, gpu::PackMassStencil(g.ncols, g.nrows, g.nlayers, s.SK.data(),
+                                                  s.col_ind.data(), s.row_ptr.data()));
+    gpu::Buffer xb(*c, n * sizeof(float)), yb(*c, n * sizeof(float));
+    xb.upload(std::vector<float>(n, 1.0f));
+    op.apply(xb, yb);
+    c->finish();
+    const int reps = 200;
+    auto t0 = std::chrono::steady_clock::now();
+    for(int r = 0; r < reps; r++)
+        op.apply(xb, yb);
+    c->finish();
+    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    BOOST_TEST_MESSAGE("mass apply: " << n << " nodes, " << ms / reps << " ms per apply ("
+                                      << c->adapterName() << ")");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

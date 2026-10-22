@@ -24,6 +24,11 @@ with Emscripten's =emdawnwebgpu= port (=wasm/=).
 - =gpu_multigrid.h/.cpp=, =gpu_multigrid_kernels.h= :: =gpu::RansMultigrid=,
   FAS multigrid on the CPU multigrid's hierarchy. On the GPU it gives the
   same answers more slowly, so the backend runs single grid by default.
+- =gpu_mass.h/.cpp=, =gpu_mass_kernels.h= :: the mass solver
+  (=MASS_GPU_PLAN.org=): =gpu::MassStencil= (the symmetric 27-point matrix
+  as 14 coefficients per node, packed from the CPU's upper-triangle CSR by
+  =PackMassStencil()=) and =gpu::MassOperator= (y = A x, a gather over the
+  27 neighbours: no atomics).
 - =gpu_kernels.h= :: test kernels (saxpy, reduction).
 
 Outside this directory, free of WindNinja core so the browser module shares
