@@ -772,24 +772,28 @@ the iteration count dominate.
 
 * Inbox
 Found while working; not part of the current task.
-** TODO Duplicate gradient smoothing in =wn_3dScalarField.cpp=
+** BLOCKED Duplicate gradient smoothing in =wn_3dScalarField.cpp=
+Needs RJ: refactors code outside the mass solver (=wn_3dScalarField=).
 =wn_3dScalarField::ComputeGradient= (around line 514) repeats the
 inverse-distance "stress smoothing" now in =RecoverVelocity=. Could call a
 shared helper from =mass_fem=.
-** TODO Run-to-run nondeterminism in the mass solver with threads
+** BLOCKED Run-to-run nondeterminism in the mass solver with threads
+Needs RJ: a deterministic CPU gather changes the default output's last bits.
 Assembly sums with =omp atomic= and velocity recovery merges per-thread
 sums in a =critical= section, so multi-threaded results can differ in the
 last bits between runs (not seen on Big Butte fine). A deterministic
 gather (as in the GPU kernels) would fix it.
 ** TODO Solver comment says "2-norm of residual"; it is relative to ‖b‖
 =ninja.cpp= (=stop_tol=): the test is ‖r‖₂/‖b‖₂ ≤ 0.1.
-** TODO MINRES fallback is unreachable
+** BLOCKED MINRES fallback is unreachable
+Needs RJ: delete it, or make a non-converged CG fall back to it?
 =ninja::solve()= returns true or throws, never false, so
 =if(solve(...)==false) solveMinres(...)= never runs. =solveMinres()= and the
 =ninja::cblas_*= / =mkl_*dcsrmv= helpers (~350 lines) exist only for it.
 Either delete them or make a non-converged CG fall back to MINRES as
 intended (ask RJ which).
-** TODO Half of the CPU matrix-vector product is serial
+** BLOCKED Half of the CPU matrix-vector product is serial
+Needs RJ: a parallel product changes the default CPU output's last bits.
 The symmetric upper-triangle product (=SymmetricMultiply=, formerly
 =ninja::mkl_dcsrmv=) scatters each row's transpose in a serial loop, which
 is why the solve barely speeds up with threads (0.1). Storing the full
@@ -809,7 +813,8 @@ Fixed in 2.4: an atomic flag, checked by =SolveMassWindOnGpu()=.
 element's DETJ ≤ 0; =kernels::massAssemble= silently uses it. Write a flag
 (an atomic or a reduced max) and throw from =MassFem::assemble()= when set, once
 the GPU path builds the system itself (2.4).
-** TODO WindNinja's 0.1 tolerance is loose on some terrains
+** BLOCKED WindNinja's 0.1 tolerance is loose on some terrains
+Needs the WindNinja science team: changes every output.
 On =example_lcp= (fine mesh, 0°), CPU Jacobi and CPU SSOR (both stopping
 at ‖r‖/‖b‖ ≤ 0.1) differ by 0.43 mph RMSE and up to 3.6 mph at 20 ft
 (=scripts/mass_gpu_sweep.sh=); on the other 9 DEMs by 0.02–0.16 mph. So
