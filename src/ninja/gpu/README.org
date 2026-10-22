@@ -28,7 +28,9 @@ with Emscripten's =emdawnwebgpu= port (=wasm/=).
   (=MASS_GPU_PLAN.org=): =gpu::MassStencil= (the symmetric 27-point matrix
   as 14 coefficients per node, packed from the CPU's upper-triangle CSR by
   =PackMassStencil()=) and =gpu::MassOperator= (y = A x, a gather over the
-  27 neighbours: no atomics) and =gpu::MassPcg= (Jacobi-preconditioned
+  27 neighbours: no atomics), =gpu::MassAssembler= (builds that stencil
+  and the right-hand side on the GPU from the mesh, wind and αV) and
+  =gpu::MassPcg= (Jacobi-preconditioned
   conjugate gradient, α and β computed on the GPU, r·r read back every N
   iterations).
 - =gpu_kernels.h= :: test kernels (saxpy, reduction).

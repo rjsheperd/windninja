@@ -307,6 +307,135 @@ fn main(@builtin(local_invocation_index) lid : u32) {
 }
 )wgsl";
 
+// Builds the mass system on the GPU (gpu::MassAssembler), as AssembleMass
+// does on the CPU: one-point-quadrature hexahedra, the stencil's 14 slots
+// and the right-hand side, then Phi = 0 rows and columns on the sides and
+// top.  A gather: each node visits its (up to 8) elements, recomputes each
+// element's centre Jacobian and adds the element's terms for its own row,
+// keeping only couplings to itself and later nodes (the slots it owns).
+// Coordinates are relative to a local origin (f32).
+constexpr const char *massAssemble = R"wgsl(
+struct Params {
+    ncols : u32,
+    nrows : u32,
+    nlayers : u32,
+    nodes : u32,
+    alphaH : f32,
+    pad0 : u32,
+    pad1 : u32,
+    pad2 : u32,
+}
+
+@group(0) @binding(0) var<uniform> params : Params;
+@group(0) @binding(1) var<storage, read> xyz : array<f32>;     // x, y, z slots
+@group(0) @binding(2) var<storage, read> wind0 : array<f32>;   // u0, v0, w0 slots
+@group(0) @binding(3) var<storage, read> alphaV : array<f32>;
+@group(0) @binding(4) var<storage, read_write> coef : array<f32>;
+@group(0) @binding(5) var<storage, read_write> rhs : array<f32>;
+
+// local corner k of an element: (col, row, layer) offset from its origin
+const corner = array<vec3<i32>, 8>(
+    vec3<i32>(0, 0, 0), vec3<i32>(1, 0, 0), vec3<i32>(1, 1, 0), vec3<i32>(0, 1, 0),
+    vec3<i32>(0, 0, 1), vec3<i32>(1, 0, 1), vec3<i32>(1, 1, 1), vec3<i32>(0, 1, 1));
+
+// slot of the coupling to the node at offset d (index (d.x+1) + 3 (d.y+1)
+// + 9 (d.z+1)): 0 the diagonal, 1..13 gpu::massOffsets, -1 an earlier node
+const slotOf = array<i32, 27>(
+    -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, 0, 1, 2, 3, 4,
+    5, 6, 7, 8, 9, 10, 11, 12, 13);
+
+const offsets = array<vec3<i32>, 13>(
+    vec3<i32>(1, 0, 0),
+    vec3<i32>(-1, 1, 0), vec3<i32>(0, 1, 0), vec3<i32>(1, 1, 0),
+    vec3<i32>(-1, -1, 1), vec3<i32>(0, -1, 1), vec3<i32>(1, -1, 1),
+    vec3<i32>(-1, 0, 1), vec3<i32>(0, 0, 1), vec3<i32>(1, 0, 1),
+    vec3<i32>(-1, 1, 1), vec3<i32>(0, 1, 1), vec3<i32>(1, 1, 1));
+
+fn node(c : vec3<i32>) -> u32 {
+    return u32(c.x) + params.ncols * (u32(c.y) + params.nrows * u32(c.z));
+}
+
+fn boundary(c : vec3<i32>) -> bool {
+    return c.x == 0 || c.x == i32(params.ncols) - 1 || c.y == 0 ||
+           c.y == i32(params.nrows) - 1 || c.z == i32(params.nlayers) - 1;
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>,
+        @builtin(num_workgroups) groups : vec3<u32>) {
+    let n = gid.x + gid.y * groups.x * 256u;
+    if (n >= params.nodes) {
+        return;
+    }
+    let N = params.nodes;
+    let layerSize = params.ncols * params.nrows;
+    let p = vec3<i32>(i32(n % params.ncols), i32((n / params.ncols) % params.nrows),
+                      i32(n / layerSize));
+    var row : array<f32, 14>;
+    for (var s = 0u; s < 14u; s++) {
+        row[s] = 0.0;
+    }
+    var q = 0.0;
+    let rx = 1.0 / (2.0 * params.alphaH * params.alphaH);
+
+    if (!boundary(p)) {
+        let cells = vec3<i32>(i32(params.ncols) - 1, i32(params.nrows) - 1, i32(params.nlayers) - 1);
+        for (var e = 0u; e < 8u; e++) {
+            let origin = p - corner[e];   // the element in which this node is corner e
+            if (any(origin < vec3<i32>(0)) || any(origin >= cells)) {
+                continue;
+            }
+            var J = mat3x3<f32>();   // columns: d/du, d/dv, d/dw of (x, y, z)
+            var hv = 0.0;
+            var av = 0.0;
+            var ids : array<u32, 8>;
+            for (var k = 0u; k < 8u; k++) {
+                ids[k] = node(origin + corner[k]);
+                let s = (vec3<f32>(corner[k]) * 2.0 - 1.0) * 0.125;   // dN/du, dN/dv, dN/dw
+                let c = vec3<f32>(xyz[ids[k]], xyz[N + ids[k]], xyz[2u * N + ids[k]]);
+                J[0] += s.x * c;
+                J[1] += s.y * c;
+                J[2] += s.z * c;
+            }
+            let detJ = determinant(J);
+            let inv = transpose(mat3x3<f32>(cross(J[1], J[2]), cross(J[2], J[0]),
+                                            cross(J[0], J[1]))) * (1.0 / detJ);   // inverse of J
+            // dN/dx, dN/dy, dN/dz of corner k = s^T inv
+            var g : array<vec3<f32>, 8>;
+            for (var k = 0u; k < 8u; k++) {
+                let s = (vec3<f32>(corner[k]) * 2.0 - 1.0) * 0.125;
+                g[k] = s * inv;
+                let m = ids[k];
+                hv += g[k].x * wind0[m] + g[k].y * wind0[N + m] + g[k].z * wind0[2u * N + m];
+                av += 0.125 * alphaV[m];
+            }
+            let R = vec3<f32>(rx, rx, 1.0 / (2.0 * av * av));
+            q += 8.0 * 0.125 * hv * detJ;
+            for (var k = 0u; k < 8u; k++) {
+                let d = corner[k] - corner[e];
+                let s = slotOf[(d.x + 1) + 3 * (d.y + 1) + 9 * (d.z + 1)];
+                if (s >= 0) {
+                    row[s] += 8.0 * dot(g[e] * R, g[k]) * detJ;
+                }
+            }
+        }
+        // Phi = 0 on boundary nodes: their columns go
+        for (var s = 0u; s < 13u; s++) {
+            if (boundary(p + offsets[s])) {
+                row[s + 1u] = 0.0;
+            }
+        }
+    } else {
+        row[0] = 1.0;   // Phi = 0 rows: identity, zero right-hand side
+    }
+    for (var s = 0u; s < 14u; s++) {
+        coef[s * N + n] = row[s];
+    }
+    rhs[n] = q;
+}
+)wgsl";
+
 } // namespace kernels
 } // namespace gpu
 

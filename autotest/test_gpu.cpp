@@ -806,6 +806,71 @@ BOOST_AUTO_TEST_CASE( mass_pcg_nan_throws )
     BOOST_CHECK_THROW(pcg.solve(b, x, 0.1, 100, 1), gpu::Error);
 }
 
+// GPU assembly against the CPU's AssembleMass, on the ridge grid moved to
+// UTM-sized, non-integer coordinates (without the local origin the error is
+// 3e-4), with a varying alphaV and all three wind components.  Each
+// coefficient within 1e-5 of its row's largest, each RHS within 1e-4 of the
+// largest RHS (seen: 2.6e-6 and 4.9e-6).
+BOOST_AUTO_TEST_CASE( kernel_mass_assemble_matches_cpu )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    MassGrid g = MassRidgeGrid(40, 33, 12);
+    for(int i = 0; i < g.numNodes(); i++)
+    {
+        // not integers: f32 holds integers this size exactly
+        g.x[i] += 512345.37 + 0.11 * std::sin(0.7 * i);
+        g.y[i] += 4812345.61 + 0.07 * std::cos(0.3 * i);
+    }
+    int n = g.numNodes();
+    std::vector<double> u0(n), v0(n), w0(n), alphaV(n);
+    for(int i = 0; i < n; i++)
+    {
+        u0[i] = 5.0 + 0.002 * (g.x[i] - g.x[0]) + 0.001 * (g.z[i] - 1500.0);
+        v0[i] = 1.0 - 0.001 * (g.y[i] - g.y[0]);
+        w0[i] = 0.2 * std::sin(0.01 * i);
+        alphaV[i] = 0.8 + 0.4 * std::cos(0.003 * i);
+    }
+    const double alphaH = 1.3;
+    MassSystem s = AssembleMass(g, u0.data(), v0.data(), w0.data(), alphaV.data(), alphaH);
+    gpu::MassStencil ref = gpu::PackMassStencil(g.ncols, g.nrows, g.nlayers, s.SK.data(),
+                                                s.col_ind.data(), s.row_ptr.data());
+
+    gpu::MassAssembler assembler(*c, gpu::MakeMassGeometry(g.ncols, g.nrows, g.nlayers,
+                                                           g.x.data(), g.y.data(), g.z.data()));
+    std::vector<float> wind(3 * n), av(alphaV.begin(), alphaV.end());
+    for(int i = 0; i < n; i++)
+    {
+        wind[i] = (float)u0[i];
+        wind[n + i] = (float)v0[i];
+        wind[2 * n + i] = (float)w0[i];
+    }
+    gpu::Buffer windB(*c, 3 * n * sizeof(float)), alphaB(*c, n * sizeof(float)),
+        coefB(*c, 14 * n * sizeof(float)), rhsB(*c, n * sizeof(float));
+    windB.upload(wind);
+    alphaB.upload(av);
+    assembler.assemble(windB, alphaB, (float)alphaH, coefB, rhsB);
+    std::vector<float> coef = coefB.download<float>(14 * n), rhs = rhsB.download<float>(n);
+
+    double worstCoef = 0.0, worstRhs = 0.0, rhsMax = 0.0;
+    for(int i = 0; i < n; i++)
+        rhsMax = std::max(rhsMax, std::fabs(s.RHS[i]));
+    for(int i = 0; i < n; i++)
+    {
+        double rowMax = 0.0;
+        for(int k = 0; k < 14; k++)
+            rowMax = std::max(rowMax, (double)std::fabs(ref.coef[k * n + i]));
+        for(int k = 0; k < 14; k++)
+            worstCoef = std::max(worstCoef, std::fabs(coef[k * n + i] - ref.coef[k * n + i]) / rowMax);
+        worstRhs = std::max(worstRhs, std::fabs(rhs[i] - s.RHS[i]) / rhsMax);
+    }
+    BOOST_TEST_MESSAGE("mass assemble: worst coefficient error / row max " << worstCoef
+                       << ", worst rhs error / rhs max " << worstRhs);
+    BOOST_CHECK_LT(worstCoef, 1e-5);
+    BOOST_CHECK_LT(worstRhs, 1e-4);
+}
+
 // Not in ctest: the whole GPU solve at the fine-mesh size, against the CPU
 // solver on the same system.  --run_test=gpu/mass_pcg_timing --log_level=message
 BOOST_AUTO_TEST_CASE( mass_pcg_timing )

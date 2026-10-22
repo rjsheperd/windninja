@@ -26,6 +26,7 @@
 
 #include "gpu_mass.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -228,6 +229,66 @@ MassPcg::Result MassPcg::solve(const std::vector<double> &b, std::vector<double>
     x_.download(xf.data(), nodes_ * sizeof(float));
     x.assign(xf.begin(), xf.end());
     return result;
+}
+
+MassGeometry MakeMassGeometry(int ncols, int nrows, int nlayers, const double *x,
+                              const double *y, const double *z)
+{
+    MassGeometry g;
+    g.ncols = ncols;
+    g.nrows = nrows;
+    g.nlayers = nlayers;
+    const std::size_t n = g.nodes();
+    double zMin = z[0];
+    for(std::size_t i = 1; i < n; i++)
+        zMin = std::min(zMin, z[i]);
+    g.xyz.resize(3 * n);
+    for(std::size_t i = 0; i < n; i++)
+    {
+        g.xyz[i] = (float)(x[i] - x[0]);
+        g.xyz[n + i] = (float)(y[i] - y[0]);
+        g.xyz[2 * n + i] = (float)(z[i] - zMin);
+    }
+    return g;
+}
+
+namespace {
+
+struct AssembleParams
+{
+    uint32_t ncols, nrows, nlayers, nodes;
+    float alphaH;
+    uint32_t pad[3];
+};
+
+} // namespace
+
+MassAssembler::MassAssembler(Context &context, const MassGeometry &geometry)
+    : context_(context), nodes_(geometry.nodes()), ncols_(geometry.ncols),
+      nrows_(geometry.nrows), nlayers_(geometry.nlayers),
+      params_(context, sizeof(AssembleParams), Buffer::Uniform),
+      xyz_(context, geometry.xyz.size() * sizeof(float)), kernel_(context, kernels::massAssemble)
+{
+    if(geometry.xyz.size() != 3 * nodes_ || nodes_ > UINT32_MAX)
+        throw Error("gpu::MassAssembler: geometry size doesn't match its grid");
+    xyz_.upload(geometry.xyz);
+}
+
+void MassAssembler::assemble(const Buffer &wind0, const Buffer &alphaV, float alphaH,
+                             Buffer &coef, Buffer &rhs)
+{
+    const std::size_t f = sizeof(float);
+    if(wind0.size() < 3 * nodes_ * f || alphaV.size() < nodes_ * f ||
+       coef.size() < MassStencil::slots * nodes_ * f || rhs.size() < nodes_ * f)
+        throw Error("gpu::MassAssembler::assemble: buffer shorter than the grid");
+    AssembleParams p = {(uint32_t)ncols_, (uint32_t)nrows_, (uint32_t)nlayers_, (uint32_t)nodes_,
+                        alphaH, {0, 0, 0}};
+    params_.upload(&p, sizeof p);
+    std::size_t groups = (nodes_ + 255) / 256;
+    std::size_t gx = groups < maxGroupsX ? groups : maxGroupsX;
+    std::size_t gy = (groups + gx - 1) / gx;
+    kernel_.dispatch({&params_, &xyz_, &wind0, &alphaV, &coef, &rhs}, (uint32_t)gx,
+                     (uint32_t)gy);
 }
 
 } // namespace gpu

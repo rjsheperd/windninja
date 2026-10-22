@@ -126,6 +126,48 @@ private:
     Kernel direction_, apply_, alpha_, update_, beta_;
 };
 
+/*
+** The mass mesh's node coordinates for the GPU: x, y, z slots (slot s of
+** node n at s * nodes + n), in f32 relative to a local origin (the first
+** node's x and y, the lowest z) so that elevations keep sub-millimetre
+** precision.
+*/
+struct MassGeometry
+{
+    int ncols = 0, nrows = 0, nlayers = 0;
+    std::vector<float> xyz;   // 3 * nodes
+
+    std::size_t nodes() const { return (std::size_t)ncols * nrows * nlayers; }
+};
+
+MassGeometry MakeMassGeometry(int ncols, int nrows, int nlayers, const double *x,
+                              const double *y, const double *z);
+
+/*
+** Builds the mass system on the GPU (kernels::massAssemble), as AssembleMass
+** does on the CPU, straight into MassOperator / MassPcg's stencil layout.
+*/
+class MassAssembler
+{
+public:
+    MassAssembler(Context &context, const MassGeometry &geometry);
+
+    std::size_t nodes() const { return nodes_; }
+    const Buffer &geometry() const { return xyz_; }
+
+    // wind0: u0, v0, w0 slots (3 * nodes floats); alphaV: nodes floats;
+    // coef: MassStencil::slots * nodes floats; rhs: nodes floats.  Queued.
+    void assemble(const Buffer &wind0, const Buffer &alphaV, float alphaH, Buffer &coef,
+                  Buffer &rhs);
+
+private:
+    Context &context_;
+    std::size_t nodes_;
+    int ncols_, nrows_, nlayers_;
+    Buffer params_, xyz_;
+    Kernel kernel_;
+};
+
 } // namespace gpu
 
 #endif /* GPU_MASS_H */
