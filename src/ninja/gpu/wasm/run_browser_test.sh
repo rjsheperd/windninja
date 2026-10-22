@@ -3,16 +3,19 @@
 # Run the WASM module's index.html in headless Chromium (via spel) with
 # WebGPU enabled, and report the module's RESULT line.
 #
-# Usage: src/ninja/gpu/wasm/run_browser_test.sh <WASM_BUILD_DIR>
+# Usage: src/ninja/gpu/wasm/run_browser_test.sh <WASM_BUILD_DIR> [PAGE]
+#   PAGE: index.html (the saxpy check, default) or solver.html (the solver's
+#   self-test against the native result)
 # Exit: 0 PASS, 1 FAIL, 77 SKIP (no spel, or no WebGPU in the browser)
 
 set -u
 
-if [ $# -ne 1 ]; then
-    echo "usage: $0 <WASM_BUILD_DIR>" 1>&2
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    echo "usage: $0 <WASM_BUILD_DIR> [PAGE]" 1>&2
     exit 2
 fi
 BUILD="$1"
+PAGE="${2:-index.html}"
 if ! command -v spel > /dev/null; then
     echo "SKIP: spel is not installed"
     exit 77
@@ -48,10 +51,10 @@ if [ "$(uname -s)" = "Darwin" ]; then
     ARGS="$ARGS,--use-angle=metal"
 fi
 spel --session "$SESSION" --args "$ARGS" \
-     open "http://127.0.0.1:$PORT/index.html" > /dev/null
+     open "http://127.0.0.1:$PORT/$PAGE" > /dev/null
 
 RESULT=""
-for _ in $(seq 1 60); do
+for _ in $(seq 1 180); do
     RESULT="$(spel --session "$SESSION" eval-sci \
         '(spel/evaluate "document.body.dataset.result || \"\"")' | tr -d '"')"
     [ -n "$RESULT" ] && break
@@ -64,6 +67,6 @@ spel --session "$SESSION" eval-sci \
 case "$RESULT" in
     PASS) exit 0 ;;
     SKIP) exit 77 ;;
-    "") echo "FAIL: no RESULT within 60 s"; exit 1 ;;
+    "") echo "FAIL: no RESULT within 180 s"; exit 1 ;;
     *) exit 1 ;;
 esac

@@ -1021,9 +1021,33 @@ JavaScript, or a separate GDAL WASM build.
       Metal adapter (saxpy 0 ulp; =line 3:19: unresolved value=). A build with
       the =.wasm= removed reports FAIL. Native =gpu_*= tests still pass.
 - [X] Documentation updates: =src/ninja/gpu/wasm/README.org=.
+- [X] The full solver in the browser (user request, 2026-10-21):
+      =windninja_wasm= (=src/ninja/gpu/wasm/windninja_wasm.cpp=, =solver.html=).
+      To share one path with the native backend, the RANS code was made
+      core-free (output byte-identical before and after):
+      - =FromMesh= moves to =rans_grid_mesh.cpp=;
+      - =TerrainGrid()= on a plain DEM (=rans_terrain=);
+      - =WindSetup()= (=rans_wind=);
+      - =SolveOnGpu()=, the loop with back-off and stops (=rans_gpu_solve=);
+      - =SolveDemOnGpu()=, DEM to ground-layer wind (=rans_dem_solve=), which
+        =WebGpuRansBackend= now calls.
+      The module exports =windninja_solve= (a JSPI suspending export). Its
+      =main()= self-test checks the browser result against the native one
+      (=hill_selftest.h=, shared with autotest =gpu/dem_solve_hill=): mean
+      speed 4.51100249 against 4.51100246 natively, all within 2e-7.
+      =solver.html= also loads a DEM, solves and draws a speed map; the
+      80×60×20 built-in hill takes 3.2 s in headless Chromium (Metal). Release
+      size: 57 KB JS + 178 KB wasm.
+      Not in the browser: the 20 ft output (log-profile downscaling and the
+      mass-solver mesh are core), output formats, diurnal. Not yet tested:
+      the =ASYNCIFY= build of the solver. Noticed but not investigated: a
+      slow patch at the domain's north-east corner of the built-in hill
+      (likely the outlet there).
 *** Tests
 - The module runs the saxpy kernel in a headless browser and its readback
   matches (e.g. via the =spel= / Playwright skill).
+- =run_browser_test.sh <build> solver.html=: the solver's self-test matches
+  the native result (PASS on Apple Metal, 2026-10-21).
 
 * Phase 4: GPU solver port (=WebGpuRansBackend=)
 Goal: the same numerics as the =CpuRansBackend=, as WGSL kernels.

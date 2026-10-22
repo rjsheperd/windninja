@@ -22,6 +22,7 @@
 #include "rans_gpu_bridge.h"
 #include "rans_grid.h"
 #include "rans_multigrid.h"
+#include "wasm/hill_selftest.h"
 #include "rans_solver.h"
 #include "rans_wind.h"
 
@@ -500,6 +501,22 @@ BOOST_AUTO_TEST_CASE( multigrid_matches_cpu )
     BOOST_TEST_MESSAGE("after 31 V-cycles:");
     double many = FieldsDiff(cpu, gs);
     BOOST_CHECK_LE(many, 1e-4);
+}
+
+BOOST_AUTO_TEST_CASE( dem_solve_hill )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    // the browser module's self-test problem, natively (see hill_selftest.h)
+    DemWind w = SolveDemOnGpu(*c, hill_selftest::Dem(), hill_selftest::Problem(),
+                              hill_selftest::Options(),
+                              [](const std::string &, bool) {}, []() {});
+    hill_selftest::Stats s = hill_selftest::Summarize(w);
+    std::printf("hill self-test: mean speed %.9g, max speed %.9g, mean k %.9g\n",
+                s.meanSpeed, s.maxSpeed, s.meanK);
+    BOOST_CHECK_EQUAL(w.u.size(), size_t(40 * 30));
+    BOOST_CHECK(hill_selftest::Matches(s));
 }
 
 BOOST_AUTO_TEST_SUITE_END()
