@@ -837,7 +837,7 @@ BOOST_AUTO_TEST_CASE( kernel_mass_assemble_matches_cpu )
     gpu::MassStencil ref = gpu::PackMassStencil(g.ncols, g.nrows, g.nlayers, s.SK.data(),
                                                 s.col_ind.data(), s.row_ptr.data());
 
-    gpu::MassAssembler assembler(*c, gpu::MakeMassGeometry(g.ncols, g.nrows, g.nlayers,
+    gpu::MassFem fem(*c, gpu::MakeMassGeometry(g.ncols, g.nrows, g.nlayers,
                                                            g.x.data(), g.y.data(), g.z.data()));
     std::vector<float> wind(3 * n), av(alphaV.begin(), alphaV.end());
     for(int i = 0; i < n; i++)
@@ -850,7 +850,7 @@ BOOST_AUTO_TEST_CASE( kernel_mass_assemble_matches_cpu )
         coefB(*c, 14 * n * sizeof(float)), rhsB(*c, n * sizeof(float));
     windB.upload(wind);
     alphaB.upload(av);
-    assembler.assemble(windB, alphaB, (float)alphaH, coefB, rhsB);
+    fem.assemble(windB, alphaB, (float)alphaH, coefB, rhsB);
     std::vector<float> coef = coefB.download<float>(14 * n), rhs = rhsB.download<float>(n);
 
     double worstCoef = 0.0, worstRhs = 0.0, rhsMax = 0.0;
@@ -869,6 +869,70 @@ BOOST_AUTO_TEST_CASE( kernel_mass_assemble_matches_cpu )
                        << ", worst rhs error / rhs max " << worstRhs);
     BOOST_CHECK_LT(worstCoef, 1e-5);
     BOOST_CHECK_LT(worstRhs, 1e-4);
+}
+
+// GPU wind recovery against the CPU's RecoverVelocity, from the CPU's Phi
+// for a divergent wind on the same UTM-placed ridge grid: each component
+// within 1e-5 of the largest initial speed (seen: 9e-7).
+BOOST_AUTO_TEST_CASE( kernel_mass_recover_matches_cpu )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    MassGrid g = MassRidgeGrid(40, 33, 12);
+    for(int i = 0; i < g.numNodes(); i++)
+    {
+        g.x[i] += 512345.37 + 0.11 * std::sin(0.7 * i);
+        g.y[i] += 4812345.61 + 0.07 * std::cos(0.3 * i);
+    }
+    int n = g.numNodes();
+    std::vector<double> u0(n), v0(n), w0(n), alphaV(n);
+    for(int i = 0; i < n; i++)
+    {
+        u0[i] = 5.0 + 0.002 * (g.x[i] - g.x[0]);
+        v0[i] = 1.0 - 0.001 * (g.y[i] - g.y[0]);
+        w0[i] = 0.1 * std::sin(0.01 * i);
+        alphaV[i] = 0.8 + 0.4 * std::cos(0.003 * i);
+    }
+    const double alphaH = 1.3;
+    MassSystem s = AssembleMass(g, u0.data(), v0.data(), w0.data(), alphaV.data(), alphaH);
+    std::vector<double> phi(n, 0.0);
+    MassSolveOptions options;
+    options.tol = 1e-6;
+    SolveMassPcg(s, phi.data(), options);
+    std::vector<double> u(n), v(n), w(n);
+    RecoverVelocity(g, phi.data(), u0.data(), v0.data(), w0.data(), alphaV.data(), alphaH,
+                    u.data(), v.data(), w.data());
+
+    gpu::MassFem fem(*c, gpu::MakeMassGeometry(g.ncols, g.nrows, g.nlayers, g.x.data(),
+                                               g.y.data(), g.z.data()));
+    std::vector<float> wind0(3 * n), phiF(phi.begin(), phi.end()), av(alphaV.begin(), alphaV.end());
+    for(int i = 0; i < n; i++)
+    {
+        wind0[i] = (float)u0[i];
+        wind0[n + i] = (float)v0[i];
+        wind0[2 * n + i] = (float)w0[i];
+    }
+    gpu::Buffer phiB(*c, n * sizeof(float)), wind0B(*c, 3 * n * sizeof(float)),
+        alphaB(*c, n * sizeof(float)), windB(*c, 3 * n * sizeof(float));
+    phiB.upload(phiF);
+    wind0B.upload(wind0);
+    alphaB.upload(av);
+    fem.recover(phiB, wind0B, alphaB, (float)alphaH, windB);
+    std::vector<float> wind = windB.download<float>(3 * n);
+
+    double speed = 0.0, worst = 0.0, change = 0.0;
+    for(int i = 0; i < n; i++)
+    {
+        speed = std::max(speed, std::sqrt(u0[i] * u0[i] + v0[i] * v0[i] + w0[i] * w0[i]));
+        change = std::max(change, std::fabs(u[i] - u0[i]));
+        worst = std::max({worst, std::fabs(wind[i] - u[i]), std::fabs(wind[n + i] - v[i]),
+                          std::fabs(wind[2 * n + i] - w[i])});
+    }
+    BOOST_TEST_MESSAGE("mass recover: worst |error| / max speed " << worst / speed
+                       << " (the solve changed u by up to " << change / speed << ")");
+    BOOST_REQUIRE_GT(change / speed, 1e-2);   // Phi does something here
+    BOOST_CHECK_LT(worst / speed, 1e-5);
 }
 
 // Not in ctest: the whole GPU solve at the fine-mesh size, against the CPU

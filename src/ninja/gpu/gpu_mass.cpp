@@ -263,32 +263,48 @@ struct AssembleParams
 
 } // namespace
 
-MassAssembler::MassAssembler(Context &context, const MassGeometry &geometry)
+MassFem::MassFem(Context &context, const MassGeometry &geometry)
     : context_(context), nodes_(geometry.nodes()), ncols_(geometry.ncols),
       nrows_(geometry.nrows), nlayers_(geometry.nlayers),
       params_(context, sizeof(AssembleParams), Buffer::Uniform),
-      xyz_(context, geometry.xyz.size() * sizeof(float)), kernel_(context, kernels::massAssemble)
+      xyz_(context, geometry.xyz.size() * sizeof(float)),
+      assemble_(context, (std::string(kernels::massFemPrelude) + kernels::massAssemble).c_str()),
+      recover_(context, (std::string(kernels::massFemPrelude) + kernels::massRecover).c_str())
 {
     if(geometry.xyz.size() != 3 * nodes_ || nodes_ > UINT32_MAX)
-        throw Error("gpu::MassAssembler: geometry size doesn't match its grid");
+        throw Error("gpu::MassFem: geometry size doesn't match its grid");
     xyz_.upload(geometry.xyz);
 }
 
-void MassAssembler::assemble(const Buffer &wind0, const Buffer &alphaV, float alphaH,
-                             Buffer &coef, Buffer &rhs)
+void MassFem::dispatch(Kernel &kernel, const std::vector<const Buffer *> &bindings, float alphaH)
 {
-    const std::size_t f = sizeof(float);
-    if(wind0.size() < 3 * nodes_ * f || alphaV.size() < nodes_ * f ||
-       coef.size() < MassStencil::slots * nodes_ * f || rhs.size() < nodes_ * f)
-        throw Error("gpu::MassAssembler::assemble: buffer shorter than the grid");
     AssembleParams p = {(uint32_t)ncols_, (uint32_t)nrows_, (uint32_t)nlayers_, (uint32_t)nodes_,
                         alphaH, {0, 0, 0}};
     params_.upload(&p, sizeof p);
     std::size_t groups = (nodes_ + 255) / 256;
     std::size_t gx = groups < maxGroupsX ? groups : maxGroupsX;
     std::size_t gy = (groups + gx - 1) / gx;
-    kernel_.dispatch({&params_, &xyz_, &wind0, &alphaV, &coef, &rhs}, (uint32_t)gx,
-                     (uint32_t)gy);
+    kernel.dispatch(bindings, (uint32_t)gx, (uint32_t)gy);
+}
+
+void MassFem::assemble(const Buffer &wind0, const Buffer &alphaV, float alphaH, Buffer &coef,
+                       Buffer &rhs)
+{
+    const std::size_t f = sizeof(float);
+    if(wind0.size() < 3 * nodes_ * f || alphaV.size() < nodes_ * f ||
+       coef.size() < MassStencil::slots * nodes_ * f || rhs.size() < nodes_ * f)
+        throw Error("gpu::MassFem::assemble: buffer shorter than the grid");
+    dispatch(assemble_, {&params_, &xyz_, &wind0, &alphaV, &coef, &rhs}, alphaH);
+}
+
+void MassFem::recover(const Buffer &phi, const Buffer &wind0, const Buffer &alphaV,
+                      float alphaH, Buffer &wind)
+{
+    const std::size_t f = sizeof(float);
+    if(phi.size() < nodes_ * f || wind0.size() < 3 * nodes_ * f || alphaV.size() < nodes_ * f ||
+       wind.size() < 3 * nodes_ * f)
+        throw Error("gpu::MassFem::recover: buffer shorter than the grid");
+    dispatch(recover_, {&params_, &xyz_, &phi, &wind0, &alphaV, &wind}, alphaH);
 }
 
 } // namespace gpu

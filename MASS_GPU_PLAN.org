@@ -420,17 +420,20 @@ Measured, Big Butte, 10 mph from 270, M3 Max (seconds; solve = WindNinja's
 - [X] Documentation updates: this entry; =gpu_mass.h=, =mass_gpu_solve.h=;
       the open question below.
 
-** IN-PROGRESS 2.4 GPU assembly and velocity recovery [1/6]
+** IN-PROGRESS 2.4 GPU assembly and velocity recovery [2/6]
 - [X] Element stiffness and RHS on the GPU (gather, no atomics).
-      =kernels::massAssemble=, =gpu::MassAssembler=, =gpu::MassGeometry=
+      =kernels::massAssemble=, =gpu::MassFem=, =gpu::MassGeometry=
       (=MakeMassGeometry()=: x, y, z in f32 relative to a local origin).
       One thread per node visits its ≤ 8 elements, recomputes each one's
       centre Jacobian and adds the element's terms to its own 14 slots and
       RHS, then applies the Φ = 0 rows and columns; writes straight into the
       stencil layout =MassOperator= / =MassPcg= use. A folded element
       (DETJ ≤ 0) isn't detected on the GPU (the CPU throws); see the Inbox.
-- [ ] Velocity recovery on the GPU (=RecoverVelocity='s inverse-distance
-      smoothing as a node gather).
+- [X] Velocity recovery on the GPU (=RecoverVelocity='s inverse-distance
+      smoothing as a node gather). =kernels::massRecover=,
+      =gpu::MassFem::recover()= (=MassAssembler= renamed =MassFem=, since
+      it now mirrors all of =mass_fem=; both kernels share
+      =kernels::massFemPrelude=, the element geometry at its centre).
 - [ ] =SolveMassOnGpu= keeps everything on the GPU: wind and αV in,
       assemble, solve, recover, u/v/w out.
 - [-] Add tests: =gpu/kernel_mass_assemble_matches_cpu= (ridge grid at
@@ -440,8 +443,13 @@ Measured, Big Butte, 10 mph from 270, M3 Max (seconds; solve = WindNinja's
       Rz from αH, boundary columns kept, RHS without the volume, wrong row
       gradient, w₀ ignored, no local origin (only once the test's
       coordinates were non-integer: f32 holds integers this size exactly):
-      each caught. Recovery: to do.
-- [ ] Tests pass (assembly: =ctest -R "^mass_|^gpu_"= 33/33)
+      each caught. =gpu/kernel_mass_recover_matches_cpu= (the same grid,
+      the CPU's Φ for a divergent wind, which changes u by up to 6.5% of
+      the max speed: every component within 1e-5 of the max speed; seen
+      9e-7). Mutation checks: unweighted average, w scaled with αH,
+      gradient from one shape function, wrong element centre, v from
+      ∂Φ/∂x: each caught.
+- [ ] Tests pass (so far: =ctest -R "^mass_|^gpu_"= 34/34)
 - [ ] Documentation updates
 
 ** TODO 2.5 GATE: native speed and accuracy recorded
@@ -516,5 +524,5 @@ solve many times on one mesh (Phase 4.1), so keep them.
 ** TODO GPU assembly doesn't detect folded elements
 =AssembleMass= throws "Volume Jacobian 1 is zero or negative." when an
 element's DETJ ≤ 0; =kernels::massAssemble= silently uses it. Write a flag
-(an atomic or a reduced max) and throw from =MassAssembler= when set, once
+(an atomic or a reduced max) and throw from =MassFem::assemble()= when set, once
 the GPU path builds the system itself (2.4).

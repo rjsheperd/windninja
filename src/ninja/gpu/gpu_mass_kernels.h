@@ -307,14 +307,10 @@ fn main(@builtin(local_invocation_index) lid : u32) {
 }
 )wgsl";
 
-// Builds the mass system on the GPU (gpu::MassAssembler), as AssembleMass
-// does on the CPU: one-point-quadrature hexahedra, the stencil's 14 slots
-// and the right-hand side, then Phi = 0 rows and columns on the sides and
-// top.  A gather: each node visits its (up to 8) elements, recomputes each
-// element's centre Jacobian and adds the element's terms for its own row,
-// keeping only couplings to itself and later nodes (the slots it owns).
-// Coordinates are relative to a local origin (f32).
-constexpr const char *massAssemble = R"wgsl(
+// Shared by massAssemble and massRecover (gpu::MassFem): the grid, the
+// node coordinates (x, y, z slots, f32 from a local origin) and one
+// element's geometry at its centre (one-point quadrature, as element.cpp).
+constexpr const char *massFemPrelude = R"wgsl(
 struct Params {
     ncols : u32,
     nrows : u32,
@@ -327,16 +323,74 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> params : Params;
-@group(0) @binding(1) var<storage, read> xyz : array<f32>;     // x, y, z slots
-@group(0) @binding(2) var<storage, read> wind0 : array<f32>;   // u0, v0, w0 slots
-@group(0) @binding(3) var<storage, read> alphaV : array<f32>;
-@group(0) @binding(4) var<storage, read_write> coef : array<f32>;
-@group(0) @binding(5) var<storage, read_write> rhs : array<f32>;
+@group(0) @binding(1) var<storage, read> xyz : array<f32>;
 
 // local corner k of an element: (col, row, layer) offset from its origin
 const corner = array<vec3<i32>, 8>(
     vec3<i32>(0, 0, 0), vec3<i32>(1, 0, 0), vec3<i32>(1, 1, 0), vec3<i32>(0, 1, 0),
     vec3<i32>(0, 0, 1), vec3<i32>(1, 0, 1), vec3<i32>(1, 1, 1), vec3<i32>(0, 1, 1));
+
+fn node(c : vec3<i32>) -> u32 {
+    return u32(c.x) + params.ncols * (u32(c.y) + params.nrows * u32(c.z));
+}
+
+fn position(n : u32) -> vec3<i32> {
+    let layerSize = params.ncols * params.nrows;
+    return vec3<i32>(i32(n % params.ncols), i32((n / params.ncols) % params.nrows),
+                     i32(n / layerSize));
+}
+
+fn coords(n : u32) -> vec3<f32> {
+    return vec3<f32>(xyz[n], xyz[params.nodes + n], xyz[2u * params.nodes + n]);
+}
+
+// the element with this origin exists
+fn isElement(origin : vec3<i32>) -> bool {
+    let cells = vec3<i32>(i32(params.ncols) - 1, i32(params.nrows) - 1, i32(params.nlayers) - 1);
+    return all(origin >= vec3<i32>(0)) && all(origin < cells);
+}
+
+struct Element {
+    ids : array<u32, 8>,             // global nodes of the corners
+    g : array<vec3<f32>, 8>,         // dN/dx, dN/dy, dN/dz of each corner
+    detJ : f32,
+    centre : vec3<f32>,
+}
+
+fn element(origin : vec3<i32>) -> Element {
+    var el : Element;
+    var J = mat3x3<f32>();   // columns: d/du, d/dv, d/dw of (x, y, z)
+    el.centre = vec3<f32>(0.0);
+    for (var k = 0u; k < 8u; k++) {
+        el.ids[k] = node(origin + corner[k]);
+        let s = (vec3<f32>(corner[k]) * 2.0 - 1.0) * 0.125;   // dN/du, dN/dv, dN/dw
+        let c = coords(el.ids[k]);
+        J[0] += s.x * c;
+        J[1] += s.y * c;
+        J[2] += s.z * c;
+        el.centre += 0.125 * c;
+    }
+    el.detJ = determinant(J);
+    let inv = transpose(mat3x3<f32>(cross(J[1], J[2]), cross(J[2], J[0]),
+                                    cross(J[0], J[1]))) * (1.0 / el.detJ);   // inverse of J
+    for (var k = 0u; k < 8u; k++) {
+        el.g[k] = ((vec3<f32>(corner[k]) * 2.0 - 1.0) * 0.125) * inv;   // s^T J^-1
+    }
+    return el;
+}
+)wgsl";
+
+// Builds the mass system on the GPU (gpu::MassFem::assemble), as
+// AssembleMass does on the CPU: the stencil's 14 slots and the right-hand
+// side, then Phi = 0 rows and columns on the sides and top.  A gather: each
+// node visits its (up to 8) elements, recomputes each element's centre
+// geometry and adds the element's terms for its own row, keeping only
+// couplings to itself and later nodes (the slots it owns).
+constexpr const char *massAssemble = R"wgsl(
+@group(0) @binding(2) var<storage, read> wind0 : array<f32>;   // u0, v0, w0 slots
+@group(0) @binding(3) var<storage, read> alphaV : array<f32>;
+@group(0) @binding(4) var<storage, read_write> coef : array<f32>;
+@group(0) @binding(5) var<storage, read_write> rhs : array<f32>;
 
 // slot of the coupling to the node at offset d (index (d.x+1) + 3 (d.y+1)
 // + 9 (d.z+1)): 0 the diagonal, 1..13 gpu::massOffsets, -1 an earlier node
@@ -352,10 +406,6 @@ const offsets = array<vec3<i32>, 13>(
     vec3<i32>(-1, 0, 1), vec3<i32>(0, 0, 1), vec3<i32>(1, 0, 1),
     vec3<i32>(-1, 1, 1), vec3<i32>(0, 1, 1), vec3<i32>(1, 1, 1));
 
-fn node(c : vec3<i32>) -> u32 {
-    return u32(c.x) + params.ncols * (u32(c.y) + params.nrows * u32(c.z));
-}
-
 fn boundary(c : vec3<i32>) -> bool {
     return c.x == 0 || c.x == i32(params.ncols) - 1 || c.y == 0 ||
            c.y == i32(params.nrows) - 1 || c.z == i32(params.nlayers) - 1;
@@ -369,9 +419,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
         return;
     }
     let N = params.nodes;
-    let layerSize = params.ncols * params.nrows;
-    let p = vec3<i32>(i32(n % params.ncols), i32((n / params.ncols) % params.nrows),
-                      i32(n / layerSize));
+    let p = position(n);
     var row : array<f32, 14>;
     for (var s = 0u; s < 14u; s++) {
         row[s] = 0.0;
@@ -380,43 +428,26 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
     let rx = 1.0 / (2.0 * params.alphaH * params.alphaH);
 
     if (!boundary(p)) {
-        let cells = vec3<i32>(i32(params.ncols) - 1, i32(params.nrows) - 1, i32(params.nlayers) - 1);
         for (var e = 0u; e < 8u; e++) {
             let origin = p - corner[e];   // the element in which this node is corner e
-            if (any(origin < vec3<i32>(0)) || any(origin >= cells)) {
+            if (!isElement(origin)) {
                 continue;
             }
-            var J = mat3x3<f32>();   // columns: d/du, d/dv, d/dw of (x, y, z)
+            let el = element(origin);
             var hv = 0.0;
             var av = 0.0;
-            var ids : array<u32, 8>;
             for (var k = 0u; k < 8u; k++) {
-                ids[k] = node(origin + corner[k]);
-                let s = (vec3<f32>(corner[k]) * 2.0 - 1.0) * 0.125;   // dN/du, dN/dv, dN/dw
-                let c = vec3<f32>(xyz[ids[k]], xyz[N + ids[k]], xyz[2u * N + ids[k]]);
-                J[0] += s.x * c;
-                J[1] += s.y * c;
-                J[2] += s.z * c;
-            }
-            let detJ = determinant(J);
-            let inv = transpose(mat3x3<f32>(cross(J[1], J[2]), cross(J[2], J[0]),
-                                            cross(J[0], J[1]))) * (1.0 / detJ);   // inverse of J
-            // dN/dx, dN/dy, dN/dz of corner k = s^T inv
-            var g : array<vec3<f32>, 8>;
-            for (var k = 0u; k < 8u; k++) {
-                let s = (vec3<f32>(corner[k]) * 2.0 - 1.0) * 0.125;
-                g[k] = s * inv;
-                let m = ids[k];
-                hv += g[k].x * wind0[m] + g[k].y * wind0[N + m] + g[k].z * wind0[2u * N + m];
+                let m = el.ids[k];
+                hv += el.g[k].x * wind0[m] + el.g[k].y * wind0[N + m] + el.g[k].z * wind0[2u * N + m];
                 av += 0.125 * alphaV[m];
             }
             let R = vec3<f32>(rx, rx, 1.0 / (2.0 * av * av));
-            q += 8.0 * 0.125 * hv * detJ;
+            q += 8.0 * 0.125 * hv * el.detJ;
             for (var k = 0u; k < 8u; k++) {
                 let d = corner[k] - corner[e];
                 let s = slotOf[(d.x + 1) + 3 * (d.y + 1) + 9 * (d.z + 1)];
                 if (s >= 0) {
-                    row[s] += 8.0 * dot(g[e] * R, g[k]) * detJ;
+                    row[s] += 8.0 * dot(el.g[e] * R, el.g[k]) * el.detJ;
                 }
             }
         }
@@ -433,6 +464,51 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
         coef[s * N + n] = row[s];
     }
     rhs[n] = q;
+}
+)wgsl";
+
+// The wind from Phi (gpu::MassFem::recover), as RecoverVelocity: each node
+// averages its elements' centre gradients of Phi, weighted by the inverse
+// distance from the node to each centre, then
+//   u = u0 + dPhi/dx / (2 alphaH^2), v likewise, w = w0 + dPhi/dz / (2 alphaV^2).
+constexpr const char *massRecover = R"wgsl(
+@group(0) @binding(2) var<storage, read> phi : array<f32>;
+@group(0) @binding(3) var<storage, read> wind0 : array<f32>;   // u0, v0, w0 slots
+@group(0) @binding(4) var<storage, read> alphaV : array<f32>;
+@group(0) @binding(5) var<storage, read_write> wind : array<f32>;   // u, v, w slots
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>,
+        @builtin(num_workgroups) groups : vec3<u32>) {
+    let n = gid.x + gid.y * groups.x * 256u;
+    if (n >= params.nodes) {
+        return;
+    }
+    let N = params.nodes;
+    let p = position(n);
+    let here = coords(n);
+    var sum = vec3<f32>(0.0);
+    var weights = 0.0;
+    for (var e = 0u; e < 8u; e++) {
+        let origin = p - corner[e];
+        if (!isElement(origin)) {
+            continue;
+        }
+        let el = element(origin);
+        var grad = vec3<f32>(0.0);
+        for (var k = 0u; k < 8u; k++) {
+            grad += el.g[k] * phi[el.ids[k]];
+        }
+        let w = 1.0 / distance(here, el.centre);
+        sum += w * grad;
+        weights += w;
+    }
+    let d = sum / weights;
+    let av = alphaV[n];
+    let rx = 1.0 / (2.0 * params.alphaH * params.alphaH);
+    wind[n] = wind0[n] + rx * d.x;
+    wind[N + n] = wind0[N + n] + rx * d.y;
+    wind[2u * N + n] = wind0[2u * N + n] + 1.0 / (2.0 * av * av) * d.z;
 }
 )wgsl";
 

@@ -144,13 +144,15 @@ MassGeometry MakeMassGeometry(int ncols, int nrows, int nlayers, const double *x
                               const double *y, const double *z);
 
 /*
-** Builds the mass system on the GPU (kernels::massAssemble), as AssembleMass
-** does on the CPU, straight into MassOperator / MassPcg's stencil layout.
+** The mass solver's finite elements on the GPU, as mass_fem does on the
+** CPU: assemble() builds the system (kernels::massAssemble, AssembleMass)
+** straight into MassOperator / MassPcg's stencil layout; recover() turns
+** Phi into the wind (kernels::massRecover, RecoverVelocity).
 */
-class MassAssembler
+class MassFem
 {
 public:
-    MassAssembler(Context &context, const MassGeometry &geometry);
+    MassFem(Context &context, const MassGeometry &geometry);
 
     std::size_t nodes() const { return nodes_; }
     const Buffer &geometry() const { return xyz_; }
@@ -160,12 +162,19 @@ public:
     void assemble(const Buffer &wind0, const Buffer &alphaV, float alphaH, Buffer &coef,
                   Buffer &rhs);
 
+    // wind = wind0 + the smoothed gradient of phi scaled by 1/(2 alpha^2);
+    // wind0 and wind: u, v, w slots.  Queued.
+    void recover(const Buffer &phi, const Buffer &wind0, const Buffer &alphaV, float alphaH,
+                 Buffer &wind);
+
 private:
+    void dispatch(Kernel &kernel, const std::vector<const Buffer *> &bindings, float alphaH);
+
     Context &context_;
     std::size_t nodes_;
     int ncols_, nrows_, nlayers_;
     Buffer params_, xyz_;
-    Kernel kernel_;
+    Kernel assemble_, recover_;
 };
 
 } // namespace gpu
