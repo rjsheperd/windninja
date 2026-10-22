@@ -31,6 +31,7 @@
 #include <cmath>
 #include <vector>
 
+#include "mass_dem.h"
 #include "mass_fem.h"
 
 /*
@@ -139,6 +140,74 @@ inline bool Matches(const Stats &s, const Stats &e, double tolerance)
     };
     return close(s.meanSpeed, e.meanSpeed, e.meanSpeed) && close(s.maxSpeed, e.maxSpeed, e.maxSpeed) &&
            close(s.meanW, e.meanW, e.meanSpeed);
+}
+
+/*
+** DEM in, wind out (SolveMassDem, the browser's windninja_mass_dem_solve): a
+** hill at 30 m, grass, 10 mph from 237 degrees at 20 ft, out at 20 ft.  The
+** CPU path writes exactly the CLI's output (scripts/check_mass_dem.sh), so
+** matching these statistics holds the browser to the CLI.
+*/
+inline TerrainDem Dem()
+{
+    TerrainDem dem;
+    dem.nCols = 48;
+    dem.nRows = 36;
+    dem.cellSize = 30.0;
+    dem.xll = 333861.94;
+    dem.yll = 4806622.16;
+    for(int r = 0; r < dem.nRows; r++)
+        for(int c = 0; c < dem.nCols; c++)
+            dem.z.push_back(1500.0 + 220.0 * std::exp(-((c - 22) * (c - 22) + (r - 17) * (r - 17)) / 60.0) +
+                            0.8 * c - 0.5 * r);
+    return dem;
+}
+
+inline MassDemProblem DemProblem()
+{
+    MassDemProblem p;
+    p.wind.speed = 4.4704;   // 10 mph
+    p.wind.direction = 237.0;
+    p.wind.inputHeight = 6.096;
+    p.wind.latitude = 43.4;
+    p.wind.angleFromNorth = -1.4;
+    p.outputHeight = 6.096;
+    return p;   // grass: z0 0.01, no canopy
+}
+
+// The probes catch a flipped or shifted grid, which the means can't.
+struct DemStats
+{
+    double meanSpeed, maxSpeed, meanAngle, speedSouthWest, speedNorthEast;
+};
+
+// speed and angle per cell, row 0 south, nCols wide
+inline DemStats SummarizeDem(const MassDemWind &w)
+{
+    DemStats s = {0.0, 0.0, 0.0, 0.0, 0.0};
+    s.speedSouthWest = w.speed[3 * w.nCols + 4];                    // row 3, col 4
+    s.speedNorthEast = w.speed[(w.nRows - 4) * w.nCols + w.nCols - 5];
+    for(std::size_t i = 0; i < w.speed.size(); i++)
+    {
+        s.meanSpeed += w.speed[i];
+        s.maxSpeed = std::max(s.maxSpeed, w.speed[i]);
+        s.meanAngle += w.angle[i];   // all near 238: no wrap
+    }
+    s.meanSpeed /= w.speed.size();
+    s.meanAngle /= w.speed.size();
+    return s;
+}
+
+// native, as expectedGpu / expectedCpu (gpuTolerance, cpuTolerance)
+const DemStats expectedDemGpu = {4.34612390, 6.67289132, 238.508957, 4.20736024, 4.37419166};
+const DemStats expectedDemCpu = {4.34580825, 6.67514947, 238.485491, 4.19083457, 4.36724479};
+
+inline bool MatchesDem(const DemStats &s, const DemStats &e, double tolerance)
+{
+    auto close = [tolerance](double a, double b) { return std::fabs(a - b) <= tolerance * std::fabs(b); };
+    return close(s.meanSpeed, e.meanSpeed) && close(s.maxSpeed, e.maxSpeed) &&
+           close(s.meanAngle, e.meanAngle) && close(s.speedSouthWest, e.speedSouthWest) &&
+           close(s.speedNorthEast, e.speedNorthEast);
 }
 
 } // namespace mass_selftest

@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,7 @@
 
 #include "gpu_context.h"
 #include "hill_selftest.h"
+#include "mass_dem.h"
 #include "mass_gpu_solve.h"
 #include "mass_pcg.h"
 #include "mass_selftest.h"
@@ -51,6 +53,14 @@ MassSolveResult MassOnGpu(const MassGrid &g, const double *u0, const double *v0,
                           const double *alphaV, double alphaH, double *u, double *v, double *w)
 {
     return SolveMassWindOnGpu(g, u0, v0, w0, alphaV, alphaH, MassSolveOptions(), u, v, w);
+}
+
+// SolveMassWindOnGpu as a MassWindSolver (for SolveMassDem)
+MassSolveResult GpuWindSolver(const MassGrid &g, const double *u0, const double *v0,
+                              const double *w0, const double *alphaV, double alphaH,
+                              const MassSolveOptions &options, double *u, double *v, double *w)
+{
+    return SolveMassWindOnGpu(g, u0, v0, w0, alphaV, alphaH, options, u, v, w);
 }
 
 } // namespace
@@ -160,6 +170,73 @@ EMSCRIPTEN_KEEPALIVE int windninja_mass_solve(int ncols, int nrows, int nlayers,
     }
 }
 
+/*
+** WindNinja's domain-average mass solve from a DEM (SolveMassDem): what the
+** CLI writes as its output-height ASCII grids.  elevation: nRows * nCols m,
+** row 0 north (image order), at cellSize m, which is also the mesh
+** resolution (resample first for coarse/medium/fine).  speed m/s at
+** inputHeight m above the canopy, from direction degrees (geographic);
+** vegetation 0 grass, 1 brush, 2 trees; latitude (degrees, or outside
+** +-90 for none) and angleFromNorth (degrees, the DEM grid's, as WindNinja's
+** GDALCalculateAngleFromNorth).  Writes speed (m/s) and angle (degrees the
+** wind comes from, clockwise from the grid's north) per cell at
+** outputHeight m above the canopy, row 0 north.  gpu: 1 GPU, 0 CPU.
+** Returns the iteration count, -1 not converged, -2 no WebGPU, -3 error.
+*/
+EMSCRIPTEN_KEEPALIVE int windninja_mass_dem_solve(int nCols, int nRows, double cellSize,
+                                                  const double *elevation, double speed,
+                                                  double direction, double inputHeight,
+                                                  double outputHeight, int vegetation,
+                                                  double latitude, double angleFromNorth, int gpu,
+                                                  double *speedOut, double *angleOut)
+{
+    try
+    {
+        TerrainDem dem;
+        dem.nCols = nCols;
+        dem.nRows = nRows;
+        dem.cellSize = cellSize;
+        dem.z.resize(std::size_t(nCols) * nRows);
+        for(int r = 0; r < nRows; r++)   // TerrainDem's row 0 is south
+            for(int c = 0; c < nCols; c++)
+                dem.z[std::size_t(r) * nCols + c] = elevation[std::size_t(nRows - 1 - r) * nCols + c];
+        MassDemProblem p;
+        p.wind.speed = speed;
+        p.wind.direction = direction;
+        p.wind.inputHeight = inputHeight;
+        p.wind.latitude = latitude;
+        p.wind.angleFromNorth = angleFromNorth;
+        const double z0[] = {0.01, 0.43, 1.0}, h[] = {0.0, 2.3, 15.4}, d[] = {0.0, 1.8, 12.0};
+        if(vegetation < 0 || vegetation > 2)
+            throw std::invalid_argument("vegetation must be 0 (grass), 1 (brush) or 2 (trees)");
+        p.wind.roughness = z0[vegetation];
+        p.wind.roughH = h[vegetation];
+        p.wind.roughD = d[vegetation];
+        p.outputHeight = outputHeight;
+        MassDemWind w = gpu ? SolveMassDem(dem, p, MassSolveOptions(), GpuWindSolver)
+                            : SolveMassDem(dem, p, MassSolveOptions());
+        for(int r = 0; r < nRows; r++)
+            for(int c = 0; c < nCols; c++)
+            {
+                std::size_t from = std::size_t(r) * nCols + c;
+                std::size_t to = std::size_t(nRows - 1 - r) * nCols + c;
+                speedOut[to] = w.speed[from];
+                angleOut[to] = w.angle[from];
+            }
+        return w.solve.iterations;
+    }
+    catch(const gpu::Unavailable &e)
+    {
+        std::printf("no WebGPU: %s\n", e.what());
+        return -2;
+    }
+    catch(const std::exception &e)
+    {
+        std::printf("error: %s\n", e.what());
+        return -3;
+    }
+}
+
 } // extern "C"
 
 namespace {
@@ -188,6 +265,54 @@ bool MassSelfTest()
                     e.meanSpeed, e.maxSpeed, e.meanW);
         pass = pass && mass_selftest::Matches(s, e, gpu ? mass_selftest::gpuTolerance
                                                         : mass_selftest::cpuTolerance);
+    }
+    return pass;
+}
+
+// The DEM-in self-test (mass_selftest.h) through windninja_mass_dem_solve
+// itself (row order, vegetation), on the GPU and the CPU; true if both match
+// the native statistics (and so the CLI: scripts/check_mass_dem.sh).
+bool MassDemSelfTest()
+{
+    TerrainDem dem = mass_selftest::Dem();
+    MassDemProblem p = mass_selftest::DemProblem();
+    const int nCols = dem.nCols, nRows = dem.nRows;
+    std::vector<double> elevation(dem.z.size()), speed(dem.z.size()), angle(dem.z.size());
+    for(int r = 0; r < nRows; r++)   // the export takes row 0 north
+        for(int c = 0; c < nCols; c++)
+            elevation[std::size_t(nRows - 1 - r) * nCols + c] = dem.z[std::size_t(r) * nCols + c];
+    bool pass = true;
+    for(int gpu = 1; gpu >= 0; gpu--)
+    {
+        int iterations = windninja_mass_dem_solve(nCols, nRows, dem.cellSize, elevation.data(),
+                                                  p.wind.speed, p.wind.direction, p.wind.inputHeight,
+                                                  p.outputHeight, 0, p.wind.latitude,
+                                                  p.wind.angleFromNorth, gpu, speed.data(),
+                                                  angle.data());
+        if(iterations < 0)
+            return false;
+        MassDemWind w;   // back to row 0 south
+        w.nCols = nCols;
+        w.nRows = nRows;
+        w.speed.resize(speed.size());
+        w.angle.resize(angle.size());
+        for(int r = 0; r < nRows; r++)
+            for(int c = 0; c < nCols; c++)
+            {
+                w.speed[std::size_t(r) * nCols + c] = speed[std::size_t(nRows - 1 - r) * nCols + c];
+                w.angle[std::size_t(r) * nCols + c] = angle[std::size_t(nRows - 1 - r) * nCols + c];
+            }
+        mass_selftest::DemStats s = mass_selftest::SummarizeDem(w);
+        const mass_selftest::DemStats &e = gpu ? mass_selftest::expectedDemGpu
+                                               : mass_selftest::expectedDemCpu;
+        std::printf("mass dem self-test %s: mean speed %.9g, max speed %.9g, mean angle %.9g, "
+                    "SW %.9g, NE %.9g\n", gpu ? "gpu" : "cpu", s.meanSpeed, s.maxSpeed, s.meanAngle,
+                    s.speedSouthWest, s.speedNorthEast);
+        std::printf("native:                 mean speed %.9g, max speed %.9g, mean angle %.9g, "
+                    "SW %.9g, NE %.9g\n", e.meanSpeed, e.maxSpeed, e.meanAngle, e.speedSouthWest,
+                    e.speedNorthEast);
+        pass = pass && mass_selftest::MatchesDem(s, e, gpu ? mass_selftest::gpuTolerance
+                                                          : mass_selftest::cpuTolerance);
     }
     return pass;
 }
@@ -239,6 +364,11 @@ int main()
         if(!MassSelfTest())
         {
             std::printf("RESULT FAIL the mass solver differs from the native one\n");
+            return 1;
+        }
+        if(!MassDemSelfTest())
+        {
+            std::printf("RESULT FAIL the mass solver from a DEM differs from the native one\n");
             return 1;
         }
         MassTiming();

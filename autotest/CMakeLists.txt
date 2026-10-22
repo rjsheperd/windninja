@@ -471,7 +471,8 @@ if(WITH_WEBGPU)
                     mass_stencil_pack kernel_mass_apply_matches_cpu mass_pcg_matches_cpu
                     mass_pcg_nan_throws kernel_mass_assemble_matches_cpu
                     kernel_mass_recover_matches_cpu mass_wind_matches_cpu
-                    mass_wind_folded_throws mass_wind_selftest)
+                    mass_wind_folded_throws mass_wind_selftest
+                    mass_dem_selftest)
         add_test(gpu_${gputest}
                  ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=gpu/${gputest})
         # machines without a WebGPU adapter skip rather than fail

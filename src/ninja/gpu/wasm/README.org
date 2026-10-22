@@ -24,16 +24,30 @@ mass solver).
   + nrows * layer)=): =gpu= 1 runs =SolveMassWindOnGpu= (Jacobi, f32), 0
   the CPU (=AssembleMass=, =SolveMassPcg= with SSOR, =RecoverVelocity=,
   f64). It writes u, v, w per node and returns the iteration count, -1 (not
-  converged), -2 (no WebGPU) or -3 (error). A suspending export too. Not
-  yet from a DEM: WindNinja's mass mesh and initialization are core (plan
-  3.1a).
+  converged), -2 (no WebGPU) or -3 (error). A suspending export too.
+- =windninja_mass_dem_solve(nCols, nRows, cellSize, elevation, speed,
+  direction, inputHeight, outputHeight, vegetation, latitude,
+  angleFromNorth, gpu, speed, angle)=: WindNinja's domain-average mass
+  run from a DEM (=SolveMassDem=, plan 3.1a): elevation row 0 north,
+  metres, at =cellSize=, which is also the mesh resolution (resample first
+  for coarse/medium/fine); =speed= m/s at =inputHeight= m above the canopy
+  from =direction= degrees; =vegetation= 0 grass, 1 brush, 2 trees;
+  =latitude= and =angleFromNorth= as WindNinja takes them from the DEM's
+  projection. It writes the output-height speed (m/s) and angle (degrees,
+  from the grid's north) per cell, row 0 north: on the CPU, exactly the
+  values the CLI writes to its ASCII grids (=scripts/check_mass_dem.sh=).
+  Returns as =windninja_mass_solve=.
 - =main()= is a self-test. It solves =hill_selftest.h='s hill and checks the
   statistics against the native result (autotest =gpu/dem_solve_hill=), to
   1e-3 relative. Measured in headless Chromium on Apple Metal: within 2e-7.
   Then =mass_selftest.h='s ridge, on the GPU and the CPU, against the native
   statistics (autotest =gpu/mass_wind_selftest=) to 1e-5 (GPU) and 1e-8
   (CPU) relative, tight enough to tell the two solvers apart; the browser
-  matched to all 9 printed digits. Then it times the mass solve at a
+  matched to all 9 printed digits. Then =mass_selftest.h='s DEM case
+  through =windninja_mass_dem_solve= (row order and vegetation included):
+  statistics and two probe cells against the native ones (autotest
+  =gpu/mass_dem_selftest=), so the browser is held to the CLI. Then it
+  times the mass solve at a
   fine-mesh size (137×147×20 = 402,780 nodes), system to wind: GPU ~32 ms,
   CPU ~525 ms (single-threaded wasm; native single-threaded is ~545 ms, so
   wasm costs nothing measurable here).

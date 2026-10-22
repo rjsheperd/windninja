@@ -21,6 +21,7 @@
 #include "gpu_mass.h"
 #include "gpu_rans.h"
 #include "gpu_reduce.h"
+#include "mass_dem.h"
 #include "mass_fem.h"
 #include "mass_gpu_solve.h"
 #include "mass_pcg.h"
@@ -1042,6 +1043,30 @@ BOOST_AUTO_TEST_CASE( mass_wind_selftest )
                                         ::mass_selftest::gpuTolerance));
     BOOST_CHECK(::mass_selftest::Matches(cpuStats, ::mass_selftest::expectedCpu,
                                         ::mass_selftest::cpuTolerance));
+}
+
+// The browser module's DEM-in self-test (mass_selftest.h), natively.
+BOOST_AUTO_TEST_CASE( mass_dem_selftest )
+{
+    if(context() == nullptr)
+        return;
+    TerrainDem dem = ::mass_selftest::Dem();
+    MassDemProblem problem = ::mass_selftest::DemProblem();
+    MassDemWind gpuWind = SolveMassDem(dem, problem, MassSolveOptions(),
+        [](const MassGrid &g, const double *u0, const double *v0, const double *w0,
+           const double *alphaV, double alphaH, const MassSolveOptions &o, double *u, double *v,
+           double *w) { return SolveMassWindOnGpu(g, u0, v0, w0, alphaV, alphaH, o, u, v, w); });
+    MassDemWind cpuWind = SolveMassDem(dem, problem, MassSolveOptions());
+    ::mass_selftest::DemStats g = ::mass_selftest::SummarizeDem(gpuWind);
+    ::mass_selftest::DemStats c = ::mass_selftest::SummarizeDem(cpuWind);
+    BOOST_TEST_MESSAGE(std::setprecision(10) << "mass dem self-test gpu: " << g.meanSpeed << ", "
+                       << g.maxSpeed << ", " << g.meanAngle << ", " << g.speedSouthWest << ", "
+                       << g.speedNorthEast << "; cpu: " << c.meanSpeed << ", " << c.maxSpeed << ", "
+                       << c.meanAngle << ", " << c.speedSouthWest << ", " << c.speedNorthEast);
+    BOOST_CHECK(::mass_selftest::MatchesDem(g, ::mass_selftest::expectedDemGpu,
+                                            ::mass_selftest::gpuTolerance));
+    BOOST_CHECK(::mass_selftest::MatchesDem(c, ::mass_selftest::expectedDemCpu,
+                                            ::mass_selftest::cpuTolerance));
 }
 
 // Not in ctest: the whole GPU solve at the fine-mesh size, against the CPU

@@ -562,7 +562,7 @@ See the Inbox.
 - [X] Documentation updates (=src/ninja/gpu/README.org=,
       =src/ninja/gpu/wasm/README.org=)
 
-** IN-PROGRESS 3.1a DEM in, wind out in the browser [4/6]
+** DONE 3.1a DEM in, wind out in the browser [6/6]
 - [X] Core-free mass mesh from a DEM (=Mesh='s terrain-following layers:
       layer heights, growth, domain height), like =TerrainGrid= for RANS;
       native =Mesh= vs the core-free one, node by node.
@@ -615,9 +615,26 @@ See the Inbox.
       that branch): each caught. Found on the way: the CLI pads its output
       grids by a row and a column to cover the DEM
       (=BufferToOverlapGrid=); the comparison skips them.
-- [ ] =windninja_mass_dem_solve= in the browser: DEM, speed, direction,
+- [X] =windninja_mass_dem_solve= in the browser: DEM, speed, direction,
       heights, vegetation in; the output-height wind per cell out; checked
-      against the CLI values in the browser self-test.
+      against the CLI values in the browser self-test. The export (row 0
+      north in and out; vegetation 0/1/2; latitude and angle from north as
+      inputs) runs =SolveMassDem= on the GPU or the CPU. Shared fixture
+      =mass_selftest::Dem()= (48×36 hill at 30 m, grass, 10 mph from 237°):
+      mean and max speed, mean angle and the speed at two probe cells (a
+      flipped grid moves them; the means can't see it), native
+      =gpu/mass_dem_selftest=. The browser self-test goes through the
+      export itself and matched native to all printed digits, GPU and CPU;
+      since the CPU path writes exactly the CLI's values
+      (=check_mass_dem.sh=), the browser is held to the CLI. Mutations in
+      the browser: vegetation table reversed, input rows not flipped:
+      each =RESULT FAIL=. (The row-flip mutation first "passed" because the
+      same line exists in the RANS export and my edit hit that one.)
+      Module 57 KB JS + 235 KB wasm.
+- [X] Tests pass: browser =RESULT PASS=; =ctest -R "^mass_|^gpu_"= 43/43.
+      One run took 1049 s for =mass_gpu_dem= (11.8 s alone, same numbers);
+      not reproduced, cause not found.
+- [X] Documentation updates: =src/ninja/gpu/wasm/README.org=.
 - [ ] Tests pass / Documentation updates
 
 ** TODO 3.2 Shared device with the fire simulation [0/4]
@@ -690,3 +707,9 @@ the answer depends on the preconditioner by more than users might expect.
 A tighter tolerance (0.01 costs the GPU ~260 vs ~160 iterations, ~0.02 s
 on the fine mesh) would make the result less solver-dependent. A science
 question for the WindNinja team, not a GPU one.
+** TODO run_browser_test.sh leaves spel daemons running
+Each run starts =spel daemon --session windninja-wasm-<pid>= and its
+cleanup calls =spel --session … close=, which closes the browser but not
+the daemon: 22 idle daemons had piled up on this machine (the oldest 1.4
+days). Stop the daemon too in =cleanup()= (and check spel for the right
+command), then stop the leftovers.

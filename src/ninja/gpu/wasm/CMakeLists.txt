@@ -55,15 +55,16 @@ add_executable(windninja_wasm windninja_wasm.cpp
                ${NINJA_DIR}/rans_gpu_bridge.cpp ${NINJA_DIR}/rans_gpu_solve.cpp
                ${NINJA_DIR}/rans_dem_solve.cpp
                ${NINJA_DIR}/mass_fem.cpp ${NINJA_DIR}/mass_pcg.cpp ${NINJA_DIR}/preconditioner.cpp
-               ${NINJA_DIR}/mass_gpu_solve.cpp)
+               ${NINJA_DIR}/mass_gpu_solve.cpp ${NINJA_DIR}/mass_terrain.cpp
+               ${NINJA_DIR}/mass_wind.cpp ${NINJA_DIR}/mass_dem.cpp ${NINJA_DIR}/windProfile.cpp)
 target_include_directories(windninja_wasm PRIVATE ${GPU_DIR} ${NINJA_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(windninja_wasm PRIVATE ${PORT_FLAG} ${EH_FLAG})
-set(SOLVER_EXPORTS "-sEXPORTED_FUNCTIONS=_main,_windninja_solve,_windninja_mass_solve,_malloc,_free"
+set(SOLVER_EXPORTS "-sEXPORTED_FUNCTIONS=_main,_windninja_solve,_windninja_mass_solve,_windninja_mass_dem_solve,_malloc,_free"
                    "-sEXPORTED_RUNTIME_METHODS=ccall,HEAPF64")
 if(GPU_WASM_ASYNC STREQUAL "JSPI")
     # these wait on the GPU, so they must be suspending exports
-    list(APPEND SOLVER_EXPORTS "-sJSPI_EXPORTS=windninja_solve,windninja_mass_solve")
+    list(APPEND SOLVER_EXPORTS "-sJSPI_EXPORTS=windninja_solve,windninja_mass_solve,windninja_mass_dem_solve")
 endif()
 target_link_options(windninja_wasm PRIVATE ${PORT_FLAG} ${EH_FLAG}
                     -s${GPU_WASM_ASYNC}=1 -sALLOW_MEMORY_GROWTH=1 ${SOLVER_EXPORTS})
