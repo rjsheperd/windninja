@@ -111,5 +111,6 @@ about 23 µs per dispatch and 0.2–0.5 ms per wait on an M3 Max, so read back
 rarely.
 
 * Browser build
-=wasm/= builds this layer, and the whole solver (=windninja_wasm=), for the
+=wasm/= builds this layer, and the RANS and mass solvers
+(=windninja_wasm=: =windninja_solve=, =windninja_mass_solve=), for the
 browser with Emscripten; see =wasm/README.org=.
