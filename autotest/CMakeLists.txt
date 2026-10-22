@@ -453,7 +453,8 @@ if(WITH_WEBGPU)
                     validation_error_throws reduction_sum grid_pack fields_slots
                     kernel_gradients_matches_cpu kernel_residuals_matches_cpu
                     kernel_iterate_matches_cpu multigrid_matches_cpu dem_solve_hill
-                    mass_stencil_pack kernel_mass_apply_matches_cpu)
+                    mass_stencil_pack kernel_mass_apply_matches_cpu mass_pcg_matches_cpu
+                    mass_pcg_nan_throws)
         add_test(gpu_${gputest}
                  ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=gpu/${gputest})
         # machines without a WebGPU adapter skip rather than fail

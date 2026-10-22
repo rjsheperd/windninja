@@ -26,6 +26,7 @@
 
 #include "gpu_mass.h"
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -111,6 +112,117 @@ void MassOperator::apply(const Buffer &x, Buffer &y)
     std::size_t gx = groups < maxGroupsX ? groups : maxGroupsX;
     std::size_t gy = (groups + gx - 1) / gx;
     kernel_.dispatch({&params_, &coef_, &x, &y}, (uint32_t)gx, (uint32_t)gy);
+}
+
+namespace {
+
+struct PcgParams
+{
+    uint32_t ncols, nrows, nlayers, nodes, groups, start, pad1, pad2;
+};
+
+enum Scalar { RHO = 0, PQ, ALPHA, BETA, RR, SCALARS = 8 };
+
+std::string pcgSource(const char *stage)
+{
+    return std::string(kernels::massPcgPrelude) + stage;
+}
+
+} // namespace
+
+MassPcg::MassPcg(Context &context, const MassStencil &stencil)
+    : context_(context), nodes_(stencil.nodes()),
+      gx_(0), gy_(0), op_(context, stencil),
+      params_(context, sizeof(PcgParams), Buffer::Uniform),
+      startParams_(context, sizeof(PcgParams), Buffer::Uniform),
+      invDiag_(context, nodes_ * sizeof(float)), x_(context, nodes_ * sizeof(float)),
+      r_(context, nodes_ * sizeof(float)), z_(context, nodes_ * sizeof(float)),
+      p_(context, nodes_ * sizeof(float)), q_(context, nodes_ * sizeof(float)),
+      scalars_(context, SCALARS * sizeof(float)),
+      partials_(context, 2 * ((nodes_ + 255) / 256 + maxGroupsX) * sizeof(float)),
+      direction_(context, pcgSource(kernels::massPcgDirection).c_str()),
+      apply_(context, pcgSource(kernels::massPcgApply).c_str()),
+      alpha_(context, pcgSource(kernels::massPcgAlpha).c_str()),
+      update_(context, pcgSource(kernels::massPcgUpdate).c_str()),
+      beta_(context, pcgSource(kernels::massPcgBeta).c_str())
+{
+    std::size_t groups = (nodes_ + 255) / 256;
+    gx_ = (uint32_t)(groups < maxGroupsX ? groups : maxGroupsX);
+    gy_ = (uint32_t)((groups + gx_ - 1) / gx_);
+    PcgParams pp = {(uint32_t)stencil.ncols, (uint32_t)stencil.nrows, (uint32_t)stencil.nlayers,
+                    (uint32_t)nodes_, gx_ * gy_, 0, 0, 0};
+    params_.upload(&pp, sizeof pp);
+    pp.start = 1;
+    startParams_.upload(&pp, sizeof pp);
+
+    std::vector<float> inv(nodes_);
+    for(std::size_t n = 0; n < nodes_; n++)
+    {
+        float d = stencil.coef[n];
+        if(!(d > 0.0f))
+            throw Error("gpu::MassPcg: non-positive diagonal at node " + std::to_string(n));
+        inv[n] = 1.0f / d;
+    }
+    invDiag_.upload(inv);
+}
+
+void MassPcg::dispatchNodes(Kernel &kernel, const std::vector<const Buffer *> &bindings)
+{
+    kernel.dispatch(bindings, gx_, gy_);
+}
+
+double MassPcg::residualSquared()
+{
+    float rr;
+    scalars_.download(&rr, sizeof rr, RR * sizeof(float));
+    if(!std::isfinite(rr))
+        throw Error("gpu::MassPcg: the residual is no longer finite");
+    return rr;
+}
+
+MassPcg::Result MassPcg::solve(const std::vector<double> &b, std::vector<double> &x, double tol,
+                               int maxIterations, int checkEvery)
+{
+    if(b.size() != nodes_ || x.size() != nodes_)
+        throw Error("gpu::MassPcg::solve: vectors don't match the grid");
+    if(checkEvery < 1)
+        checkEvery = 1;
+    double normb = 0.0;
+    for(double v : b)
+        normb += v * v;
+    normb = std::sqrt(normb);
+    if(normb == 0.0)
+        normb = 1.0;
+
+    // start: q = A x, r = b - q, z = r / diag, rho = z.r; p holds b until
+    // the first direction, and rho starts at infinity so that beta = 0.
+    std::vector<float> xf(x.begin(), x.end()), bf(b.begin(), b.end());
+    x_.upload(xf);
+    p_.upload(bf);
+    float scalars[SCALARS] = {INFINITY, 0, 0, 0, 0, 0, 0, 0};
+    scalars_.upload(scalars, sizeof scalars);
+    op_.apply(x_, q_);
+    dispatchNodes(update_, {&startParams_, &scalars_, &x_, &p_, &q_, &r_, &invDiag_, &z_, &partials_});
+    beta_.dispatch({&params_, &partials_, &scalars_}, 1);
+
+    Result result;
+    result.residual = std::sqrt(residualSquared()) / normb;
+    for(int i = 1; i <= maxIterations && result.residual > tol; i++)
+    {
+        dispatchNodes(direction_, {&params_, &scalars_, &z_, &p_});
+        dispatchNodes(apply_, {&params_, &op_.coefficients(), &p_, &q_, &partials_});
+        alpha_.dispatch({&params_, &partials_, &scalars_}, 1);
+        dispatchNodes(update_, {&params_, &scalars_, &x_, &p_, &q_, &r_, &invDiag_, &z_, &partials_});
+        beta_.dispatch({&params_, &partials_, &scalars_}, 1);
+        result.iterations = i;
+        if(i % checkEvery == 0 || i == maxIterations)
+            result.residual = std::sqrt(residualSquared()) / normb;
+    }
+    result.converged = result.residual <= tol;
+
+    x_.download(xf.data(), nodes_ * sizeof(float));
+    x.assign(xf.begin(), xf.end());
+    return result;
 }
 
 } // namespace gpu

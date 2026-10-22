@@ -21,6 +21,7 @@
 #include "gpu_rans.h"
 #include "gpu_reduce.h"
 #include "mass_fem.h"
+#include "mass_pcg.h"
 #include "rans_abl.h"
 #include "rans_gpu_bridge.h"
 #include "rans_grid.h"
@@ -684,6 +685,167 @@ BOOST_AUTO_TEST_CASE( mass_apply_timing )
     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     BOOST_TEST_MESSAGE("mass apply: " << n << " nodes, " << ms / reps << " ms per apply ("
                                       << c->adapterName() << ")");
+}
+
+// an interior node (not on a Dirichlet boundary)
+static int Node0Interior(const MassGrid &g)
+{
+    return 1 + g.ncols * (1 + g.nrows * 1);
+}
+
+static gpu::MassStencil Stencil(const MassGrid &g, const MassSystem &s)
+{
+    return gpu::PackMassStencil(g.ncols, g.nrows, g.nlayers, s.SK.data(), s.col_ind.data(),
+                                s.row_ptr.data());
+}
+
+// ||A x - b|| / ||b|| in double
+static double TrueResidual(const MassSystem &s, const std::vector<double> &x)
+{
+    std::vector<double> ax, rowAbs;
+    CsrMultiply(s, x, ax, rowAbs);
+    double r = 0.0, b = 0.0;
+    for(std::size_t i = 0; i < ax.size(); i++)
+    {
+        r += (ax[i] - s.RHS[i]) * (ax[i] - s.RHS[i]);
+        b += s.RHS[i] * s.RHS[i];
+    }
+    return std::sqrt(r / b);
+}
+
+// Max |difference| of the recovered horizontal wind, relative to the max
+// initial wind speed.
+static double WindDifference(const MassGrid &g, const std::vector<double> &phiA,
+                             const std::vector<double> &phiB)
+{
+    int n = g.numNodes();
+    std::vector<double> u0(n), v0(n), w0(n, 0.0), alphaV(n, 1.0);
+    for(int i = 0; i < n; i++)
+    {
+        u0[i] = 5.0 + 0.002 * g.x[i];
+        v0[i] = 1.0 - 0.001 * g.y[i];
+    }
+    std::vector<double> ua(n), va(n), wa(n), ub(n), vb(n), wb(n);
+    RecoverVelocity(g, phiA.data(), u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0,
+                    ua.data(), va.data(), wa.data());
+    RecoverVelocity(g, phiB.data(), u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0,
+                    ub.data(), vb.data(), wb.data());
+    double worst = 0.0, speed = 0.0;
+    for(int i = 0; i < n; i++)
+    {
+        worst = std::max(worst, std::hypot(ua[i] - ub[i], va[i] - vb[i]));
+        speed = std::max(speed, std::hypot(u0[i], v0[i]));
+    }
+    return worst / speed;
+}
+
+// The GPU's f32 Jacobi-PCG against the CPU's double one: at a tight
+// tolerance both reach the true residual, and at WindNinja's 0.1 the
+// recovered wind differs by about as much as two CPU preconditioners do.
+BOOST_AUTO_TEST_CASE( mass_pcg_matches_cpu )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    MassGrid g = MassRidgeGrid(40, 33, 12);
+    MassSystem s = MassRidgeSystem(g);
+    int n = g.numNodes();
+    gpu::MassPcg pcg(*c, Stencil(g, s));
+
+    // tight: the f32 recurrence and the true residual agree
+    std::vector<double> x(n, 0.0);
+    gpu::MassPcg::Result r = pcg.solve(s.RHS, x, 1e-4, 2000, 10);
+    BOOST_TEST_MESSAGE("gpu pcg 1e-4: " << r.iterations << " iterations, residual "
+                       << r.residual << ", true " << TrueResidual(s, x));
+    BOOST_CHECK(r.converged);
+    BOOST_CHECK_LT(TrueResidual(s, x), 2e-4);
+
+    // WindNinja's tolerance, against the CPU's Jacobi and SSOR
+    MassSolveOptions options;
+    options.jacobi = true;
+    std::vector<double> cpuJacobi(n, 0.0), cpuSsor(n, 0.0), gpuPhi(n, 0.0);
+    MassSolveResult cj = SolveMassPcg(s, cpuJacobi.data(), options);
+    options.jacobi = false;
+    SolveMassPcg(s, cpuSsor.data(), options);
+    gpu::MassPcg::Result rg = pcg.solve(s.RHS, gpuPhi, 0.1, 2000, 10);
+    double dGpu = WindDifference(g, gpuPhi, cpuJacobi);
+    double dCpu = WindDifference(g, cpuSsor, cpuJacobi);
+    BOOST_TEST_MESSAGE("tol 0.1: cpu jacobi " << cj.iterations << " iterations, gpu "
+                       << rg.iterations << "; wind gpu-cpu " << dGpu << ", ssor-jacobi " << dCpu);
+    BOOST_CHECK(rg.converged);
+    BOOST_CHECK_LE(rg.iterations, cj.iterations + 10);   // checks every 10
+    BOOST_CHECK_LT(TrueResidual(s, gpuPhi), 0.1);
+    BOOST_CHECK_LT(dGpu, 2.0 * dCpu);
+
+    // warm start from the CPU's answer: r = b - A x, not b
+    std::vector<double> warm(cpuJacobi);
+    gpu::MassPcg::Result rw = pcg.solve(s.RHS, warm, 1e-3, 2000, 1);
+    BOOST_TEST_MESSAGE("warm start to 1e-3: " << rw.iterations << " iterations, true "
+                       << TrueResidual(s, warm));
+    BOOST_CHECK(rw.converged);
+    BOOST_CHECK_LT(TrueResidual(s, warm), 2e-3);
+
+    // same start, same answer: deterministic
+    std::vector<double> again(n, 0.0);
+    pcg.solve(s.RHS, again, 0.1, 2000, 10);
+    BOOST_CHECK(again == gpuPhi);
+}
+
+// A NaN in the right-hand side stops the solve with an error, not a
+// "converged" result (NaN > tol is false).
+BOOST_AUTO_TEST_CASE( mass_pcg_nan_throws )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    MassGrid g = MassRidgeGrid(9, 8, 5);
+    MassSystem s = MassRidgeSystem(g);
+    gpu::MassPcg pcg(*c, Stencil(g, s));
+    std::vector<double> b(s.RHS), x(g.numNodes(), 0.0);
+    b[Node0Interior(g)] = std::nan("");
+    BOOST_CHECK_THROW(pcg.solve(b, x, 0.1, 100, 1), gpu::Error);
+}
+
+// Not in ctest: the whole GPU solve at the fine-mesh size, against the CPU
+// solver on the same system.  --run_test=gpu/mass_pcg_timing --log_level=message
+BOOST_AUTO_TEST_CASE( mass_pcg_timing )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    MassGrid g = MassRidgeGrid(137, 147, 20);
+    MassSystem s = MassRidgeSystem(g);
+    int n = g.numNodes();
+    auto now = [] { return std::chrono::steady_clock::now(); };
+    auto ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    auto t0 = now();
+    gpu::MassPcg pcg(*c, Stencil(g, s));
+    auto t1 = now();
+    std::vector<double> warm(n, 0.0);
+    pcg.solve(s.RHS, warm, 0.1, 5000, 10);
+    for(int every : {10, 25})
+    {
+        std::vector<double> x(n, 0.0);
+        auto a = now();
+        gpu::MassPcg::Result r = pcg.solve(s.RHS, x, 0.1, 5000, every);
+        auto b = now();
+        BOOST_TEST_MESSAGE("gpu jacobi-pcg, check every " << every << ": " << r.iterations
+                           << " iterations, " << ms(a, b) << " ms (setup " << ms(t0, t1)
+                           << " ms), true residual " << TrueResidual(s, x));
+    }
+    for(bool jacobi : {true, false})
+    {
+        MassSolveOptions options;
+        options.jacobi = jacobi;
+        std::vector<double> x(n, 0.0);
+        auto a = now();
+        MassSolveResult r = SolveMassPcg(s, x.data(), options);
+        auto b = now();
+        BOOST_TEST_MESSAGE("cpu " << (jacobi ? "jacobi" : "ssor") << "-pcg: " << r.iterations
+                           << " iterations, " << ms(a, b) << " ms");
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

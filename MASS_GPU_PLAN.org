@@ -300,11 +300,55 @@ Measured (M3 Max, Metal): *0.127 ms per y = A x at 402,780 nodes*
 about 2.4× faster than the 0.3 ms assumed in the 0.2 gate. The CPU's whole
 Jacobi iteration is ~4.3 ms at that size.
 
-** TODO 2.2 Jacobi-PCG with on-GPU α/β and periodic convergence checks [0/5]
-- [ ] Scalar kernel for α/β; residual read back every N iterations.
-- [ ] Indirect-dispatch stop (optional, after measuring the readback cost).
-- [ ] Add tests: Φ and u/v/w against the CPU solver with measured
-      tolerances; NaN residual fails loudly.
+** DONE 2.2 Jacobi-PCG with on-GPU α/β and periodic convergence checks [5/5]
+- [X] Scalar kernel for α/β; residual read back every N iterations.
+      =gpu::MassPcg= (=gpu_mass.{h,cpp}=, =massPcg*= in
+      =gpu_mass_kernels.h=), f32, 5 dispatches per iteration: p = z + βp;
+      q = Ap with partial sums of p·q; α = ρ/p·q (one workgroup);
+      x += αp, r −= αq, z = r/diag with partials of z·r and r·r; β and ρ
+      (one workgroup). The start reuses the update stage (r = b − Ax).
+      Dot products are fixed-order tree sums, so solves are deterministic.
+      The host reads r·r every N iterations and throws if it isn't finite.
+- [X] Indirect-dispatch stop: SKIP. Checking every 10 vs every 25
+      iterations: 20.4 vs 21.7 ms (the later check overshoots by more than
+      the readbacks cost); 11 readbacks are ~3 ms of 20. Revisit only if
+      readbacks dominate on slower devices.
+- [X] Add tests (=autotest/test_gpu.cpp=): =gpu/mass_pcg_matches_cpu=
+      (40×33×12 ridge grid: to 1e-4 the GPU's residual and the true double
+      residual agree, 4.8e-5 vs 5.0e-5; at WindNinja's 0.1, iterations
+      within 10 of the CPU's Jacobi, true residual < 0.1, and the recovered
+      wind differs from the CPU's Jacobi answer by 0.25% of the max speed,
+      less than CPU SSOR vs Jacobi, 0.39%; a warm start converges, so the
+      start uses b − Ax; two solves are identical) and
+      =gpu/mass_pcg_nan_throws=. Mutation checks: β = 0, r updated with p,
+      start ignoring Ax, no preconditioner, broken r·r sum, first β not 0,
+      no finite check: each caught. =gpu/mass_pcg_timing= (not in ctest).
+- [X] Tests pass: =ctest -R ^gpu_= 19/19.
+- [X] Documentation updates: =src/ninja/gpu/README.org=; this entry.
+
+Measured, fine-mesh size (137×147×20 = 402,780 nodes, synthetic ridge
+grid, tol 0.1, M3 Max; =gpu/mass_pcg_timing=):
+
+| solver                   | iterations | solve   |
+|--------------------------+------------+---------|
+| GPU Jacobi-PCG (f32)     |        110 | 20.4 ms |
+| CPU Jacobi-PCG (8 thr)   |        105 | 444 ms  |
+| CPU SSOR-PCG (8 thr)     |         26 | 370 ms  |
+
+GPU setup (stencil upload, 6 pipelines) 21 ms, once per mesh. ~0.17 ms
+per iteration with 5 separate submits each. The 0.2 gate assumed ~0.45 ms
+and ~80 ms. This grid converges faster than Big Butte (SSOR 26 vs 57
+iterations), so the real comparison is 2.2a.
+
+** TODO 2.2a Run the GPU solve inside WindNinja [0/5]
+- [ ] =NINJA_MASS_SOLVER=WEBGPU= (config option, like =NINJA_MASS_PRECOND=)
+      makes =ninja::solve()= pack the system and call =gpu::MassPcg=,
+      falling back to the CPU (with a warning) when there is no adapter;
+      =WITH_WEBGPU= builds only.
+- [ ] Time Big Butte coarse/medium/fine end to end and per phase against
+      CPU SSOR (=scripts/mass_solver_timing.sh=).
+- [ ] Add tests: a CLI run with the option matches the CPU output within
+      a measured tolerance; no-adapter fallback.
 - [ ] Tests pass
 - [ ] Documentation updates
 

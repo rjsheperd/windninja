@@ -28,6 +28,7 @@
 #define GPU_MASS_H
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "gpu_context.h"
@@ -79,6 +80,40 @@ private:
     std::size_t nodes_;
     Buffer params_, coef_;
     Kernel kernel_;
+};
+
+/*
+** Jacobi-preconditioned conjugate gradient for the mass system on the GPU,
+** in f32.  alpha and beta stay on the GPU; the host reads back r.r every
+** checkEvery iterations to test ||r|| / ||b|| <= tol, so a converged solve
+** can run up to checkEvery - 1 iterations past the tolerance.
+*/
+class MassPcg
+{
+public:
+    MassPcg(Context &context, const MassStencil &stencil);
+
+    struct Result
+    {
+        int iterations = 0;
+        double residual = 0.0;   // ||r|| / ||b|| from the GPU's r.r
+        bool converged = false;
+    };
+
+    // Solves A x = b starting from x; throws Error if r.r stops being finite.
+    Result solve(const std::vector<double> &b, std::vector<double> &x, double tol,
+                 int maxIterations, int checkEvery = 10);
+
+private:
+    void dispatchNodes(Kernel &kernel, const std::vector<const Buffer *> &bindings);
+    double residualSquared();
+
+    Context &context_;
+    std::size_t nodes_;
+    uint32_t gx_, gy_;
+    MassOperator op_;
+    Buffer params_, startParams_, invDiag_, x_, r_, z_, p_, q_, scalars_, partials_;
+    Kernel direction_, apply_, alpha_, update_, beta_;
 };
 
 } // namespace gpu
