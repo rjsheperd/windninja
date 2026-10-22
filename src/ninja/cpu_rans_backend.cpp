@@ -39,9 +39,13 @@
 #include "rans_solver.h"
 #include "rans_wind.h"
 
-static const double AIR_NU = 1.58946099535e-05;   // WindNinja's physicalProperties
 
 RansGrid CpuRansBackend::buildGrid(const MomentumProblem &problem, double firstLayer) const
+{
+    return TerrainGrid(terrainDem(problem), problem.meshResolution, firstLayer, layers, growth);
+}
+
+TerrainDem CpuRansBackend::terrainDem(const MomentumProblem &problem)
 {
     const Elevation &e = *problem.dem;
     TerrainDem dem;
@@ -54,7 +58,7 @@ RansGrid CpuRansBackend::buildGrid(const MomentumProblem &problem, double firstL
     for(int r = 0; r < dem.nRows; r++)
         for(int c = 0; c < dem.nCols; c++)
             dem.z[(size_t)r * dem.nCols + c] = e.get_cellValue(r, c);
-    return TerrainGrid(dem, problem.meshResolution, firstLayer, layers, growth);
+    return dem;
 }
 
 bool CpuRansBackend::solve(const MomentumProblem &problem,
@@ -101,13 +105,7 @@ bool CpuRansBackend::solve(const MomentumProblem &problem,
 
 RansSolver CpuRansBackend::setUp(const MomentumProblem &problem, const RansGrid &g)
 {
-    double ustar = AblFrictionVelocity(problem.speed, problem.inputHeight, problem.z0);
-    // artificial compressibility: wave speed comparable to the flow speed
-    double beta = std::max(1.0, 1.25 * problem.speed * problem.speed);
-    RansSolver s(g, AIR_NU, beta);
-    ApplyWindBoundaries(s, ustar, problem.z0, problem.direction);
-    InitializeLogProfile(s, ustar, problem.z0, problem.direction);
-    return s;
+    return WindSetup(g, problem.speed, problem.inputHeight, problem.z0, problem.direction);
 }
 
 void CpuRansBackend::sample(const MomentumProblem &problem, const RansGrid &g,

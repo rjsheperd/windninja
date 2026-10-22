@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "rans_solver.h"
+#include "rans_terrain.h"
 
 class RansGrid;
 
@@ -62,6 +63,9 @@ public:
     ** flat domain top (max elevation + blockMeshDz).
     */
     RansGrid buildGrid(const MomentumProblem &problem, double firstLayer) const;
+
+    /* The problem's DEM as plain arrays (TerrainGrid's input). */
+    static TerrainDem terrainDem(const MomentumProblem &problem);
 
     /* Air viscosity, the artificial-compressibility beta for a problem, and
     ** the wind setup (log-profile inlets, outlets, rough ground) with the

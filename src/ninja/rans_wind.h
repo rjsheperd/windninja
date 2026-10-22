@@ -57,4 +57,16 @@ void ApplyWindBoundaries(RansSolver &solver, double ustar, double z0, double dir
 */
 void InitializeLogProfile(RansSolver &solver, double ustar, double z0, double directionFrom);
 
+/* WindNinja's air viscosity (physicalProperties). */
+const double RANS_AIR_NU = 1.58946099535e-05;
+
+/*
+** The momentum backends' wind problem on g: speed (m/s) at inputHeight (m
+** above the canopy) from directionFrom, over roughness z0.  The
+** artificial-compressibility beta matches the wave speed to the flow, with
+** log-profile inlets, outlets, rough ground and a log-profile start.
+*/
+RansSolver WindSetup(const RansGrid &g, double speed, double inputHeight, double z0,
+                     double directionFrom);
+
 #endif /* RANS_WIND_H */

@@ -38,6 +38,7 @@
 #include "gpu_multigrid.h"
 #include "gpu_rans.h"
 #include "rans_gpu_bridge.h"
+#include "rans_dem_solve.h"
 #include "rans_gpu_solve.h"
 #include "rans_grid.h"
 #include "rans_multigrid.h"
@@ -61,16 +62,14 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
     com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS adapter: %s.",
                   context->adapterName().c_str());
 
-    // the CPU backend's grid, boundaries and initial state
-    CpuRansBackend cpu;
-    cpu.layers = layers;
-    cpu.growth = growth;
-    const double firstLayer = problem.meshResolution;
-    RansGrid g = cpu.buildGrid(problem, firstLayer);
-    com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS grid: %d x %d x %d cells.",
-                  g.nx, g.ny, g.nz);
-    RansSolver setup = CpuRansBackend::setUp(problem, g);
-    gpu::RansSolver s(*context, GpuGridView(g), setup.nu, setup.beta);
+    DemWindProblem p;
+    p.speed = problem.speed;
+    p.inputHeight = problem.inputHeight;
+    p.direction = problem.direction;
+    p.z0 = problem.z0;
+    p.meshResolution = problem.meshResolution;
+    p.layers = layers;
+    p.growth = growth;
     GpuSolveOptions options;
     options.multigridLevels = multigridLevels;
     options.maxIterations = maxIterations;
@@ -79,25 +78,40 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
     options.outputTolerance = outputTolerance;
     options.cfl = cfl;
     options.maxRetries = maxRetries;
+    DemWind wind;
     try
     {
-        GpuSolveReport report = SolveOnGpu(s, setup, options,
+        wind = SolveDemOnGpu(*context, CpuRansBackend::terrainDem(problem), p, options,
             [com](const std::string &message, bool warning)
             {
                 com->ninjaCom(warning ? ninjaComClass::ninjaWarning : ninjaComClass::ninjaNone,
                               "%s", message.c_str());
             },
             checkCancel);
-        lastCfl = report.cfl;
     }
     catch(const RansDivergedError &e)
     {
         // lets NinjaFoam retry on a smoothed DEM
         throw MomentumDivergedError(e.what());
     }
+    lastCfl = wind.report.cfl;
 
-    CpuRansBackend::sample(problem, g, s.fields.download(gpu::fieldU),
-                           s.fields.download(gpu::fieldV), s.fields.download(gpu::fieldK),
-                           firstLayer, result);
+    // ground-cell values on the DEM grid, as OpenFOAM's 'cell' sampling
+    result.u = *problem.dem;
+    result.v = *problem.dem;
+    result.k = *problem.dem;
+    const int nCols = problem.dem->get_nCols();
+    for(int row = 0; row < problem.dem->get_nRows(); row++)
+        for(int col = 0; col < nCols; col++)
+        {
+            std::size_t i = std::size_t(row) * nCols + col;
+            result.u(row, col) = wind.u[i];
+            result.v(row, col) = wind.v[i];
+            result.k(row, col) = wind.k[i];
+        }
+    result.sampleHeight = wind.sampleHeight;
+    result.outputHeightResolved = 2.0 * wind.sampleHeight < problem.outputHeight;
+    if(result.outputHeightResolved)
+        throw std::runtime_error("RANS backend: output height inside the first layer is not supported yet");
     return accept(result);
 }

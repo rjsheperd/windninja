@@ -143,7 +143,8 @@ if(NINJAFOAM)
 endif(NINJAFOAM)
 
 if(WITH_WEBGPU)
-    set(NINJA_SOURCES ${NINJA_SOURCES} rans_gpu_bridge.cpp rans_gpu_solve.cpp)
+    set(NINJA_SOURCES ${NINJA_SOURCES} rans_gpu_bridge.cpp rans_gpu_solve.cpp
+                                   rans_dem_solve.cpp)
     if(NINJAFOAM)
         set(NINJA_SOURCES ${NINJA_SOURCES} webgpu_rans_backend.cpp)
     endif(NINJAFOAM)

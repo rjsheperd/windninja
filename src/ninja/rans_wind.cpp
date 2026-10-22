@@ -26,6 +26,7 @@
 
 #include "rans_wind.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -100,4 +101,16 @@ void InitializeLogProfile(RansSolver &solver, double ustar, double z0, double di
         solver.epsilon[c] = AblInletEpsilon(ustar, y, z0);
         solver.nut[c] = solver.model.cmu * solver.k[c] * solver.k[c] / solver.epsilon[c];
     }
+}
+
+RansSolver WindSetup(const RansGrid &g, double speed, double inputHeight, double z0,
+                     double directionFrom)
+{
+    double ustar = AblFrictionVelocity(speed, inputHeight, z0);
+    // artificial compressibility: wave speed comparable to the flow speed
+    double beta = std::max(1.0, 1.25 * speed * speed);
+    RansSolver s(g, RANS_AIR_NU, beta);
+    ApplyWindBoundaries(s, ustar, z0, directionFrom);
+    InitializeLogProfile(s, ustar, z0, directionFrom);
+    return s;
 }
