@@ -486,8 +486,44 @@ Max, seconds):
 outside it is mesh, initialization and output, all on the CPU.
 
 
-** TODO 2.5 GATE: native speed and accuracy recorded
+** DONE 2.5 GATE: native speed and accuracy recorded [3/3]
 Record times vs the 8-thread CPU and accuracy vs the CPU solver.
+
+Recorded 2026-10-22. =scripts/mass_gpu_sweep.sh <cli> sweep.csv
+data/*.tif=: all 10 DEMs in =data/= × 4 directions (0, 90, 180, 270), fine
+mesh (388–398k nodes), 10 mph, domain average, 8 threads, M3 Max. Each run
+solved by CPU SSOR (the default), CPU Jacobi and the GPU. The accuracy
+yardstick is how far CPU Jacobi lands from CPU SSOR: both are correct
+answers at WindNinja's tolerance (0.1), so that spread is the solver's own
+tolerance.
+
+| measure                                  | min   | median | max                  |
+|------------------------------------------+-------+--------+----------------------|
+| GPU runs that finished                   |       | 40/40  |                      |
+| whole run, CPU SSOR time / GPU time      | 5.3×  | 6.9×   | 7.7×                 |
+| GPU vs SSOR speed RMSE / Jacobi vs SSOR  | 0.83  | 0.97   | 1.10 (example_lcp 0) |
+| same, mean direction difference          | 0.89  | 0.97   | 1.07                 |
+| GPU iterations − CPU Jacobi iterations   | 0     |        | 9 (checks every 10)  |
+
+Per DEM (direction 0), GPU vs SSOR / Jacobi vs SSOR, speed RMSE in mph:
+big_butte 0.017 / 0.018, big_butte_small 0.042 / 0.043, denali 0.104 /
+0.104, example_lcp 0.469 / 0.427, gu 0.022 / 0.023, hi 0.031 / 0.031,
+mackay 0.066 / 0.071, mackay_small 0.072 / 0.074, missoula_valley 0.047 /
+0.048, pr 0.040 / 0.040. Opposite directions give identical differences
+(the mass solver is linear in the initial wind).
+
+- [X] Times vs the 8-thread CPU: whole run 5.3–7.7× faster (median 6.9×)
+      on every DEM; solve alone 9–11× (2.2a). Big Butte per-mesh tables in
+      2.2a and 2.4.
+- [X] Accuracy vs the CPU solver: the GPU's answer is as close to CPU SSOR
+      as CPU Jacobi's is (RMSE ratio 0.83–1.10, median 0.97), on all 10
+      terrains. Equivalent to the CPU within its own tolerance.
+- [X] Decision: native GPU mass solver *meets the gate*. Phase 3 (browser)
+      next. Recorded unattended; RJ can overturn it.
+
+Finding (not the GPU): on =example_lcp= the CPU's own two solvers differ
+by 0.43 mph RMSE, up to 3.6 mph, because 0.1 is a loose tolerance there.
+See the Inbox.
 
 * Phase 3: Browser
 ** TODO 3.1 Mass solver in =windninja_wasm= [0/4]
@@ -561,3 +597,11 @@ Fixed in 2.4: an atomic flag, checked by =SolveMassWindOnGpu()=.
 element's DETJ ≤ 0; =kernels::massAssemble= silently uses it. Write a flag
 (an atomic or a reduced max) and throw from =MassFem::assemble()= when set, once
 the GPU path builds the system itself (2.4).
+** TODO WindNinja's 0.1 tolerance is loose on some terrains
+On =example_lcp= (fine mesh, 0°), CPU Jacobi and CPU SSOR (both stopping
+at ‖r‖/‖b‖ ≤ 0.1) differ by 0.43 mph RMSE and up to 3.6 mph at 20 ft
+(=scripts/mass_gpu_sweep.sh=); on the other 9 DEMs by 0.02–0.16 mph. So
+the answer depends on the preconditioner by more than users might expect.
+A tighter tolerance (0.01 costs the GPU ~260 vs ~160 iterations, ~0.02 s
+on the fine mesh) would make the result less solver-dependent. A science
+question for the WindNinja team, not a GPU one.
