@@ -38,6 +38,7 @@
 #include "gpu_multigrid.h"
 #include "gpu_rans.h"
 #include "rans_gpu_bridge.h"
+#include "rans_gpu_solve.h"
 #include "rans_grid.h"
 #include "rans_multigrid.h"
 #include "rans_solver.h"
@@ -70,96 +71,30 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
                   g.nx, g.ny, g.nz);
     RansSolver setup = CpuRansBackend::setUp(problem, g);
     gpu::RansSolver s(*context, GpuGridView(g), setup.nu, setup.beta);
-    CopyToGpu(setup, s);
-    // the CPU multigrid only provides the hierarchy (grids and node maps)
-    RansMultigrid hierarchy(setup, multigridLevels);
-    std::unique_ptr<gpu::RansMultigrid> mg;
-    if(hierarchy.levels() > 1)
-        mg.reset(new gpu::RansMultigrid(s, GpuMultigridLevels(hierarchy)));
-    com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS multigrid: %d levels.", hierarchy.levels());
-    const char *unit = mg ? "cycle" : "step";
-
-    // on divergence, restart from the initial state at half the CFL number
-    // (as OpenFOAM's retries)
-    double runCfl = cfl;
-    int it = 0;
-    double worst = 1.0, change = 1e30;
-    for(int attempt = 0; ; attempt++)
+    GpuSolveOptions options;
+    options.multigridLevels = multigridLevels;
+    options.maxIterations = maxIterations;
+    options.checkEvery = checkEvery;
+    options.tolerance = tolerance;
+    options.outputTolerance = outputTolerance;
+    options.cfl = cfl;
+    options.maxRetries = maxRetries;
+    try
     {
-        if(attempt > 0)
-        {
-            CopyToGpu(setup, s);
-            if(mg)
-                mg->reset();
-        }
-        gpu::RansSolver::Residuals peak, r;
-        worst = 1.0;
-        it = 0;
-        bool diverged = false;
-        change = 1e30;
-        std::vector<float> previous;
-        while(it < maxIterations && worst > tolerance && change >= outputTolerance)
-        {
-            checkCancel();
-            if(mg)
+        GpuSolveReport report = SolveOnGpu(s, setup, options,
+            [com](const std::string &message, bool warning)
             {
-                for(int i = 0; i < checkEvery; i++)
-                    mg->cycle(runCfl);
-                r = s.lastResiduals();
-            }
-            else
-                r = s.iterate(checkEvery, runCfl);
-            it += checkEvery;
-            // NaN compares false, so without this a diverged run would stop
-            // as if converged
-            if(!std::isfinite(r.u) || !std::isfinite(r.v) || !std::isfinite(r.k))
-            {
-                diverged = true;
-                break;
-            }
-            peak.u = std::max(peak.u, std::max(r.u, r.v));
-            peak.k = std::max(peak.k, r.k);
-            worst = std::max(std::max(r.u, r.v) / peak.u, r.k / peak.k);
-            // RMS change of the ground-layer speed since the last check (the
-            // ground layer is the first nx * ny cells of each field slot)
-            const std::size_t n2 = std::size_t(g.nx) * g.ny, nc = s.grid.nCells;
-            std::vector<float> ground(2 * n2);
-            s.fields.buffer.download(ground.data(), n2 * sizeof(float),
-                                     gpu::fieldU * nc * sizeof(float));
-            s.fields.buffer.download(ground.data() + n2, n2 * sizeof(float),
-                                     gpu::fieldV * nc * sizeof(float));
-            if(!previous.empty())
-            {
-                double sum = 0.0;
-                for(std::size_t i = 0; i < n2; i++)
-                {
-                    double d = std::hypot(ground[i], ground[n2 + i]) -
-                               std::hypot(previous[i], previous[n2 + i]);
-                    sum += d * d;
-                }
-                change = std::sqrt(sum / n2);
-            }
-            previous.swap(ground);
-            if(it % (mg ? 200 : 1000) == 0)
-                com->ninjaCom(ninjaComClass::ninjaNone, "WebGPU RANS %s %d, residual %g", unit, it,
-                              worst);
-        }
-        if(!diverged)
-            break;
-        if(attempt == maxRetries)
-            throw MomentumDivergedError(std::string("WebGPU RANS diverged by ") + unit + " " +
-                                     std::to_string(it) +
-                                     " at CFL " + std::to_string(runCfl) + " after " +
-                                     std::to_string(maxRetries) + " retries");
-        com->ninjaCom(ninjaComClass::ninjaWarning,
-                      "WebGPU RANS diverged by %s %d at CFL %g; retrying at CFL %g.",
-                      unit, it, runCfl, runCfl / 2.0);
-        runCfl /= 2.0;
+                com->ninjaCom(warning ? ninjaComClass::ninjaWarning : ninjaComClass::ninjaNone,
+                              "%s", message.c_str());
+            },
+            checkCancel);
+        lastCfl = report.cfl;
     }
-    lastCfl = runCfl;
-    com->ninjaCom(ninjaComClass::ninjaNone,
-                  "WebGPU RANS stopped after %d %ss at CFL %g, residual %g, output change %g m/s.",
-                  it, unit, runCfl, worst, change);
+    catch(const RansDivergedError &e)
+    {
+        // lets NinjaFoam retry on a smoothed DEM
+        throw MomentumDivergedError(e.what());
+    }
 
     CpuRansBackend::sample(problem, g, s.fields.download(gpu::fieldU),
                            s.fields.download(gpu::fieldV), s.fields.download(gpu::fieldK),

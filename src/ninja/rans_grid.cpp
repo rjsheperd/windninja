@@ -28,7 +28,6 @@
 
 #include <stdexcept>
 
-#include "mesh.h"
 
 RansGrid RansGrid::FromNodes(int nx, int ny, int nz,
                              const std::vector<double> &x,
@@ -57,26 +56,6 @@ RansGrid RansGrid::FromNodes(int nx, int ny, int nz,
     }
     g.computeMetrics();
     return g;
-}
-
-RansGrid RansGrid::FromMesh(const Mesh &mesh)
-{
-    int nx = mesh.ncols - 1;
-    int ny = mesh.nrows - 1;
-    int nz = mesh.nlayers - 1;
-    size_t nNodes = (size_t)mesh.ncols * mesh.nrows * mesh.nlayers;
-    std::vector<double> x(nNodes), y(nNodes), z(nNodes);
-    for(int k = 0; k <= nz; k++)
-        for(int j = 0; j <= ny; j++)
-            for(int i = 0; i <= nx; i++)
-            {
-                size_t n = i + (size_t)(nx + 1) * (j + (size_t)(ny + 1) * k);
-                // the mass-solver mesh is (row, col, layer) with x along col
-                x[n] = mesh.XORD(j, i, k);
-                y[n] = mesh.YORD(j, i, k);
-                z[n] = mesh.ZORD(j, i, k);
-            }
-    return FromNodes(nx, ny, nz, x, y, z);
 }
 
 /*

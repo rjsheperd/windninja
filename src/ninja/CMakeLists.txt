@@ -39,6 +39,8 @@ endif(NINJAFOAM)
 set(NINJA_SOURCES air.cpp
                   rans_abl.cpp
                   rans_grid.cpp
+                  rans_grid_mesh.cpp
+                  rans_terrain.cpp
                   rans_solver.cpp
                   rans_multigrid.cpp
                   rans_wind.cpp
@@ -141,7 +143,7 @@ if(NINJAFOAM)
 endif(NINJAFOAM)
 
 if(WITH_WEBGPU)
-    set(NINJA_SOURCES ${NINJA_SOURCES} rans_gpu_bridge.cpp)
+    set(NINJA_SOURCES ${NINJA_SOURCES} rans_gpu_bridge.cpp rans_gpu_solve.cpp)
     if(NINJAFOAM)
         set(NINJA_SOURCES ${NINJA_SOURCES} webgpu_rans_backend.cpp)
     endif(NINJAFOAM)

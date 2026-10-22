@@ -34,6 +34,7 @@
 
 #include "rans_abl.h"
 #include "rans_grid.h"
+#include "rans_terrain.h"
 #include "rans_multigrid.h"
 #include "rans_solver.h"
 #include "rans_wind.h"
@@ -42,55 +43,18 @@ static const double AIR_NU = 1.58946099535e-05;   // WindNinja's physicalPropert
 
 RansGrid CpuRansBackend::buildGrid(const MomentumProblem &problem, double firstLayer) const
 {
-    const Elevation &dem = *problem.dem;
-    const int nRows = dem.get_nRows(), nCols = dem.get_nCols();
-    const double cs = dem.get_cellSize();
-    const int nx = nCols, ny = nRows, nz = layers;
-
-    // OpenFOAM's domain top (NinjaFoam::SetBlockMeshParametersFromDem),
-    // including its minimum of 11 block layers; block cells are 2 x the mesh
-    // resolution for one refinement round (coarse and medium meshes)
-    double relief = dem.get_maxValue() - dem.get_minValue();
-    double blockMeshDz = std::max(0.1 * std::max(dem.get_xDimension(), dem.get_yDimension()),
-                                  relief + 0.1 * relief);
-    blockMeshDz = std::max(blockMeshDz, 11 * 2.0 * problem.meshResolution);
-    double top = dem.get_maxValue() + blockMeshDz;
-
-    // fractions of the column above the first layer, growing geometrically
-    std::vector<double> frac(nz, 0.0);
-    double sum = 0.0;
-    for(int m = 0; m < nz - 1; m++) sum += std::pow(growth, m);
-    for(int k = 2; k < nz; k++) frac[k] = frac[k - 1] + std::pow(growth, k - 2) / sum;
-
-    std::vector<double> x, y, z;
-    size_t nNodes = (size_t)(nx + 1) * (ny + 1) * (nz + 1);
-    x.reserve(nNodes); y.reserve(nNodes); z.reserve(nNodes);
-    for(int k = 0; k <= nz; k++)
-        for(int j = 0; j <= ny; j++)          // AsciiGrid row j (row 0 is south)
-            for(int i = 0; i <= nx; i++)      // AsciiGrid column i
-            {
-                // ground at a cell corner: mean of the DEM cells touching it
-                double g = 0.0;
-                int n = 0;
-                for(int r = j - 1; r <= j; r++)
-                    for(int c = i - 1; c <= i; c++)
-                        if(r >= 0 && r < nRows && c >= 0 && c < nCols)
-                        {
-                            g += dem.get_cellValue(r, c);
-                            n++;
-                        }
-                g /= n;
-                double zk;
-                if(k == 0) zk = g;
-                else if(k == nz) zk = top;
-                else zk = g + firstLayer + (top - g - firstLayer) * frac[k];
-                x.push_back(dem.get_xllCorner() + i * cs);
-                y.push_back(dem.get_yllCorner() + j * cs);
-                z.push_back(zk);
-            }
-    if(top - dem.get_maxValue() <= 2.0 * firstLayer)
-        throw std::runtime_error("CPU RANS grid: no room above the first layer under the domain top");
-    return RansGrid::FromNodes(nx, ny, nz, x, y, z);
+    const Elevation &e = *problem.dem;
+    TerrainDem dem;
+    dem.nCols = e.get_nCols();
+    dem.nRows = e.get_nRows();
+    dem.cellSize = e.get_cellSize();
+    dem.xll = e.get_xllCorner();
+    dem.yll = e.get_yllCorner();
+    dem.z.resize((size_t)dem.nCols * dem.nRows);
+    for(int r = 0; r < dem.nRows; r++)
+        for(int c = 0; c < dem.nCols; c++)
+            dem.z[(size_t)r * dem.nCols + c] = e.get_cellValue(r, c);
+    return TerrainGrid(dem, problem.meshResolution, firstLayer, layers, growth);
 }
 
 bool CpuRansBackend::solve(const MomentumProblem &problem,
