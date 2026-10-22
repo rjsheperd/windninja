@@ -50,8 +50,12 @@ mass solver).
   The kept buffer stays valid until the next call. The device's
   uncaptured-error and lost callbacks are the page's. =share.html= is the
   check: the page copies the buffer with its own commands and gets the
-  module's values exactly. Output-height grids stay on the CPU for now
-  (plan 3.2a).
+  module's values exactly.
+- =windninja_mass_dem_solve_kept(...)= (plan 3.2a): =windninja_mass_dem_solve='s
+  inputs; returns the =WGPUBuffer= of WindNinja's output wind computed on
+  the GPU, 2 × nCols × nRows f32, speed (m/s) then direction (degrees from
+  the grid's north), row 0 north. =share.html= reads it with the page's
+  device: within 1.1e-7 of the max speed and 4e-5° of the CPU's output.
 - =main()= is a self-test. It solves =hill_selftest.h='s hill and checks the
   statistics against the native result (autotest =gpu/dem_solve_hill=), to
   1e-3 relative. Measured in headless Chromium on Apple Metal: within 2e-7.

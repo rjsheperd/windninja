@@ -107,3 +107,38 @@ MassSolveResult SolveMassWindOnGpu(const MassGrid &grid, const double *u0, const
         *adapter = context.adapterName();
     return SolveMassWindOnGpu(context, grid, u0, v0, w0, alphaV, alphaH, options, u, v, w);
 }
+
+std::unique_ptr<gpu::Buffer> SolveMassDemKeptOnGpu(gpu::Context &context, const TerrainDem &dem,
+                                                   const MassDemProblem &problem,
+                                                   const MassSolveOptions &options,
+                                                   bool northFirst, MassSolveResult *result)
+{
+    MassMeshOptions mesh;
+    mesh.layers = problem.layers;
+    mesh.inputHeight = problem.wind.inputHeight;
+    mesh.outputHeight = problem.outputHeight;
+    mesh.canopyHeight = problem.wind.roughH;
+    MassGrid grid = MassTerrainGrid(dem, mesh);
+    std::vector<double> u0, v0, w0;
+    InitialWind(grid, problem.wind, u0, v0, w0);
+    std::vector<double> alphaV(grid.numNodes(), 1.0);   // neutral, alphaH = 1 (as SolveMassDem)
+
+    std::unique_ptr<gpu::Buffer> wind = SolveMassWindKeptOnGpu(
+        context, grid, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0, options, result);
+    if(!result->converged)
+        throw std::runtime_error("Solution did not converge.\nMAXITS reached.");
+
+    gpu::MassFem fem(context, gpu::MakeMassGeometry(grid.ncols, grid.nrows, grid.nlayers,
+                                                    grid.x.data(), grid.y.data(), grid.z.data()));
+    gpu::MassFem::OutputWindParams p;
+    p.outputHeight = (float)problem.outputHeight;
+    p.roughness = (float)problem.wind.roughness;
+    p.roughH = (float)problem.wind.roughH;
+    p.roughD = (float)problem.wind.roughD;
+    p.blHeight = (float)BoundaryLayerHeight(problem.wind);
+    p.northFirst = northFirst;
+    std::unique_ptr<gpu::Buffer> out(
+        new gpu::Buffer(context, 2 * (std::size_t)dem.nCols * dem.nRows * sizeof(float)));
+    fem.outputWind(*wind, p, *out);
+    return out;
+}

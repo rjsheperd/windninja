@@ -73,6 +73,32 @@ MassSolveResult GpuWindSolver(const MassGrid &g, const double *u0, const double 
     return SolveMassWindOnGpu(Gpu(), g, u0, v0, w0, alphaV, alphaH, options, u, v, w);
 }
 
+// windninja_mass_dem_solve's inputs as a DEM (row 0 south) and a problem
+void DemProblemFrom(int nCols, int nRows, double cellSize, const double *elevation, double speed,
+                    double direction, double inputHeight, double outputHeight, int vegetation,
+                    double latitude, double angleFromNorth, TerrainDem &dem, MassDemProblem &p)
+{
+    dem.nCols = nCols;
+    dem.nRows = nRows;
+    dem.cellSize = cellSize;
+    dem.z.resize(std::size_t(nCols) * nRows);
+    for(int r = 0; r < nRows; r++)   // the input's row 0 is north
+        for(int c = 0; c < nCols; c++)
+            dem.z[std::size_t(r) * nCols + c] = elevation[std::size_t(nRows - 1 - r) * nCols + c];
+    p.wind.speed = speed;
+    p.wind.direction = direction;
+    p.wind.inputHeight = inputHeight;
+    p.wind.latitude = latitude;
+    p.wind.angleFromNorth = angleFromNorth;
+    const double z0[] = {0.01, 0.43, 1.0}, h[] = {0.0, 2.3, 15.4}, d[] = {0.0, 1.8, 12.0};
+    if(vegetation < 0 || vegetation > 2)
+        throw std::invalid_argument("vegetation must be 0 (grass), 1 (brush) or 2 (trees)");
+    p.wind.roughness = z0[vegetation];
+    p.wind.roughH = h[vegetation];
+    p.wind.roughD = d[vegetation];
+    p.outputHeight = outputHeight;
+}
+
 MassGrid GridFrom(int ncols, int nrows, int nlayers, const double *x, const double *y,
                   const double *z)
 {
@@ -274,26 +300,9 @@ EMSCRIPTEN_KEEPALIVE int windninja_mass_dem_solve(int nCols, int nRows, double c
     try
     {
         TerrainDem dem;
-        dem.nCols = nCols;
-        dem.nRows = nRows;
-        dem.cellSize = cellSize;
-        dem.z.resize(std::size_t(nCols) * nRows);
-        for(int r = 0; r < nRows; r++)   // TerrainDem's row 0 is south
-            for(int c = 0; c < nCols; c++)
-                dem.z[std::size_t(r) * nCols + c] = elevation[std::size_t(nRows - 1 - r) * nCols + c];
         MassDemProblem p;
-        p.wind.speed = speed;
-        p.wind.direction = direction;
-        p.wind.inputHeight = inputHeight;
-        p.wind.latitude = latitude;
-        p.wind.angleFromNorth = angleFromNorth;
-        const double z0[] = {0.01, 0.43, 1.0}, h[] = {0.0, 2.3, 15.4}, d[] = {0.0, 1.8, 12.0};
-        if(vegetation < 0 || vegetation > 2)
-            throw std::invalid_argument("vegetation must be 0 (grass), 1 (brush) or 2 (trees)");
-        p.wind.roughness = z0[vegetation];
-        p.wind.roughH = h[vegetation];
-        p.wind.roughD = d[vegetation];
-        p.outputHeight = outputHeight;
+        DemProblemFrom(nCols, nRows, cellSize, elevation, speed, direction, inputHeight,
+                       outputHeight, vegetation, latitude, angleFromNorth, dem, p);
         MassDemWind w = gpu ? SolveMassDem(dem, p, MassSolveOptions(), GpuWindSolver)
                             : SolveMassDem(dem, p, MassSolveOptions());
         for(int r = 0; r < nRows; r++)
@@ -315,6 +324,39 @@ EMSCRIPTEN_KEEPALIVE int windninja_mass_dem_solve(int nCols, int nRows, double c
     {
         std::printf("error: %s\n", e.what());
         return -3;
+    }
+}
+
+/*
+** windninja_mass_dem_solve on the GPU, leaving the output wind there (plan
+** 3.2a): the same inputs; returns the WGPUBuffer of 2 * nCols * nRows f32,
+** speed (m/s) then direction (degrees from the grid's north) per cell, row
+** 0 north, or 0 on failure (printed).  It stays valid until the next call
+** (shared with windninja_mass_solve_kept).
+*/
+EMSCRIPTEN_KEEPALIVE WGPUBuffer windninja_mass_dem_solve_kept(int nCols, int nRows, double cellSize,
+                                                              const double *elevation,
+                                                              double speed, double direction,
+                                                              double inputHeight,
+                                                              double outputHeight, int vegetation,
+                                                              double latitude,
+                                                              double angleFromNorth)
+{
+    try
+    {
+        keptWind.reset();
+        TerrainDem dem;
+        MassDemProblem p;
+        DemProblemFrom(nCols, nRows, cellSize, elevation, speed, direction, inputHeight,
+                       outputHeight, vegetation, latitude, angleFromNorth, dem, p);
+        MassSolveResult r;
+        keptWind = SolveMassDemKeptOnGpu(Gpu(), dem, p, MassSolveOptions(), true, &r);
+        return keptWind->handle();
+    }
+    catch(const std::exception &e)
+    {
+        std::printf("error: %s\n", e.what());
+        return nullptr;
     }
 }
 

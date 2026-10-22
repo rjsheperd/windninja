@@ -518,6 +518,128 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
 }
 )wgsl";
 
+// WindNinja's output wind on the GPU (gpu::MassFem::outputWind), as
+// OutputWind / ninja::interp_uvw: one thread per DEM cell finds the layer
+// holding outputHeight + the canopy, then the neutral Monin-Obukhov profile
+// (windProfile::getWindSpeed, L = 9999) within the first layer, linear
+// between layers above.  Writes speed (slot 0) and the direction the wind
+// comes from, degrees from the grid's north (slot 1), per cell, row 0 south
+// or (northFirst) north.
+constexpr const char *massOutputWind = R"wgsl(
+struct Params {
+    ncols : u32,
+    nrows : u32,
+    nlayers : u32,
+    northFirst : u32,
+    outputHeight : f32,
+    roughness : f32,   // z0
+    roughH : f32,      // canopy height
+    roughD : f32,      // displacement height
+    blHeight : f32,    // boundary-layer height
+    pad0 : u32,
+    pad1 : u32,
+    pad2 : u32,
+}
+
+@group(0) @binding(0) var<uniform> params : Params;
+@group(0) @binding(1) var<storage, read> agl : array<f32>;    // height above the ground node
+@group(0) @binding(2) var<storage, read> wind : array<f32>;   // u, v, w slots
+@group(0) @binding(3) var<storage, read_write> out : array<f32>;   // speed, angle slots
+
+const PI = 3.141592653589793;
+const L = 9999.0;   // neutral
+
+// windProfile::stability_function, stable branch (L > 0)
+fn psi(zOverL : f32) -> f32 {
+    return -17.0 * (1.0 - exp(-0.29 * zOverL));
+}
+
+// windProfile::monin_obukov
+fn moninObukhov(zIn : f32, u1 : f32, z1 : f32, z0 : f32) -> f32 {
+    var z = zIn;
+    if (z / z0 < 1.0) {
+        z = z0;
+    }
+    return u1 * (log(z / z0) - psi(z / L)) / (log(z1 / z0) - psi(z1 / L));
+}
+
+// windProfile::getWindSpeed (monin_obukov_similarity) at agl, for the speed
+// u at inputHeight above the canopy
+fn profile(agl : f32, u : f32, inputHeight : f32) -> f32 {
+    if (agl == 0.0) {
+        return 0.0;
+    }
+    let z0 = params.roughness;
+    let d = params.roughD;
+    let inwindheight = (inputHeight + params.roughH) - d;
+    if (inwindheight < 3.0 * z0) {
+        return u * (agl / (inwindheight + d));
+    }
+    if (agl < d + 7.0 * z0) {
+        return moninObukhov(7.0 * z0, u, inwindheight, z0) * (agl / (7.0 * z0 + d));
+    }
+    if (agl < d + params.blHeight) {
+        return moninObukhov(agl - d, u, inwindheight, z0);
+    }
+    if (params.blHeight <= 0.0) {
+        return 0.0;
+    }
+    return moninObukhov(params.blHeight, u, inwindheight, z0);
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>,
+        @builtin(num_workgroups) groups : vec3<u32>) {
+    let column = gid.x + gid.y * groups.x * 256u;
+    let layer = params.ncols * params.nrows;
+    if (column >= layer) {
+        return;
+    }
+    let N = layer * params.nlayers;
+    let height = params.outputHeight + params.roughH;
+    var k = 1u;
+    var h2 = 0.0;
+    var h1 = 0.0;
+    loop {
+        if (h2 >= height || k >= params.nlayers) {
+            break;
+        }
+        h2 = agl[column + layer * k];
+        h1 = agl[column + layer * (k - 1u)];
+        k++;
+    }
+    k--;
+    let at = column + layer * k;
+    let below = column + layer * (k - 1u);
+    var uu : f32;
+    var vv : f32;
+    if (k <= 1u) {   // within the first layer: the profile
+        let inputHeight = h2 - params.roughH;
+        uu = profile(height, wind[at], inputHeight);
+        vv = profile(height, wind[N + at], inputHeight);
+    } else {   // linear between layers k - 1 and k
+        let su = (wind[at] - wind[below]) / (h2 - h1);
+        let sv = (wind[N + at] - wind[N + below]) / (h2 - h1);
+        uu = su * height + wind[below] - su * h1;
+        vv = sv * height + wind[N + below] - sv * h1;
+    }
+    var a = 0.0;
+    if (!(uu == 0.0 && vv == 0.0)) {
+        a = -atan2(uu, -vv);
+    }
+    if (a < 0.0) {
+        a += 2.0 * PI;
+    }
+    var cell = column;
+    if (params.northFirst != 0u) {
+        let row = column / params.ncols;
+        cell = (params.nrows - 1u - row) * params.ncols + column % params.ncols;
+    }
+    out[cell] = sqrt(uu * uu + vv * vv);
+    out[layer + cell] = 180.0 / PI * a;
+}
+)wgsl";
+
 } // namespace kernels
 } // namespace gpu
 

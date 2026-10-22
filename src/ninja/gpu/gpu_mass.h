@@ -153,6 +153,10 @@ struct MassGeometry
 {
     int ncols = 0, nrows = 0, nlayers = 0;
     std::vector<float> xyz;   // 3 * nodes
+    // height above the column's ground node, from the f64 coordinates: the
+    // output wind's layer heights, kept precise near the ground (an f32
+    // difference of elevations loses ~1e-4 m)
+    std::vector<float> agl;   // nodes
 
     std::size_t nodes() const { return (std::size_t)ncols * nrows * nlayers; }
 };
@@ -186,14 +190,27 @@ public:
     void recover(const Buffer &phi, const Buffer &wind0, const Buffer &alphaV, float alphaH,
                  Buffer &wind);
 
+    // WindNinja's output wind (kernels::massOutputWind, OutputWind): speed
+    // and direction per DEM cell at outputHeight above the canopy, from
+    // wind (u, v, w slots).  out: 2 * ncols * nrows floats, speed then
+    // direction (degrees from the grid's north), row 0 south or north.
+    struct OutputWindParams
+    {
+        float outputHeight = 6.096f;
+        float roughness = 0.01f, roughH = 0.0f, roughD = 0.0f;   // z0, canopy, displacement
+        float blHeight = 1000.0f;   // the neutral boundary-layer height
+        bool northFirst = false;
+    };
+    void outputWind(const Buffer &wind, const OutputWindParams &params, Buffer &out);
+
 private:
     void dispatch(Kernel &kernel, const std::vector<const Buffer *> &bindings, float alphaH);
 
     Context &context_;
     std::size_t nodes_;
     int ncols_, nrows_, nlayers_;
-    Buffer params_, xyz_, folded_;
-    Kernel assemble_, recover_;
+    Buffer params_, outputParams_, xyz_, agl_, folded_;
+    Kernel assemble_, recover_, output_;
 };
 
 } // namespace gpu

@@ -1099,6 +1099,128 @@ BOOST_AUTO_TEST_CASE( mass_wind_kept_on_shared_device )
     BOOST_CHECK_EQUAL(differ, 0);
 }
 
+// The output wind on the GPU against OutputWind on the CPU, from the same
+// solved wind: grass at 6.096 m (linear between layers), 1 m (the profile)
+// and 0.05 m (below 7 z0: the profile's linear part), trees at 6.096 m (the
+// canopy).  The kernel takes heights above ground computed in f64
+// (MassGeometry::agl): from f32 elevations the 0.05 m case was 3.4e-5 off.  Speed within 1e-5 of the max,
+// direction within 1e-3 degrees where the speed is over 0.1 m/s; and
+// north-first rows are the same grid flipped (seen: 4.7e-7, 4e-5 deg).
+BOOST_AUTO_TEST_CASE( kernel_mass_output_matches_cpu )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    TerrainDem dem = ::mass_selftest::Dem();
+    struct Case { double z0, h, d, height; };
+    for(Case k : {Case{0.01, 0.0, 0.0, 6.096}, Case{0.01, 0.0, 0.0, 1.0},
+                  Case{0.01, 0.0, 0.0, 0.05}, Case{1.0, 15.4, 12.0, 6.096}})
+    {
+        DomainAverageWind wind = ::mass_selftest::DemProblem().wind;
+        wind.roughness = k.z0;
+        wind.roughH = k.h;
+        wind.roughD = k.d;
+        MassMeshOptions mesh;
+        mesh.outputHeight = k.height;
+        mesh.canopyHeight = k.h;
+        MassGrid g = MassTerrainGrid(dem, mesh);
+        std::vector<double> u0, v0, w0;
+        InitialWind(g, wind, u0, v0, w0);
+        int n = g.numNodes(), cells = g.ncols * g.nrows;
+        std::vector<double> alphaV(n, 1.0);
+        MassSolveResult r;
+        std::unique_ptr<gpu::Buffer> kept = SolveMassWindKeptOnGpu(
+            *c, g, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0, MassSolveOptions(), &r);
+        std::vector<float> f = kept->download<float>(3 * n);
+        std::vector<double> u(f.begin(), f.begin() + n), v(f.begin() + n, f.begin() + 2 * n),
+            w(f.begin() + 2 * n, f.end());
+        std::vector<double> speed, angle;
+        OutputWind(g, u, v, w, wind, k.height, speed, angle);
+
+        gpu::MassFem fem(*c, gpu::MakeMassGeometry(g.ncols, g.nrows, g.nlayers, g.x.data(),
+                                                   g.y.data(), g.z.data()));
+        gpu::MassFem::OutputWindParams p;
+        p.outputHeight = (float)k.height;
+        p.roughness = (float)k.z0;
+        p.roughH = (float)k.h;
+        p.roughD = (float)k.d;
+        p.blHeight = (float)BoundaryLayerHeight(wind);
+        gpu::Buffer out(*c, 2 * cells * sizeof(float)), outNorth(*c, 2 * cells * sizeof(float));
+        fem.outputWind(*kept, p, out);
+        p.northFirst = true;
+        fem.outputWind(*kept, p, outNorth);
+        std::vector<float> o = out.download<float>(2 * cells), on = outNorth.download<float>(2 * cells);
+
+        double maxSpeed = 0.0, worstSpeed = 0.0, worstAngle = 0.0;
+        int flipped = 0;
+        for(int i = 0; i < cells; i++)
+            maxSpeed = std::max(maxSpeed, speed[i]);
+        for(int i = 0; i < cells; i++)
+        {
+            worstSpeed = std::max(worstSpeed, std::fabs(o[i] - speed[i]));
+            if(speed[i] > 0.1)
+            {
+                double da = std::fabs(o[cells + i] - angle[i]);
+                worstAngle = std::max(worstAngle, std::min(da, 360.0 - da));
+            }
+            int row = i / g.ncols, col = i % g.ncols;
+            int north = (g.nrows - 1 - row) * g.ncols + col;
+            flipped += on[north] != o[i] || on[cells + north] != o[cells + i];
+        }
+        BOOST_TEST_MESSAGE("mass output at " << k.height << " m, canopy " << k.h << ": worst speed "
+                           << worstSpeed / maxSpeed << " of the max, worst angle " << worstAngle
+                           << " deg");
+        BOOST_CHECK_LT(worstSpeed / maxSpeed, 1e-5);
+        BOOST_CHECK_LT(worstAngle, 1e-3);
+        BOOST_CHECK_EQUAL(flipped, 0);
+    }
+}
+
+// DEM in, output wind kept on the GPU (SolveMassDemKeptOnGpu) against
+// SolveMassDem with the GPU solve and OutputWind on the CPU: speed within
+// 1e-5 of the max, direction within 1e-3 degrees (where over 0.1 m/s), both
+// row orders.
+BOOST_AUTO_TEST_CASE( mass_dem_kept_matches_download )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    TerrainDem dem = ::mass_selftest::Dem();
+    MassDemProblem problem = ::mass_selftest::DemProblem();
+    MassDemWind ref = SolveMassDem(dem, problem, MassSolveOptions(),
+        [c](const MassGrid &g, const double *u0, const double *v0, const double *w0,
+            const double *alphaV, double alphaH, const MassSolveOptions &o, double *u, double *v,
+            double *w) { return SolveMassWindOnGpu(*c, g, u0, v0, w0, alphaV, alphaH, o, u, v, w); });
+    const int cells = dem.nCols * dem.nRows;
+    for(bool northFirst : {false, true})
+    {
+        MassSolveResult r;
+        std::unique_ptr<gpu::Buffer> out =
+            SolveMassDemKeptOnGpu(*c, dem, problem, MassSolveOptions(), northFirst, &r);
+        BOOST_CHECK(r.converged);
+        BOOST_CHECK_EQUAL(r.iterations, ref.solve.iterations);
+        std::vector<float> o = out->download<float>(2 * cells);
+        double maxSpeed = 0.0, worstSpeed = 0.0, worstAngle = 0.0;
+        for(int i = 0; i < cells; i++)
+            maxSpeed = std::max(maxSpeed, ref.speed[i]);
+        for(int i = 0; i < cells; i++)
+        {
+            int row = i / dem.nCols, col = i % dem.nCols;
+            int at = northFirst ? (dem.nRows - 1 - row) * dem.nCols + col : i;
+            worstSpeed = std::max(worstSpeed, std::fabs(o[at] - ref.speed[i]));
+            if(ref.speed[i] > 0.1)
+            {
+                double da = std::fabs(o[cells + at] - ref.angle[i]);
+                worstAngle = std::max(worstAngle, std::min(da, 360.0 - da));
+            }
+        }
+        BOOST_TEST_MESSAGE("mass dem kept: worst speed " << worstSpeed / maxSpeed
+                           << " of the max, worst angle " << worstAngle << " deg");
+        BOOST_CHECK_LT(worstSpeed / maxSpeed, 1e-5);
+        BOOST_CHECK_LT(worstAngle, 1e-3);
+    }
+}
+
 // Not in ctest: the whole GPU solve at the fine-mesh size, against the CPU
 // solver on the same system.  --run_test=gpu/mass_pcg_timing --log_level=message
 BOOST_AUTO_TEST_CASE( mass_pcg_timing )

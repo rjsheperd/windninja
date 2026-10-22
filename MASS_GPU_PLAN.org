@@ -673,14 +673,38 @@ See the Inbox.
 Not done here: the page gets the 3-D wind; WindNinja's output-height
 grids are computed on the CPU (=OutputWind=) → 3.2a.
 
-** TODO 3.2a Output-height wind on the GPU [0/4]
-- [ ] =OutputWind= as a kernel (per column: find the layer; the neutral
+** DONE 3.2a Output-height wind on the GPU [5/5]
+- [X] =OutputWind= as a kernel (per column: find the layer; the neutral
       profile within the first layer, linear above), so the page gets 2-D
       speed and direction grids on the GPU for the fire model.
-- [ ] An export returning that buffer (=windninja_mass_dem_solve_kept=).
-- [ ] Add tests: against =OutputWind= on the CPU (within f32); the page
-      reads it as in =share.html=.
-- [ ] Tests pass / Documentation updates
+      =kernels::massOutputWind=, =gpu::MassFem::outputWind()= (the
+      Monin-Obukhov profile ported from =windProfile::getWindSpeed=; rows
+      south- or north-first). It reads heights above ground computed in
+      f64 (new =MassGeometry::agl=): from f32 elevations the near-ground
+      case (0.05 m) was 3.4e-5 of the max speed off, the CPU on the same
+      f32 heights agreed to 5e-7, so the difference was the coordinates'
+      precision, not the kernel. =SolveMassDemKeptOnGpu()= (DEM in, output
+      grids left on the GPU).
+- [X] An export returning that buffer (=windninja_mass_dem_solve_kept=):
+      =windninja_mass_dem_solve='s inputs; speed then direction, row 0
+      north, as a =WGPUBuffer= for =Module.WebGPU.getJsObject=.
+- [X] Add tests: =gpu/kernel_mass_output_matches_cpu= (the same solved
+      wind through =OutputWind= and the kernel: grass at 6.096, 1 and
+      0.05 m, trees at 6.096 m; speed within 1e-5 of the max, seen ≤ 4.7e-7;
+      direction within 1e-3°, seen 4e-5°; north-first = flipped) and
+      =gpu/mass_dem_kept_matches_download=; =share.html= reads the grids
+      with the page's device and compares with =windninja_mass_dem_solve='s
+      download (1.1e-7, 3.7e-5°). Mutations: interpolation offset, canopy
+      ignored, angle formula, north-first not flipped, no linear part below
+      7 z₀ (caught once a 0.05 m case reached it), stability function
+      dropped (caught once heights were f64-precise), layer height off by
+      1 mm, and in the browser south-first rows: each caught.
+- [X] Tests pass: =share.html=, =solver.html= =RESULT PASS=;
+      =ctest -R "^mass_|^gpu_"= 46/46.
+- [X] Documentation updates: =src/ninja/gpu/wasm/README.org=, headers.
+
+Not done: =SolveMassDemKeptOnGpu= builds the GPU geometry and pipelines
+twice (once in =SolveMassWindKeptOnGpu=), ~10–20 ms; Phase 4 reuses them.
 
 * Phase 4: Repeated solves
 ** TODO 4.1 Warm starts and multi-RHS batching [0/4]

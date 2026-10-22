@@ -253,11 +253,14 @@ MassGeometry MakeMassGeometry(int ncols, int nrows, int nlayers, const double *x
     for(std::size_t i = 1; i < n; i++)
         zMin = std::min(zMin, z[i]);
     g.xyz.resize(3 * n);
+    g.agl.resize(n);
+    const std::size_t layer = (std::size_t)ncols * nrows;
     for(std::size_t i = 0; i < n; i++)
     {
         g.xyz[i] = (float)(x[i] - x[0]);
         g.xyz[n + i] = (float)(y[i] - y[0]);
         g.xyz[2 * n + i] = (float)(z[i] - zMin);
+        g.agl[i] = (float)(z[i] - z[i % layer]);
     }
     return g;
 }
@@ -271,19 +274,30 @@ struct AssembleParams
     uint32_t pad[3];
 };
 
+struct OutputParams   // kernels::massOutputWind's Params
+{
+    uint32_t ncols, nrows, nlayers, northFirst;
+    float outputHeight, roughness, roughH, roughD, blHeight;
+    uint32_t pad[3];
+};
+
 } // namespace
 
 MassFem::MassFem(Context &context, const MassGeometry &geometry)
     : context_(context), nodes_(geometry.nodes()), ncols_(geometry.ncols),
       nrows_(geometry.nrows), nlayers_(geometry.nlayers),
       params_(context, sizeof(AssembleParams), Buffer::Uniform),
-      xyz_(context, geometry.xyz.size() * sizeof(float)), folded_(context, sizeof(uint32_t)),
+      outputParams_(context, sizeof(OutputParams), Buffer::Uniform),
+      xyz_(context, geometry.xyz.size() * sizeof(float)),
+      agl_(context, geometry.agl.size() * sizeof(float)), folded_(context, sizeof(uint32_t)),
       assemble_(context, (std::string(kernels::massFemPrelude) + kernels::massAssemble).c_str()),
-      recover_(context, (std::string(kernels::massFemPrelude) + kernels::massRecover).c_str())
+      recover_(context, (std::string(kernels::massFemPrelude) + kernels::massRecover).c_str()),
+      output_(context, kernels::massOutputWind)
 {
-    if(geometry.xyz.size() != 3 * nodes_ || nodes_ > UINT32_MAX)
+    if(geometry.xyz.size() != 3 * nodes_ || geometry.agl.size() != nodes_ || nodes_ > UINT32_MAX)
         throw Error("gpu::MassFem: geometry size doesn't match its grid");
     xyz_.upload(geometry.xyz);
+    agl_.upload(geometry.agl);
 }
 
 void MassFem::dispatch(Kernel &kernel, const std::vector<const Buffer *> &bindings, float alphaH)
@@ -307,6 +321,21 @@ void MassFem::assemble(const Buffer &wind0, const Buffer &alphaV, float alphaH, 
     uint32_t zero = 0;
     folded_.upload(&zero, sizeof zero);
     dispatch(assemble_, {&params_, &xyz_, &wind0, &alphaV, &coef, &rhs, &folded_}, alphaH);
+}
+
+void MassFem::outputWind(const Buffer &wind, const OutputWindParams &p, Buffer &out)
+{
+    const std::size_t f = sizeof(float), cells = (std::size_t)ncols_ * nrows_;
+    if(wind.size() < 3 * nodes_ * f || out.size() < 2 * cells * f)
+        throw Error("gpu::MassFem::outputWind: buffer shorter than the grid");
+    OutputParams q = {(uint32_t)ncols_, (uint32_t)nrows_, (uint32_t)nlayers_,
+                      p.northFirst ? 1u : 0u, p.outputHeight, p.roughness, p.roughH, p.roughD,
+                      p.blHeight, {0, 0, 0}};
+    outputParams_.upload(&q, sizeof q);
+    std::size_t groups = (cells + 255) / 256;
+    std::size_t gx = groups < maxGroupsX ? groups : maxGroupsX;
+    std::size_t gy = (groups + gx - 1) / gx;
+    output_.dispatch({&outputParams_, &agl_, &wind, &out}, (uint32_t)gx, (uint32_t)gy);
 }
 
 bool MassFem::foldedElements()

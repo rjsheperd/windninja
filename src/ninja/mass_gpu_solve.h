@@ -31,6 +31,7 @@
 #include <string>
 
 #include "gpu_context.h"
+#include "mass_dem.h"
 #include "mass_pcg.h"
 
 /*
@@ -68,5 +69,18 @@ std::unique_ptr<gpu::Buffer> SolveMassWindKeptOnGpu(gpu::Context &context, const
                                                     const double *w0, const double *alphaV,
                                                     double alphaH, const MassSolveOptions &options,
                                                     MassSolveResult *result);
+
+/*
+** SolveMassDem on the GPU, leaving WindNinja's output wind there
+** (MASS_GPU_PLAN.org 3.2a): mesh and initial wind on the CPU, then
+** assembly, solve, recovery and the output wind (gpu::MassFem::outputWind)
+** on the GPU.  Returns a buffer of 2 * nCols * nRows f32: speed (m/s) then
+** direction (degrees from the grid's north) per cell, row 0 south, or north
+** with northFirst.  *result gets the solve's outcome.
+*/
+std::unique_ptr<gpu::Buffer> SolveMassDemKeptOnGpu(gpu::Context &context, const TerrainDem &dem,
+                                                   const MassDemProblem &problem,
+                                                   const MassSolveOptions &options,
+                                                   bool northFirst, MassSolveResult *result);
 
 #endif /* MASS_GPU_SOLVE_H */

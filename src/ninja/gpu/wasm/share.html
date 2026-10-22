@@ -21,8 +21,9 @@
 <main>
 <h1>WindNinja shared device</h1>
 <p class="sub">The page makes the GPUDevice, the module solves the mass-consistent wind on
-it, and the page reads the wind buffer with its own commands: no copy through
-WebAssembly memory (MASS_GPU_PLAN.org 3.2).</p>
+it, and the page reads the wind with its own commands, no copy through WebAssembly
+memory: the 3-D wind (MASS_GPU_PLAN.org 3.2), then WindNinja's output-height speed and
+direction grids from a DEM (3.2a).</p>
 <pre id="out"></pre>
 </main>
 
@@ -72,6 +73,22 @@ WebAssembly memory (MASS_GPU_PLAN.org 3.2).</p>
     return g;
   }
 
+  // read a GPUBuffer with the page's own commands (a buffer from another
+  // device is a validation error); returns a Float32Array, or throws
+  async function readBuffer(device, buffer, bytes) {
+    var staging = device.createBuffer({size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST});
+    device.pushErrorScope('validation');
+    var encoder = device.createCommandEncoder();
+    encoder.copyBufferToBuffer(buffer, 0, staging, 0, bytes);
+    device.queue.submit([encoder.finish()]);
+    var error = await device.popErrorScope();
+    if (error) throw new Error('the page could not use the wind buffer: ' + error.message);
+    await staging.mapAsync(GPUMapMode.READ);
+    var f = new Float32Array(staging.getMappedRange().slice(0));
+    staging.unmap();
+    return f;
+  }
+
   // copy a typed array into the module's heap (doubles)
   function heap(a) {
     var p = Module._malloc(a.length * 8);
@@ -109,19 +126,10 @@ WebAssembly memory (MASS_GPU_PLAN.org 3.2).</p>
     var wind = Module.WebGPU.getJsObject(ptr);
     show('wind buffer: ' + wind.size + ' bytes, usage ' + wind.usage);
 
-    // read it with the page's own commands; a buffer from another device
-    // would be a validation error here
-    var bytes = 3 * g.n * 4;
-    var staging = device.createBuffer({size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST});
-    device.pushErrorScope('validation');
-    var encoder = device.createCommandEncoder();
-    encoder.copyBufferToBuffer(wind, 0, staging, 0, bytes);
-    device.queue.submit([encoder.finish()]);
-    var error = await device.popErrorScope();
-    if (error) { show('RESULT FAIL the page could not use the wind buffer: ' + error.message); return; }
-    await staging.mapAsync(GPUMapMode.READ);
-    var f = new Float32Array(staging.getMappedRange().slice(0));
-    staging.unmap();
+    // read it with the page's own commands
+    var f;
+    try { f = await readBuffer(device, wind, 3 * g.n * 4); }
+    catch (e) { show('RESULT FAIL ' + e.message); return; }
 
     var differ = 0, maxSpeed = 0;
     for (var s = 0; s < 3; s++)
@@ -130,7 +138,38 @@ WebAssembly memory (MASS_GPU_PLAN.org 3.2).</p>
     for (var i = 0; i < g.n; i++) maxSpeed = Math.max(maxSpeed, Math.hypot(f[i], f[g.n + i]));
     show(g.n + ' nodes, ' + iterations + ' iterations; max speed ' + maxSpeed.toFixed(4) +
          ' m/s; ' + differ + ' of ' + 3 * g.n + ' values differ from the module\'s download');
-    show(differ === 0 && maxSpeed > 1 ? 'RESULT PASS' : 'RESULT FAIL the page read different wind');
+    if (!(differ === 0 && maxSpeed > 1)) { show('RESULT FAIL the page read different wind'); return; }
+
+    // WindNinja's output wind from a DEM, left on the GPU (3.2a), against the
+    // module's download (output wind computed on the CPU, f64)
+    var nCols = 40, nRows = 30, cells = nCols * nRows, elev = new Float64Array(cells);
+    for (var r = 0; r < nRows; r++)   // row 0 north
+      for (var c = 0; c < nCols; c++)
+        elev[r * nCols + c] = 1500 + 250 * Math.exp(-((c - 18) ** 2 + (r - 14) ** 2) / 50) + 0.6 * c;
+    var e = heap(elev), sp = Module._malloc(cells * 8), an = Module._malloc(cells * 8);
+    var demArgs = [nCols, nRows, 30.0, e, 4.4704, 237.0, 6.096, 6.096, 0, 43.4, -1.4];
+    var demTypes = Array(11).fill('number');
+    var it = await Module.ccall('windninja_mass_dem_solve', 'number', demTypes.concat(Array(3).fill('number')),
+                                demArgs.concat([1, sp, an]), {async: true});
+    if (it < 0) { show('RESULT FAIL windninja_mass_dem_solve returned ' + it); return; }
+    var speed = Module.HEAPF64.slice(sp / 8, sp / 8 + cells), angle = Module.HEAPF64.slice(an / 8, an / 8 + cells);
+    var outPtr = await Module.ccall('windninja_mass_dem_solve_kept', 'number', demTypes, demArgs, {async: true});
+    if (!outPtr) { show('RESULT FAIL windninja_mass_dem_solve_kept returned 0'); return; }
+    var o;
+    try { o = await readBuffer(device, Module.WebGPU.getJsObject(outPtr), 2 * cells * 4); }
+    catch (err) { show('RESULT FAIL ' + err.message); return; }
+    var maxS = 0, worstS = 0, worstA = 0;
+    for (var i = 0; i < cells; i++) maxS = Math.max(maxS, speed[i]);
+    for (var i = 0; i < cells; i++) {
+      worstS = Math.max(worstS, Math.abs(o[i] - speed[i]));
+      if (speed[i] > 0.1) {
+        var da = Math.abs(o[cells + i] - angle[i]);
+        worstA = Math.max(worstA, Math.min(da, 360 - da));
+      }
+    }
+    show('output wind, ' + cells + ' cells: worst speed ' + (worstS / maxS).toExponential(2) +
+         ' of the max, worst direction ' + worstA.toExponential(2) + ' deg vs the module\'s download');
+    show(worstS / maxS < 1e-5 && worstA < 1e-3 ? 'RESULT PASS' : 'RESULT FAIL the output wind differs');
   }
 </script>
 <script src="windninja_wasm.js"></script>
