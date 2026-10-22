@@ -837,7 +837,11 @@ resumes only if the GPU backend fails the golden cases the same way.
 - A unit test that pins the fixed near-wall behaviour on the reproduction
   case.
 
-** TODO GATE 2: go / no-go on the RANS approach
+** WAIT GATE 2: go / no-go on the RANS approach
+Waiting on: team sign-off of the criteria, and a Linux OpenFOAM-11 golden
+run (no Linux machine in this session). Runtime against OpenFOAM (macOS, M3
+Max, WebGPU backend): Big Butte fine 2 min 43 s vs 1 min 53 s (1.4×); coarse
+and medium cases 4–24 s vs about 14–20 s. Within the 2× bound.
 - [X] Terrain criterion (user decision, 2026-10-21; evidence in 2.4 and 2.5):
       terrain cases are compared at the 20 ft output with OpenFOAM's *fine*
       mesh, and must be no worse than OpenFOAM at the same mesh in speed RMSE
@@ -1179,7 +1183,7 @@ single-grid solver. Multigrid follows once the golden comparison runs.
 - =gpu_multigrid_speedup=: the cavity reaches the 2.2 residual target in at
   least 3× fewer fine-grid sweeps than single-grid.
 
-** NEXT 4.4 End-to-end GPU backend
+** DONE 4.4 End-to-end GPU backend
 - [X] =WebGpuRansBackend= (=src/ninja/webgpu_rans_backend.{h,cpp}=, built
       with =WITH_WEBGPU= and =NINJAFOAM=). =momentum_backend = webgpu= now
       selects it, through the CLI and the C API. It shares the CPU backend's
@@ -1240,7 +1244,10 @@ single-grid solver. Multigrid follows once the golden comparison runs.
 - =momentum_gpu_deterministic=: two runs on the same device are bitwise
   identical. If not, document the non-determinism and use a tolerance.
 
-** TODO GATE 4: GPU backend fit for integration
+** WAIT GATE 4: GPU backend fit for integration
+Waiting on hardware: only Apple (M3 Max, Metal) is available in this
+session. NVIDIA, AMD and Intel runs, and a laptop GPU timing, are for the
+team.
 - Golden cases pass on at least one GPU from each vendor available to the team
   (Apple, NVIDIA, AMD, Intel).
 - Runtime beats OpenFOAM on the 100k-cell case on a laptop discrete or
@@ -1250,8 +1257,9 @@ single-grid solver. Multigrid follows once the golden comparison runs.
 Goal: users can choose the GPU backend everywhere the momentum solver appears
 today.
 
-** TODO 5.1 CLI, C API and GUI wiring
-- [ ] Support =momentum_backend = webgpu=, with =cpu= as the fallback.
+** NEXT 5.1 CLI, C API and GUI wiring
+- [X] Support =momentum_backend = webgpu= (CLI and C API, 4.4). The fallback
+      to =cpu= is 5.3.
 - [ ] GUI: a backend selector in the momentum solver panel. Hide the OpenFOAM
       case-directory picker when it doesn't apply. Let the processor count
       control the CPU backend only.
