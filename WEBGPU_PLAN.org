@@ -1322,6 +1322,8 @@ today.
   (Done as =cfg_momentum_webgpu_bigbutte=, alongside the other momentum
   cfgs.)
 - The C API test runs one domain-average momentum run with the WebGPU backend.
+  (Done: =momentum_backend_webgpu_c_api_run=; it needs
+  =NinjaSetAsciiProjOutFlag=, see the Inbox.)
 - Manual GUI checklist (record results here): select backend, run, cancel, and
   re-run with different directions.
 
@@ -1413,18 +1415,15 @@ Without =USER= in the environment (e.g. under =env -i=), OpenFOAM's
 =FOAM_USER_LIBBIN= becomes =~/OpenFOAM/-11=. =libWindNinja= isn't loaded,
 and the run fails late and obscurely: =decomposePar= reports
 "Essential entry 'value' missing" for =logProfileDissipationRateInlet=.
-** TODO C API momentum run writes no output files
-Tried for 5.1 (2026-10-21): a domain-average army through the C API with the
-GUI's setters (=NinjaSetAsciiOutFlag=, =AsciiAaigridOutFlag=,
-=AsciiResolution=, =OutputPath=, buffer clipping, vertical layers, diurnal
-off) on the WebGPU backend. The solve completes and =NinjaStartRuns= returns
-1 (success, as the GUI expects), but no =_vel.asc= appears in the output
-path, while the CLI writes it for the same backend. Not yet traced
-(=NinjaFoam::WriteOutputFiles= → =SetOutputFilenames=). Check whether
-OpenFOAM through the C API writes output, to tell a pre-existing C API issue
-from a backend one.
-Smell noticed: =NinjaStartRuns= returns =startRuns='s bool, so 1 means
-success while =NINJA_SUCCESS= is 0.
+** TODO C API: ASCII output silently needs a projection flag
+Resolved 2026-10-22 as a usage issue, not a backend bug.
+=ninja::writeAsciiOutputFiles= writes AAIGRID only with =asciiProjOutFlag=
+or =asciiGeogOutFlag= set. The CLI defaults the projected flag on and the
+GUI sets it, but a C API caller who sets only =NinjaSetAsciiOutFlag= and
+=NinjaSetAsciiAaigridOutFlag= gets no files and no warning. Suggest
+defaulting to projected (as the CLI does), or warning.
+Also: =NinjaStartRuns= returns =startRuns='s bool, so 1 means success while
+=NINJA_SUCCESS= is 0.
 ** TODO =RUN_CFG_TESTS= configure fails where only =python3= exists
 =autotest/CMakeLists.txt:353= runs =pef.py= with a bare =python=, which stock
 macOS lacks, so =ELEV_FILE= is empty and =string(STRIP)= errors. Run it with

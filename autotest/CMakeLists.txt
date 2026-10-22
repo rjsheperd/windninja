@@ -372,6 +372,11 @@ if(WITH_WEBGPU)
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/webgpu_cancel)
     set_tests_properties(momentum_backend_webgpu_cancel PROPERTIES
                          SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
+    add_test(momentum_backend_webgpu_c_api_run
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/webgpu_c_api_run)
+    set_tests_properties(momentum_backend_webgpu_c_api_run PROPERTIES
+                         ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data"
+                         SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
     add_test(momentum_backend_webgpu_cfl_backoff
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/webgpu_cfl_backoff)
     set_tests_properties(momentum_backend_webgpu_cfl_backoff PROPERTIES

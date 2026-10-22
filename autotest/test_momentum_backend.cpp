@@ -26,9 +26,11 @@
 
 
 
+#include "cpl_conv.h"
 #include "momentum_backend.h"
 #include "cpu_rans_backend.h"
 #ifdef WITH_WEBGPU
+#include "gpu_context.h"
 #include "webgpu_rans_backend.h"
 #endif
 #include "rans_grid.h"
@@ -361,6 +363,62 @@ BOOST_AUTO_TEST_CASE( webgpu_cfl_backoff )
     BOOST_CHECK_THROW(backend.solve(p, &com, []() {},
                                     [](const MomentumResult &) { return true; }, result),
                       MomentumDivergedError);
+}
+BOOST_AUTO_TEST_CASE( webgpu_c_api_run )
+{
+    // one domain-average momentum run through the C API (the GUI's setters)
+    // on the WebGPU backend
+    try
+    {
+        gpu::Context probe;
+    }
+    catch(const gpu::Unavailable &)
+    {
+        std::cout << "SKIP: no WebGPU adapter\n";
+        return;
+    }
+    // CPLGenerateTempFilename is relative to the working directory
+    std::string dir = CPLFormFilename(CPLGetConfigOption("TMPDIR", "/tmp"),
+                                      CPLGetFilename(CPLGenerateTempFilename("webgpu_c_api_run")), NULL);
+    BOOST_REQUIRE_EQUAL(VSIMkdir(dir.c_str(), 0777), 0);
+    std::string dem = CPLFormFilename(dir.c_str(), "big_butte_small", "tif");
+    BOOST_REQUIRE_EQUAL(CPLCopyFile(dem.c_str(), WINDNINJA_SOURCE_DIR "/data/big_butte_small.tif"), 0);
+
+    BOOST_REQUIRE_EQUAL(NinjaInit("C-API autotest", NULL), NINJA_SUCCESS);
+    NinjaArmyH *army = NinjaInitializeArmy();
+    BOOST_REQUIRE(army != NULL);
+    const double speed[] = {10.0};
+    const double direction[] = {270.0};
+    BOOST_REQUIRE_EQUAL(NinjaMakeDomainAverageArmy(army, 1, true, speed, "mph", direction, NULL),
+                        NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetMomentumBackend(army, 0, "webgpu", NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetNumberCPUs(army, 0, 2, NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetInitializationMethod(army, 0, "domain_average", false, NULL),
+                      NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetDem(army, 0, dem.c_str(), NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetPosition(army, 0, NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetInputWindHeight(army, 0, 20.0, "ft", NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetOutputWindHeight(army, 0, 20.0, "ft", NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetOutputSpeedUnits(army, 0, "mph", NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetUniVegetation(army, 0, "grass", NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetMeshResolutionChoice(army, 0, "coarse", NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetOutputPath(army, 0, dir.c_str(), NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetAsciiOutFlag(army, 0, true, NULL), NINJA_SUCCESS);
+    BOOST_CHECK_EQUAL(NinjaSetAsciiAaigridOutFlag(army, 0, true, NULL), NINJA_SUCCESS);
+    // AAIGRID output is written only in a projection (projected or lat/lon)
+    BOOST_CHECK_EQUAL(NinjaSetAsciiProjOutFlag(army, 0, true, NULL), NINJA_SUCCESS);
+    // NinjaStartRuns returns 1 (startRuns' true) on success, as the GUI expects
+    BOOST_CHECK_EQUAL(NinjaStartRuns(army, 1, NULL), 1);
+    BOOST_CHECK_EQUAL(NinjaDestroyArmy(army, NULL), NINJA_SUCCESS);
+
+    // the 20 ft speed grid was written
+    char **files = VSIReadDir(dir.c_str());
+    bool vel = false;
+    for(int i = 0; files != NULL && files[i] != NULL; i++)
+        if(std::string(files[i]).find("_vel.asc") != std::string::npos)
+            vel = true;
+    CSLDestroy(files);
+    BOOST_CHECK(vel);
 }
 #endif /* WITH_WEBGPU */
 
