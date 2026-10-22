@@ -424,6 +424,8 @@ add_test(mass_fem_terrain_grid_matches_mesh
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/terrain_grid_matches_mesh)
 add_test(mass_fem_mesh_resolution_matches_mesh
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/mesh_resolution_matches_mesh)
+add_test(mass_fem_initial_wind_matches_domain_average
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/initial_wind_matches_domain_average)
 add_test(mass_fem_inverted_element_throws
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/inverted_element_throws)
 add_test(mass_pcg_solves_to_tolerance

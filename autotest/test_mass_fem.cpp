@@ -26,9 +26,13 @@
 
 #include "mass_fem.h"
 #include "mass_terrain.h"
+#include "mass_wind_init.h"
+#include "domainAverageInitialization.h"
+#include "wn_3dScalarField.h"
 #include "WindNinjaInputs.h"
 #include "mesh.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -308,6 +312,78 @@ BOOST_AUTO_TEST_CASE(mesh_resolution_matches_mesh)
         mesh.compute_cellsize(dem);
         BOOST_CHECK_EQUAL(MassMeshResolution(173, 211, 27.3, mesh.targetNumHorizCells),
                           mesh.meshResolution);
+    }
+}
+
+/*
+** The core-free initial wind is WindNinja's: domainAverageInitialization
+** (no diurnal winds) on the same mesh gives the same u0, v0, w0, bit for
+** bit, for grass and trees, a latitude and none, an oblique direction, and
+** a DEM grid turned from north.
+*/
+BOOST_AUTO_TEST_CASE(initial_wind_matches_domain_average)
+{
+    struct Veg { double z0, h, d; };
+    struct Case { Veg veg; double direction, latitude; };
+    for(Case k : {Case{{0.01, 0.0, 0.0}, 270.0, 43.5}, Case{{1.0, 15.4, 12.0}, 37.5, -10000.0},
+                  Case{{0.43, 2.3, 1.8}, 0.0, -33.0}})
+    {
+        WindNinjaInputs input;
+        input.dem = Elevation(40, 30, 500000.0, 4800000.0, 30.0, -9999.0, Elevation::meters);
+        TerrainDem plain;
+        HillDems(input.dem, plain);
+        input.dem.setAngleFromNorth(1.3);
+        AsciiGrid<double> *grids[] = {&input.surface.Roughness, &input.surface.Rough_h,
+                                      &input.surface.Rough_d};
+        double values[] = {k.veg.z0, k.veg.h, k.veg.d};
+        for(int g = 0; g < 3; g++)
+        {
+            grids[g]->set_headerData(input.dem);
+            for(int r = 0; r < 30; r++)
+                for(int c = 0; c < 40; c++)
+                    (*grids[g])(r, c) = values[g];
+        }
+        input.inputSpeed = 4.4704;
+        input.inputDirection_geog = k.direction;
+        input.inputWindHeight = 6.096;
+        input.outputWindHeight = 6.096;
+        input.latitude = k.latitude;
+        input.diurnalWinds = false;
+        input.cloudCover = 0.0;
+
+        Mesh mesh;
+        mesh.set_numVertLayers(20);
+        mesh.set_meshResolution(30.0, lengthUnits::meters);
+        mesh.buildStandardMesh(input);
+        wn_3dScalarField u0, v0, w0;
+        u0.allocate(&mesh);   // as ninja does before initializing
+        v0.allocate(&mesh);
+        w0.allocate(&mesh);
+        AsciiGrid<double> cloud;
+        domainAverageInitialization init;
+        init.initializeFields(input, mesh, u0, v0, w0, cloud);
+
+        DomainAverageWind wind;
+        wind.speed = 4.4704;
+        wind.direction = k.direction;
+        wind.inputHeight = 6.096;
+        wind.roughness = k.veg.z0;
+        wind.roughH = k.veg.h;
+        wind.roughD = k.veg.d;
+        wind.latitude = k.latitude;
+        wind.angleFromNorth = 1.3;
+        std::vector<double> u, v, w;
+        InitialWind(MassGrid::FromMesh(mesh), wind, u, v, w);
+
+        int mismatches = 0;
+        double maxSpeed = 0.0;
+        for(int n = 0; n < mesh.NUMNP; n++)
+        {
+            mismatches += u[n] != u0(n) || v[n] != v0(n) || w[n] != w0(n);
+            maxSpeed = std::max(maxSpeed, std::hypot(u[n], v[n]));
+        }
+        BOOST_CHECK_EQUAL(mismatches, 0);
+        BOOST_CHECK_GT(maxSpeed, 4.4704);   // the profile grows above the input height
     }
 }
 

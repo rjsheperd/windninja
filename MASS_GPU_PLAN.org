@@ -562,7 +562,7 @@ See the Inbox.
 - [X] Documentation updates (=src/ninja/gpu/README.org=,
       =src/ninja/gpu/wasm/README.org=)
 
-** IN-PROGRESS 3.1a DEM in, wind out in the browser [1/5]
+** IN-PROGRESS 3.1a DEM in, wind out in the browser [2/5]
 - [X] Core-free mass mesh from a DEM (=Mesh='s terrain-following layers:
       layer heights, growth, domain height), like =TerrainGrid= for RANS;
       native =Mesh= vs the core-free one, node by node.
@@ -580,9 +580,22 @@ See the Inbox.
       Still WindNinja's: resampling a DEM to the mesh resolution
       (=AsciiGrid::resample_Grid_in_place=); the browser takes a DEM at the
       mesh resolution for now.
-- [ ] Core-free domain-average initialization (log profile from the input
+- [X] Core-free domain-average initialization (log profile from the input
       speed, height and roughness; neutral αV), matching
       =domainAverageInitialization= without stability.
+      =src/ninja/mass_wind_init.{h,cpp}=: =InitialWind()= with
+      =DomainAverageWind= (speed, direction, input height, z₀, canopy and
+      displacement heights, latitude, the DEM's angle from north). Reuses
+      WindNinja's own =windProfile=, =wind_sd_to_uv= and =wrap0to360=
+      (already core-free), so only the boundary-layer arithmetic and the
+      column loop are new. Test =mass_fem/initial_wind_matches_domain_average=
+      (=domainAverageInitialization::initializeFields= on the same mesh:
+      u₀, v₀, w₀ bit-identical for grass at 43.5°N, trees with no latitude
+      and an oblique direction, brush at 33°S; DEM turned 1.3° from north).
+      Mutations: angle from north ignored, plain log law (L = 0), f keeping
+      its sign, u* without the displacement, wrong default Coriolis: each
+      caught. Neutral αV is αH (no stability), as =discretize()= without
+      stability.
 - [ ] =windninja_mass_dem_solve=: DEM, speed, direction, height, roughness
       in; the output-height wind per cell out (as WindNinja's 20 ft output).
 - [ ] Add tests: browser output vs WindNinja CLI on Big Butte (ASCII
