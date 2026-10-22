@@ -37,6 +37,21 @@ mass solver).
   from the grid's north) per cell, row 0 north: on the CPU, exactly the
   values the CLI writes to its ASCII grids (=scripts/check_mass_dem.sh=).
   Returns as =windninja_mass_solve=.
+- Sharing the page's =GPUDevice= (plan 3.2), so a page (a fire model) uses
+  the wind where it lies on the GPU:
+  #+begin_src js
+  const dev = Module.WebGPU.importJsDevice(device, Module._windninja_gpu_instance());
+  Module._windninja_gpu_share_device(dev);            // 0 on success
+  const ptr = await Module.ccall('windninja_mass_solve_kept', 'number', [...], [...],
+                                 {async: true});      // windninja_mass_solve's inputs
+  const wind = Module.WebGPU.getJsObject(ptr);        // GPUBuffer: u, v, w f32 slots
+  #+end_src
+  After sharing, every GPU solve in the module runs on the page's device.
+  The kept buffer stays valid until the next call. The device's
+  uncaptured-error and lost callbacks are the page's. =share.html= is the
+  check: the page copies the buffer with its own commands and gets the
+  module's values exactly. Output-height grids stay on the CPU for now
+  (plan 3.2a).
 - =main()= is a self-test. It solves =hill_selftest.h='s hill and checks the
   statistics against the native result (autotest =gpu/dem_solve_hill=), to
   1e-3 relative. Measured in headless Chromium on Apple Metal: within 2e-7.
@@ -89,6 +104,7 @@ native build (one pinned =webgpu.h=), not Emscripten's built-in remote port.
 #+begin_src sh
 src/ninja/gpu/wasm/run_browser_test.sh build-wasm              # saxpy
 src/ninja/gpu/wasm/run_browser_test.sh build-wasm solver.html  # the solver
+src/ninja/gpu/wasm/run_browser_test.sh build-wasm share.html   # a shared device
 #+end_src
 This serves the build directory, opens =index.html= in headless Chromium via
 [[https://github.com/Blockether/spel][spel]] with WebGPU enabled, and exits 0 on

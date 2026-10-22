@@ -27,8 +27,10 @@
 #ifndef MASS_GPU_SOLVE_H
 #define MASS_GPU_SOLVE_H
 
+#include <memory>
 #include <string>
 
+#include "gpu_context.h"
 #include "mass_pcg.h"
 
 /*
@@ -48,5 +50,23 @@ MassSolveResult SolveMassWindOnGpu(const MassGrid &grid, const double *u0, const
                                    const double *w0, const double *alphaV, double alphaH,
                                    const MassSolveOptions &options, double *u, double *v,
                                    double *w, std::string *adapter = nullptr);
+
+// The same on an existing context (e.g. one sharing a page's device).
+MassSolveResult SolveMassWindOnGpu(gpu::Context &context, const MassGrid &grid, const double *u0,
+                                   const double *v0, const double *w0, const double *alphaV,
+                                   double alphaH, const MassSolveOptions &options, double *u,
+                                   double *v, double *w);
+
+/*
+** The same, leaving the wind on the GPU for others on the context's device
+** (MASS_GPU_PLAN.org 3.2): a buffer of 3 * nodes f32, u, v, w slots (slot s
+** of node n at s * nodes + n, MassGrid's node order).  *result gets the
+** solve's outcome.
+*/
+std::unique_ptr<gpu::Buffer> SolveMassWindKeptOnGpu(gpu::Context &context, const MassGrid &grid,
+                                                    const double *u0, const double *v0,
+                                                    const double *w0, const double *alphaV,
+                                                    double alphaH, const MassSolveOptions &options,
+                                                    MassSolveResult *result);
 
 #endif /* MASS_GPU_SOLVE_H */

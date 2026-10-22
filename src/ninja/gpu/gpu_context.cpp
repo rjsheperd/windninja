@@ -142,20 +142,38 @@ Context::Context()
     }
 }
 
+Context::Context(WGPUInstance instance, WGPUDevice device, const std::string &name)
+{
+    if(instance == nullptr || device == nullptr)
+        throw Unavailable("WebGPU: no instance or device to share");
+    wgpuInstanceAddRef(instance);
+    instance_ = instance;
+    wgpuDeviceAddRef(device);
+    device_ = device;
+    queue_ = wgpuDeviceGetQueue(device_);
+    adapterName_ = name;
+}
+
 Context::~Context()
 {
     release();
 }
 
-void Context::open()
+WGPUInstance Context::CreateInstance()
 {
     WGPUInstanceFeatureName timedWaitAny = WGPUInstanceFeatureName_TimedWaitAny;
     WGPUInstanceDescriptor instanceDesc = WGPU_INSTANCE_DESCRIPTOR_INIT;
     instanceDesc.requiredFeatureCount = 1;
     instanceDesc.requiredFeatures = &timedWaitAny;
-    instance_ = wgpuCreateInstance(&instanceDesc);
-    if(instance_ == nullptr)
+    WGPUInstance instance = wgpuCreateInstance(&instanceDesc);
+    if(instance == nullptr)
         throw Unavailable("WebGPU: could not create an instance");
+    return instance;
+}
+
+void Context::open()
+{
+    instance_ = CreateInstance();
 
     WGPUPowerPreference preferences[] = {WGPUPowerPreference_HighPerformance,
                                          WGPUPowerPreference_Undefined};

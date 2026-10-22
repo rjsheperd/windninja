@@ -637,11 +637,50 @@ See the Inbox.
 - [X] Documentation updates: =src/ninja/gpu/wasm/README.org=.
 - [ ] Tests pass / Documentation updates
 
-** TODO 3.2 Shared device with the fire simulation [0/4]
-- [ ] Accept a JavaScript-created =GPUDevice=; expose u/v buffers to the page.
-- [ ] Add tests: a page reads the wind buffer without a CPU copy.
-- [ ] Tests pass
-- [ ] Documentation updates
+** DONE 3.2 Shared device with the fire simulation [4/4]
+- [X] Accept a JavaScript-created =GPUDevice=; expose u/v buffers to the page.
+      =gpu::Context(instance, device)= adopts an existing device (the
+      instance must be the device's own: natively its creator, in the
+      browser the import's parent; =Context::CreateInstance()=,
+      =Context::instance()=). Exports: =windninja_gpu_instance()= and
+      =windninja_gpu_share_device(dev)= (the page does
+      =Module.WebGPU.importJsDevice(device, Module._windninja_gpu_instance())=;
+      =WebGPU= is now an exported runtime method); after that every GPU
+      solve in the module runs on the page's device.
+      =windninja_mass_solve_kept(...)= solves (=SolveMassWindKeptOnGpu()=,
+      new; =SolveMassWindOnGpu()= gains a context overload) and returns the
+      =WGPUBuffer= of u, v, w (f32 slots, MassGrid's node order);
+      =Module.WebGPU.getJsObject(ptr)= is the page's =GPUBuffer=.
+      Caveat: an imported device's uncaptured-error and lost callbacks are
+      the page's, so the module sees errors only through error scopes and
+      waits.
+- [X] Add tests: a page reads the wind buffer without a CPU copy.
+      =src/ninja/gpu/wasm/share.html= (=run_browser_test.sh <build>
+      share.html=): the page makes its device, shares it, solves a 3,840-node
+      grid twice (downloaded by the module; kept on the GPU), copies the
+      kept buffer with its own commands in a validation error scope, maps
+      it: all 11,520 values equal the module's download. Mutation: sharing
+      that doesn't adopt the device → the page's copy fails validation
+      ("[Buffer] is associated with [Device "windninja"], and cannot be used
+      with [Device]"). Native =gpu/mass_wind_kept_on_shared_device= (an
+      adopting context's kept buffer, read through the original: identical;
+      found that the adopting context needs the device's own instance:
+      a fresh one aborts in Dawn).
+- [X] Tests pass: =share.html= and =solver.html= =RESULT PASS=;
+      =ctest -R "^mass_|^gpu_"= 44/44.
+- [X] Documentation updates: =src/ninja/gpu/wasm/README.org=, headers.
+
+Not done here: the page gets the 3-D wind; WindNinja's output-height
+grids are computed on the CPU (=OutputWind=) → 3.2a.
+
+** TODO 3.2a Output-height wind on the GPU [0/4]
+- [ ] =OutputWind= as a kernel (per column: find the layer; the neutral
+      profile within the first layer, linear above), so the page gets 2-D
+      speed and direction grids on the GPU for the fire model.
+- [ ] An export returning that buffer (=windninja_mass_dem_solve_kept=).
+- [ ] Add tests: against =OutputWind= on the CPU (within f32); the page
+      reads it as in =share.html=.
+- [ ] Tests pass / Documentation updates
 
 * Phase 4: Repeated solves
 ** TODO 4.1 Warm starts and multi-RHS batching [0/4]

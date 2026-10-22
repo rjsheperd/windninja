@@ -1,0 +1,138 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WindNinja Shared Device</title>
+<style>
+  :root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ececea; --muted: #a2a29b; }
+  }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+         font: 14px/1.45 system-ui, sans-serif; }
+  main { max-width: 820px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 16px; color: var(--muted); }
+  pre { font-size: 12px; overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+<h1>WindNinja shared device</h1>
+<p class="sub">The page makes the GPUDevice, the module solves the mass-consistent wind on
+it, and the page reads the wind buffer with its own commands: no copy through
+WebAssembly memory (MASS_GPU_PLAN.org 3.2).</p>
+<pre id="out"></pre>
+</main>
+
+<script>
+  // log and RESULT for run_browser_test.sh (Emscripten's JS defines globals
+  // named out and err)
+  var harnessOut = document.getElementById('out');
+  function show(line) {
+    harnessOut.textContent += line + '\n';
+    var m = /^RESULT (\w+)/.exec(line);
+    if (m && !document.body.dataset.result) document.body.dataset.result = m[1];
+  }
+  var Module = {
+    noInitialRun: true,   // the page drives; main() is the solver page's self-test
+    print: show,
+    printErr: show,
+    onAbort: function (what) { show('RESULT FAIL abort: ' + what); },
+    onRuntimeInitialized: function () {
+      sharedDeviceTest().catch(function (e) { show('RESULT FAIL ' + (e && e.stack || e)); });
+    }
+  };
+  window.addEventListener('error', function (e) { show('RESULT FAIL ' + e.message); });
+  window.addEventListener('unhandledrejection', function (e) { show('RESULT FAIL ' + e.reason); });
+  if (!navigator.gpu) show('RESULT SKIP navigator.gpu is missing');
+
+  // A small terrain-following grid over a hill, with a log-like wind from
+  // the west-south-west: x, y, z, u0, v0, w0, alphaV per node.
+  function fixture(ncols, nrows, nlayers) {
+    var n = ncols * nrows * nlayers, g = {ncols: ncols, nrows: nrows, nlayers: nlayers, n: n};
+    ['x', 'y', 'z', 'u0', 'v0', 'w0', 'alphaV'].forEach(function (k) { g[k] = new Float64Array(n); });
+    var dx = 60, top = 3000;
+    for (var k = 0; k < nlayers; k++)
+      for (var i = 0; i < nrows; i++)
+        for (var j = 0; j < ncols; j++) {
+          var node = j + ncols * (i + nrows * k);
+          var ground = 1500 + 300 * Math.exp(-((j - ncols / 2) ** 2 + (i - nrows / 2) ** 2) / 20);
+          var frac = (Math.pow(1.3, k) - 1) / (Math.pow(1.3, nlayers - 1) - 1);
+          var z = ground + (top - ground) * frac;
+          var profile = Math.log((z - ground + 0.1) / 0.01) / Math.log(6.096 / 0.01);
+          g.x[node] = 512345.37 + j * dx;
+          g.y[node] = 4812345.61 + i * dx;
+          g.z[node] = z;
+          g.u0[node] = 4.47 * profile * 0.94;
+          g.v0[node] = 4.47 * profile * 0.34;
+          g.alphaV[node] = 1;
+        }
+    return g;
+  }
+
+  // copy a typed array into the module's heap (doubles)
+  function heap(a) {
+    var p = Module._malloc(a.length * 8);
+    Module.HEAPF64.set(a, p / 8);
+    return p;
+  }
+
+  // (not "run": Emscripten's JS defines a global run(), as out and err)
+  async function sharedDeviceTest() {
+    var adapter = await navigator.gpu.requestAdapter({powerPreference: 'high-performance'});
+    if (!adapter) { show('RESULT SKIP no WebGPU adapter'); return; }
+    var device = await adapter.requestDevice();
+    show('page device: ' + (adapter.info ? adapter.info.vendor + ' ' + adapter.info.architecture : '?'));
+
+    // share the page's device with the module
+    var dev = Module.WebGPU.importJsDevice(device, Module._windninja_gpu_instance());
+    if (Module._windninja_gpu_share_device(dev) !== 0) { show('RESULT FAIL sharing the device'); return; }
+
+    var g = fixture(24, 20, 8);
+    var p = ['x', 'y', 'z', 'u0', 'v0', 'w0', 'alphaV'].map(function (k) { return heap(g[k]); });
+    var uvw = [0, 1, 2].map(function () { return Module._malloc(g.n * 8); });
+    var args = ['number', 'number', 'number'].concat(Array(7).fill('number')).concat(['number']);
+
+    // reference: the module solves on the shared device and downloads the wind
+    var iterations = await Module.ccall('windninja_mass_solve', 'number',
+        args.concat(['number', 'number', 'number', 'number']),
+        [g.ncols, g.nrows, g.nlayers].concat(p).concat([1.0, 1]).concat(uvw), {async: true});
+    if (iterations < 0) { show('RESULT FAIL windninja_mass_solve returned ' + iterations); return; }
+    var ref = uvw.map(function (q) { return Module.HEAPF64.slice(q / 8, q / 8 + g.n); });
+
+    // the same solve, the wind left on the GPU
+    var ptr = await Module.ccall('windninja_mass_solve_kept', 'number', args,
+        [g.ncols, g.nrows, g.nlayers].concat(p).concat([1.0]), {async: true});
+    if (!ptr) { show('RESULT FAIL windninja_mass_solve_kept returned 0'); return; }
+    var wind = Module.WebGPU.getJsObject(ptr);
+    show('wind buffer: ' + wind.size + ' bytes, usage ' + wind.usage);
+
+    // read it with the page's own commands; a buffer from another device
+    // would be a validation error here
+    var bytes = 3 * g.n * 4;
+    var staging = device.createBuffer({size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST});
+    device.pushErrorScope('validation');
+    var encoder = device.createCommandEncoder();
+    encoder.copyBufferToBuffer(wind, 0, staging, 0, bytes);
+    device.queue.submit([encoder.finish()]);
+    var error = await device.popErrorScope();
+    if (error) { show('RESULT FAIL the page could not use the wind buffer: ' + error.message); return; }
+    await staging.mapAsync(GPUMapMode.READ);
+    var f = new Float32Array(staging.getMappedRange().slice(0));
+    staging.unmap();
+
+    var differ = 0, maxSpeed = 0;
+    for (var s = 0; s < 3; s++)
+      for (var i = 0; i < g.n; i++)
+        if (f[s * g.n + i] !== Math.fround(ref[s][i])) differ++;
+    for (var i = 0; i < g.n; i++) maxSpeed = Math.max(maxSpeed, Math.hypot(f[i], f[g.n + i]));
+    show(g.n + ' nodes, ' + iterations + ' iterations; max speed ' + maxSpeed.toFixed(4) +
+         ' m/s; ' + differ + ' of ' + 3 * g.n + ' values differ from the module\'s download');
+    show(differ === 0 && maxSpeed > 1 ? 'RESULT PASS' : 'RESULT FAIL the page read different wind');
+  }
+</script>
+<script src="windninja_wasm.js"></script>
+</body>
+</html>

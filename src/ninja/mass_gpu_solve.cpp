@@ -32,14 +32,12 @@
 #include "gpu_context.h"
 #include "gpu_mass.h"
 
-MassSolveResult SolveMassWindOnGpu(const MassGrid &grid, const double *u0, const double *v0,
-                                   const double *w0, const double *alphaV, double alphaH,
-                                   const MassSolveOptions &options, double *u, double *v,
-                                   double *w, std::string *adapter)
+std::unique_ptr<gpu::Buffer> SolveMassWindKeptOnGpu(gpu::Context &context, const MassGrid &grid,
+                                                    const double *u0, const double *v0,
+                                                    const double *w0, const double *alphaV,
+                                                    double alphaH, const MassSolveOptions &options,
+                                                    MassSolveResult *result)
 {
-    gpu::Context context;
-    if(adapter)
-        *adapter = context.adapterName();
     const std::size_t n = grid.numNodes();
     gpu::MassFem fem(context, gpu::MakeMassGeometry(grid.ncols, grid.nrows, grid.nlayers,
                                                     grid.x.data(), grid.y.data(), grid.z.data()));
@@ -52,8 +50,8 @@ MassSolveResult SolveMassWindOnGpu(const MassGrid &grid, const double *u0, const
         wind[n + i] = (float)v0[i];
         wind[2 * n + i] = (float)w0[i];
     }
-    gpu::Buffer windIn(context, 3 * n * sizeof(float)), alphaIn(context, n * sizeof(float)),
-        windOut(context, 3 * n * sizeof(float));
+    gpu::Buffer windIn(context, 3 * n * sizeof(float)), alphaIn(context, n * sizeof(float));
+    std::unique_ptr<gpu::Buffer> windOut(new gpu::Buffer(context, 3 * n * sizeof(float)));
     windIn.upload(wind);
     alphaIn.upload(alpha);
     pcg.solution().upload(std::vector<float>(n, 0.0f));
@@ -71,20 +69,41 @@ MassSolveResult SolveMassWindOnGpu(const MassGrid &grid, const double *u0, const
             options.progress(iteration, residual, startResidual);
     };
     gpu::MassPcg::Result r = pcg.solveOnDevice(options.tol, options.maxIterations, 10, onCheck);
+    fem.recover(pcg.solution(), windIn, alphaIn, (float)alphaH, *windOut);
 
-    fem.recover(pcg.solution(), windIn, alphaIn, (float)alphaH, windOut);
-    windOut.download(wind.data(), 3 * n * sizeof(float));
+    result->iterations = r.iterations;
+    result->residual = r.residual;
+    result->converged = r.converged;
+    result->jacobi = true;
+    return windOut;
+}
+
+MassSolveResult SolveMassWindOnGpu(gpu::Context &context, const MassGrid &grid, const double *u0,
+                                   const double *v0, const double *w0, const double *alphaV,
+                                   double alphaH, const MassSolveOptions &options, double *u,
+                                   double *v, double *w)
+{
+    MassSolveResult result;
+    std::unique_ptr<gpu::Buffer> wind =
+        SolveMassWindKeptOnGpu(context, grid, u0, v0, w0, alphaV, alphaH, options, &result);
+    const std::size_t n = grid.numNodes();
+    std::vector<float> f = wind->download<float>(3 * n);
     for(std::size_t i = 0; i < n; i++)
     {
-        u[i] = wind[i];
-        v[i] = wind[n + i];
-        w[i] = wind[2 * n + i];
+        u[i] = f[i];
+        v[i] = f[n + i];
+        w[i] = f[2 * n + i];
     }
-
-    MassSolveResult result;
-    result.iterations = r.iterations;
-    result.residual = r.residual;
-    result.converged = r.converged;
-    result.jacobi = true;
     return result;
+}
+
+MassSolveResult SolveMassWindOnGpu(const MassGrid &grid, const double *u0, const double *v0,
+                                   const double *w0, const double *alphaV, double alphaH,
+                                   const MassSolveOptions &options, double *u, double *v,
+                                   double *w, std::string *adapter)
+{
+    gpu::Context context;
+    if(adapter)
+        *adapter = context.adapterName();
+    return SolveMassWindOnGpu(context, grid, u0, v0, w0, alphaV, alphaH, options, u, v, w);
 }

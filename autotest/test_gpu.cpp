@@ -1069,6 +1069,36 @@ BOOST_AUTO_TEST_CASE( mass_dem_selftest )
                                             ::mass_selftest::cpuTolerance));
 }
 
+// A Context adopting another's instance and device (as the browser adopts a
+// page's) shares its buffers: the wind kept on the GPU through the adopting
+// context, copied and read through the original one, equals the download.
+BOOST_AUTO_TEST_CASE( mass_wind_kept_on_shared_device )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    gpu::Context shared(c->instance(), c->device(), "test");   // the device's own instance
+
+    MassGrid g = ::mass_selftest::Grid(24, 20, 8);
+    ::mass_selftest::Wind in = ::mass_selftest::Initial(g);
+    int n = g.numNodes();
+    std::vector<double> u(n), v(n), w(n);
+    SolveMassWindOnGpu(*c, g, in.u0.data(), in.v0.data(), in.w0.data(), in.alphaV.data(),
+                       in.alphaH, MassSolveOptions(), u.data(), v.data(), w.data());
+    MassSolveResult r;
+    std::unique_ptr<gpu::Buffer> kept = SolveMassWindKeptOnGpu(
+        shared, g, in.u0.data(), in.v0.data(), in.w0.data(), in.alphaV.data(), in.alphaH,
+        MassSolveOptions(), &r);
+    BOOST_REQUIRE(r.converged);
+    gpu::Buffer copy(*c, 3 * n * sizeof(float));
+    copy.copyFrom(*kept, 3 * n * sizeof(float));
+    std::vector<float> f = copy.download<float>(3 * n);
+    int differ = 0;
+    for(int i = 0; i < n; i++)
+        differ += f[i] != (float)u[i] || f[n + i] != (float)v[i] || f[2 * n + i] != (float)w[i];
+    BOOST_CHECK_EQUAL(differ, 0);
+}
+
 // Not in ctest: the whole GPU solve at the fine-mesh size, against the CPU
 // solver on the same system.  --run_test=gpu/mass_pcg_timing --log_level=message
 BOOST_AUTO_TEST_CASE( mass_pcg_timing )

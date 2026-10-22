@@ -66,10 +66,22 @@ public:
     // Requests a high-performance adapter, then any adapter.  Throws
     // Unavailable when there is none.
     Context();
+    // Adopts an existing instance and device (takes a reference to each),
+    // e.g. a page's GPUDevice imported into the browser module with
+    // WebGPU.importJsDevice(device, instance), so both share buffers.  The
+    // instance must be the device's own (natively, the one that created it;
+    // in the browser, the import's parent): waits go through it.  The
+    // device's uncaptured-error and lost callbacks belong to its creator:
+    // errors reach us only through error scopes (creation) and waits.
+    Context(WGPUInstance instance, WGPUDevice device, const std::string &name = "shared device");
+    // A new instance that can wait on futures (TimedWaitAny), as Context()
+    // makes; the caller releases it.
+    static WGPUInstance CreateInstance();
     ~Context();
     Context(const Context &) = delete;
     Context &operator=(const Context &) = delete;
 
+    WGPUInstance instance() const { return instance_; }
     WGPUDevice device() const { return device_; }
     WGPUQueue queue() const { return queue_; }
     // adapter description, e.g. "Apple M3 Pro (Metal)"

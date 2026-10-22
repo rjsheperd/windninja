@@ -32,6 +32,16 @@
 namespace {
 
 std::unique_ptr<gpu::Context> context;
+WGPUInstance sharedInstance = nullptr;      // the parent of an imported page device
+std::unique_ptr<gpu::Buffer> keptWind;      // windninja_mass_solve_kept's result
+
+// The module's context: the page's device if shared, else its own.
+gpu::Context &Gpu()
+{
+    if(!context)
+        context.reset(new gpu::Context());
+    return *context;
+}
 
 void Log(const std::string &message, bool warning)
 {
@@ -52,7 +62,7 @@ MassSolveResult MassOnCpu(const MassGrid &g, const double *u0, const double *v0,
 MassSolveResult MassOnGpu(const MassGrid &g, const double *u0, const double *v0, const double *w0,
                           const double *alphaV, double alphaH, double *u, double *v, double *w)
 {
-    return SolveMassWindOnGpu(g, u0, v0, w0, alphaV, alphaH, MassSolveOptions(), u, v, w);
+    return SolveMassWindOnGpu(Gpu(), g, u0, v0, w0, alphaV, alphaH, MassSolveOptions(), u, v, w);
 }
 
 // SolveMassWindOnGpu as a MassWindSolver (for SolveMassDem)
@@ -60,7 +70,20 @@ MassSolveResult GpuWindSolver(const MassGrid &g, const double *u0, const double 
                               const double *w0, const double *alphaV, double alphaH,
                               const MassSolveOptions &options, double *u, double *v, double *w)
 {
-    return SolveMassWindOnGpu(g, u0, v0, w0, alphaV, alphaH, options, u, v, w);
+    return SolveMassWindOnGpu(Gpu(), g, u0, v0, w0, alphaV, alphaH, options, u, v, w);
+}
+
+MassGrid GridFrom(int ncols, int nrows, int nlayers, const double *x, const double *y,
+                  const double *z)
+{
+    MassGrid g;
+    g.ncols = ncols;
+    g.nrows = nrows;
+    g.nlayers = nlayers;
+    g.x.assign(x, x + g.numNodes());
+    g.y.assign(y, y + g.numNodes());
+    g.z.assign(z, z + g.numNodes());
+    return g;
 }
 
 } // namespace
@@ -147,13 +170,7 @@ EMSCRIPTEN_KEEPALIVE int windninja_mass_solve(int ncols, int nrows, int nlayers,
 {
     try
     {
-        MassGrid g;
-        g.ncols = ncols;
-        g.nrows = nrows;
-        g.nlayers = nlayers;
-        g.x.assign(x, x + g.numNodes());
-        g.y.assign(y, y + g.numNodes());
-        g.z.assign(z, z + g.numNodes());
+        MassGrid g = GridFrom(ncols, nrows, nlayers, x, y, z);
         MassSolveResult r = gpu ? MassOnGpu(g, u0, v0, w0, alphaV, alphaH, u, v, w)
                                 : MassOnCpu(g, u0, v0, w0, alphaV, alphaH, u, v, w);
         return r.converged ? r.iterations : -1;
@@ -167,6 +184,70 @@ EMSCRIPTEN_KEEPALIVE int windninja_mass_solve(int ncols, int nrows, int nlayers,
     {
         std::printf("error: %s\n", e.what());
         return -3;
+    }
+}
+
+/*
+** Sharing the page's GPUDevice (MASS_GPU_PLAN.org 3.2), so the page (a fire
+** model, say) uses the wind where it lies on the GPU:
+**   const dev = Module.WebGPU.importJsDevice(device, Module._windninja_gpu_instance());
+**   Module._windninja_gpu_share_device(dev);
+** windninja_gpu_instance returns the module's instance, the imported device's
+** parent (its futures are waited on through it).  After sharing, every GPU
+** solve here runs on the page's device.  Returns 0, or 3 on error.
+*/
+EMSCRIPTEN_KEEPALIVE WGPUInstance windninja_gpu_instance()
+{
+    if(sharedInstance == nullptr)
+        sharedInstance = gpu::Context::CreateInstance();
+    return sharedInstance;
+}
+
+EMSCRIPTEN_KEEPALIVE int windninja_gpu_share_device(WGPUDevice device)
+{
+    try
+    {
+        keptWind.reset();
+        context.reset(new gpu::Context(windninja_gpu_instance(), device, "page device"));
+        return 0;
+    }
+    catch(const std::exception &e)
+    {
+        std::printf("error: %s\n", e.what());
+        return 3;
+    }
+}
+
+/*
+** windninja_mass_solve on the GPU, leaving the wind there: returns the
+** WGPUBuffer (Module.WebGPU.getJsObject(ptr) is the GPUBuffer) holding
+** 3 * nodes f32, the u, v, w slots (slot s of node n at s * nodes + n), or 0
+** on failure (printed).  It stays valid until the next call.
+*/
+EMSCRIPTEN_KEEPALIVE WGPUBuffer windninja_mass_solve_kept(int ncols, int nrows, int nlayers,
+                                                          const double *x, const double *y,
+                                                          const double *z, const double *u0,
+                                                          const double *v0, const double *w0,
+                                                          const double *alphaV, double alphaH)
+{
+    try
+    {
+        keptWind.reset();
+        MassSolveResult r;
+        keptWind = SolveMassWindKeptOnGpu(Gpu(), GridFrom(ncols, nrows, nlayers, x, y, z), u0, v0,
+                                          w0, alphaV, alphaH, MassSolveOptions(), &r);
+        if(!r.converged)
+        {
+            std::printf("error: the mass solve didn't converge\n");
+            keptWind.reset();
+            return nullptr;
+        }
+        return keptWind->handle();
+    }
+    catch(const std::exception &e)
+    {
+        std::printf("error: %s\n", e.what());
+        return nullptr;
     }
 }
 
