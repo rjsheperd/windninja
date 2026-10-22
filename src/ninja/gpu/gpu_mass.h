@@ -89,9 +89,12 @@ private:
 
 /*
 ** Jacobi-preconditioned conjugate gradient for the mass system on the GPU,
-** in f32.  alpha and beta stay on the GPU; the host reads back r.r every
-** checkEvery iterations to test ||r|| / ||b|| <= tol, so a converged solve
-** can run up to checkEvery - 1 iterations past the tolerance.
+** in f32, three dispatches an iteration (kernels::massPcg*: direction,
+** apply, update; each finishes the reductions it needs itself, so alpha
+** and beta never leave the GPU).  The host reads back the r.r partials
+** every checkEvery iterations and sums them in f64 to test ||r|| / ||b|| <=
+** tol, so a converged solve can run up to checkEvery - 1 iterations past
+** the tolerance.
 **
 ** f32 limit (MASS_GPU_PLAN.org 2.3): the true residual follows the
 ** reported one down to about 1e-2 and stalls near 1e-3 (Big Butte fine),
@@ -138,8 +141,9 @@ private:
     std::size_t nodes_;
     uint32_t gx_, gy_;
     MassOperator op_;
-    Buffer params_, startParams_, b_, x_, r_, z_, p_, q_, scalars_, partials_;
-    Kernel direction_, apply_, alpha_, update_, beta_;
+    Buffer params_[4];   // the start, the first, odd and even iterations
+    Buffer b_, x_, r_, z_, p_, q_, partials_;
+    Kernel direction_, apply_, update_;
     Reducer reducer_;   // ||b||
 };
 

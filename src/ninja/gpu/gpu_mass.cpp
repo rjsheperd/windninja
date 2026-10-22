@@ -123,12 +123,12 @@ void MassOperator::apply(const Buffer &x, Buffer &y)
 
 namespace {
 
-struct PcgParams
+struct PcgParams   // kernels::massPcgPrelude's Params
 {
-    uint32_t ncols, nrows, nlayers, nodes, groups, start, pad1, pad2;
+    uint32_t ncols, nrows, nlayers, nodes, groups, start, current, first;
 };
 
-enum Scalar { RHO = 0, PQ, ALPHA, BETA, RR, SCALARS = 8 };
+enum Slot { PQ = 0, RR, ZR0, ZR1, SLOTS };   // partials slots
 
 std::string pcgSource(const char *stage)
 {
@@ -140,28 +140,31 @@ std::string pcgSource(const char *stage)
 MassPcg::MassPcg(Context &context, int ncols, int nrows, int nlayers)
     : context_(context), nodes_((std::size_t)ncols * nrows * nlayers),
       gx_(0), gy_(0), op_(context, ncols, nrows, nlayers),
-      params_(context, sizeof(PcgParams), Buffer::Uniform),
-      startParams_(context, sizeof(PcgParams), Buffer::Uniform),
+      params_{Buffer(context, sizeof(PcgParams), Buffer::Uniform),
+              Buffer(context, sizeof(PcgParams), Buffer::Uniform),
+              Buffer(context, sizeof(PcgParams), Buffer::Uniform),
+              Buffer(context, sizeof(PcgParams), Buffer::Uniform)},
       b_(context, nodes_ * sizeof(float)), x_(context, nodes_ * sizeof(float)),
       r_(context, nodes_ * sizeof(float)), z_(context, nodes_ * sizeof(float)),
       p_(context, nodes_ * sizeof(float)), q_(context, nodes_ * sizeof(float)),
-      scalars_(context, SCALARS * sizeof(float)),
-      partials_(context, 2 * ((nodes_ + 255) / 256 + maxGroupsX) * sizeof(float)),
+      partials_(context, SLOTS * ((nodes_ + 255) / 256 + maxGroupsX) * sizeof(float)),
       direction_(context, pcgSource(kernels::massPcgDirection).c_str()),
       apply_(context, pcgSource(kernels::massPcgApply).c_str()),
-      alpha_(context, pcgSource(kernels::massPcgAlpha).c_str()),
       update_(context, pcgSource(kernels::massPcgUpdate).c_str()),
-      beta_(context, pcgSource(kernels::massPcgBeta).c_str()),
       reducer_(context)
 {
     std::size_t groups = (nodes_ + 255) / 256;
     gx_ = (uint32_t)(groups < maxGroupsX ? groups : maxGroupsX);
     gy_ = (uint32_t)((groups + gx_ - 1) / gx_);
-    PcgParams pp = {(uint32_t)ncols, (uint32_t)nrows, (uint32_t)nlayers,
-                    (uint32_t)nodes_, gx_ * gy_, 0, 0, 0};
-    params_.upload(&pp, sizeof pp);
-    pp.start = 1;
-    startParams_.upload(&pp, sizeof pp);
+    // the start ("iteration 0", z.r into slot ZR0), the first iteration,
+    // then odd and even ones (z.r alternating between ZR1 and ZR0)
+    const uint32_t settings[4][3] = {{1, 0, 0}, {0, 1, 1}, {0, 1, 0}, {0, 0, 0}};   // start, current, first
+    for(int k = 0; k < 4; k++)
+    {
+        PcgParams pp = {(uint32_t)ncols, (uint32_t)nrows, (uint32_t)nlayers, (uint32_t)nodes_,
+                        gx_ * gy_, settings[k][0], settings[k][1], settings[k][2]};
+        params_[k].upload(&pp, sizeof pp);
+    }
 }
 
 MassPcg::MassPcg(Context &context, const MassStencil &stencil)
@@ -179,8 +182,13 @@ void MassPcg::dispatchNodes(Kernel &kernel, const std::vector<const Buffer *> &b
 
 double MassPcg::residualSquared()
 {
-    float rr;
-    scalars_.download(&rr, sizeof rr, RR * sizeof(float));
+    // the last update's r.r partials, summed here in f64
+    const std::size_t groups = (std::size_t)gx_ * gy_;
+    std::vector<float> partials(groups);
+    partials_.download(partials.data(), groups * sizeof(float), RR * groups * sizeof(float));
+    double rr = 0.0;
+    for(float v : partials)
+        rr += v;
     if(!std::isfinite(rr))
         throw Error("gpu::MassPcg: the residual is no longer finite");
     return rr;
@@ -210,25 +218,21 @@ MassPcg::Result MassPcg::solveOnDevice(double tol, int maxIterations, int checkE
     if(normb == 0.0)
         normb = 1.0;
 
-    // start: q = A x, r = b - q, z = r / diag, rho = z.r; p holds b until
-    // the first direction, and rho starts at infinity so that beta = 0.
+    // start: q = A x, r = b - q, z = r / diag, partials of z.r and r.r; p
+    // holds b until the first direction (beta = 0 there)
     p_.copyFrom(b_, nodes_ * sizeof(float));
-    float scalars[SCALARS] = {INFINITY, 0, 0, 0, 0, 0, 0, 0};
-    scalars_.upload(scalars, sizeof scalars);
     op_.apply(x_, q_);
     const Buffer &coef = op_.coefficients();
-    dispatchNodes(update_, {&startParams_, &scalars_, &x_, &p_, &q_, &r_, &coef, &z_, &partials_});
-    beta_.dispatch({&params_, &partials_, &scalars_}, 1);
+    dispatchNodes(update_, {&params_[0], &x_, &p_, &q_, &r_, &coef, &z_, &partials_});
 
     Result result;
     result.residual = std::sqrt(residualSquared()) / normb;
     for(int i = 1; i <= maxIterations && result.residual > tol; i++)
     {
-        dispatchNodes(direction_, {&params_, &scalars_, &z_, &p_});
-        dispatchNodes(apply_, {&params_, &coef, &p_, &q_, &partials_});
-        alpha_.dispatch({&params_, &partials_, &scalars_}, 1);
-        dispatchNodes(update_, {&params_, &scalars_, &x_, &p_, &q_, &r_, &coef, &z_, &partials_});
-        beta_.dispatch({&params_, &partials_, &scalars_}, 1);
+        const Buffer &params = params_[i == 1 ? 1 : (i % 2 == 1 ? 2 : 3)];
+        dispatchNodes(direction_, {&params, &partials_, &z_, &p_});
+        dispatchNodes(apply_, {&params, &coef, &p_, &q_, &partials_});
+        dispatchNodes(update_, {&params, &x_, &p_, &q_, &r_, &coef, &z_, &partials_});
         result.iterations = i;
         if(i % checkEvery == 0 || i == maxIterations)
         {

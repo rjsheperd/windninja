@@ -303,7 +303,8 @@ Jacobi iteration is ~4.3 ms at that size.
 ** DONE 2.2 Jacobi-PCG with on-GPU α/β and periodic convergence checks [5/5]
 - [X] Scalar kernel for α/β; residual read back every N iterations.
       =gpu::MassPcg= (=gpu_mass.{h,cpp}=, =massPcg*= in
-      =gpu_mass_kernels.h=), f32, 5 dispatches per iteration: p = z + βp;
+      =gpu_mass_kernels.h=), f32, 5 dispatches per iteration (3 since the
+      Inbox item "fewer dispatches"): p = z + βp;
       q = Ap with partial sums of p·q; α = ρ/p·q (one workgroup);
       x += αp, r −= αq, z = r/diag with partials of z·r and r·r; β and ρ
       (one workgroup). The start reuses the update stage (r = b − Ax).
@@ -826,7 +827,22 @@ between residual checks into one compute pass and one submit. A/B on
 No measurable gain, so not kept. An iteration costs ~0.18 ms at both sizes:
 a fixed GPU-side cost per dependent dispatch (~36 µs × 5), not CPU
 submission. The 2.2a attribution to submits was wrong (corrected there).
-** TODO GPU mass solve: fewer dispatches per iteration
+** DONE GPU mass solve: fewer dispatches per iteration
+Done 2026-10-22: 3 dispatches an iteration instead of 5. The α and β
+stages are gone; =update= and =direction= finish the sums they need
+(=sumSlots()= in =massPcgPrelude=, the same fixed order in every
+workgroup, so α and β are the same floats as before: the self-tests'
+expected values didn't change); z·r partials alternate between two slots
+so the last ρ survives; four uniform buffers (start, first, odd, even); the
+host sums the r·r partials in f64. =gpu/mass_pcg_timing= (no setup),
+4 runs: coarse-sized grid (60 iterations) 7.4–10.1 ms vs 10.6–11.8 ms with
+5 dispatches (~25% less); fine-sized (110) 19.7–20.7 ms vs 19.3–19.9 ms (no
+change: there the arithmetic dominates and the redundant sums cost about
+what the dispatches did). Big Butte GPU "Solver time" (with setup): coarse
+0.045–0.049 s (was 0.050–0.063), fine 0.067–0.078 s (was 0.071–0.095).
+Mutations: β's ρ slots swapped, α from the stale z·r slot, no first-
+iteration β = 0, parity never alternating: each caught. 47/47 mass and GPU
+tests; =share.html=, =solver.html= pass.
 The per-iteration cost is ~36 µs per dependent dispatch (above), 5 per
 iteration. The two one-workgroup stages (α; β and ρ) exist only to finish
 reductions; each node stage could instead finish them itself, every

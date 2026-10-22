@@ -91,12 +91,15 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
 }
 )wgsl";
 
-// Jacobi-preconditioned conjugate gradient (gpu::MassPcg).  Each stage is
-// massPcgPrelude + the stage.  scalars holds rho = z.r, p.q, alpha, beta and
-// r.r (MassPcg's slots); the GPU computes alpha and beta itself, so the host
-// reads back only r.r, every few iterations.  Dot products are per-workgroup
-// tree sums into partials (one per workgroup, slot 1 at params.groups),
-// finished by one workgroup: fixed order, so results are deterministic.
+// Jacobi-preconditioned conjugate gradient (gpu::MassPcg), three dispatches
+// an iteration: direction (p = z + beta p), apply (q = A p) and update (x,
+// r, z).  Each stage is massPcgPrelude + the stage.  Dot products are
+// per-workgroup tree sums into partials, one per workgroup per slot: p.q
+// (slot 0), r.r (slot 1) and z.r (slots 2 and 3, alternating by iteration,
+// so the previous rho survives until the next direction).  The stages that
+// need a scalar (beta, alpha) finish those sums themselves, every workgroup
+// in the same fixed order, so all agree and results are deterministic; the
+// host reads only r.r, every few iterations.
 constexpr const char *massPcgPrelude = R"wgsl(
 struct Params {
     ncols : u32,
@@ -104,18 +107,16 @@ struct Params {
     nlayers : u32,
     nodes : u32,
     groups : u32,   // workgroups in the node dispatch = partials per slot
-    pad0 : u32,
-    pad1 : u32,
-    pad2 : u32,
+    start : u32,    // update: the start (r = b - A x) instead of an iteration
+    current : u32,  // this iteration's z.r slot is 2 + current; the last one's 2 + (1 - current)
+    first : u32,    // direction: the first iteration (beta = 0)
 }
 
 @group(0) @binding(0) var<uniform> params : Params;
 
-const RHO = 0u;
-const PQ = 1u;
-const ALPHA = 2u;
-const BETA = 3u;
-const RR = 4u;
+const PQ = 0u;
+const RR = 1u;
+const ZR = 2u;
 
 var<workgroup> scratchA : array<f32, 256>;
 var<workgroup> scratchB : array<f32, 256>;
@@ -140,25 +141,49 @@ fn treeSum(lid : u32) {
         workgroupBarrier();
     }
 }
+
+// The totals of partials slots a and b (each stage declares partials), in
+// the same order in every workgroup; call from uniform control flow.
+fn sumSlots(a : u32, b : u32, lid : u32) -> vec2<f32> {
+    var x = 0.0;
+    var y = 0.0;
+    for (var i = lid; i < params.groups; i += 256u) {
+        x += partials[a * params.groups + i];
+        y += partials[b * params.groups + i];
+    }
+    scratchA[lid] = x;
+    scratchB[lid] = y;
+    treeSum(lid);
+    let total = vec2<f32>(scratchA[0], scratchB[0]);
+    workgroupBarrier();   // before scratch is reused
+    return total;
+}
 )wgsl";
 
-// p = z + beta p
+// p = z + beta p, beta = (this rho) / (the last one), 0 the first time
 constexpr const char *massPcgDirection = R"wgsl(
-@group(0) @binding(1) var<storage, read> scalars : array<f32>;
+@group(0) @binding(1) var<storage, read> partials : array<f32>;
 @group(0) @binding(2) var<storage, read> z : array<f32>;
 @group(0) @binding(3) var<storage, read_write> p : array<f32>;
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>,
+        @builtin(local_invocation_index) lid : u32,
         @builtin(num_workgroups) groups : vec3<u32>) {
+    var beta = 0.0;
+    if (params.first == 0u) {
+        // rho from the last update (slot 1 - current), the one before (current)
+        let rho = sumSlots(ZR + 1u - params.current, ZR + params.current, lid);
+        beta = rho.x / rho.y;
+    }
     let n = threadIndex(gid, groups);
     if (n < params.nodes) {
-        p[n] = z[n] + scalars[BETA] * p[n];
+        p[n] = z[n] + beta * p[n];
     }
 }
 )wgsl";
 
-// q = A p (as massApply) and partials of p.q
+// q = A p (as massApply) and partials of p.q (slot PQ)
 constexpr const char *massPcgApply = R"wgsl(
 @group(0) @binding(1) var<storage, read> coef : array<f32>;
 @group(0) @binding(2) var<storage, read> p : array<f32>;
@@ -211,59 +236,42 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
     scratchB[lid] = 0.0;
     treeSum(lid);
     if (lid == 0u) {
-        partials[groupIndex(wid, groups)] = scratchA[0];
+        partials[PQ * params.groups + groupIndex(wid, groups)] = scratchA[0];
     }
 }
 )wgsl";
 
-// p.q from the partials, alpha = rho / p.q (one workgroup)
-constexpr const char *massPcgAlpha = R"wgsl(
-@group(0) @binding(1) var<storage, read> partials : array<f32>;
-@group(0) @binding(2) var<storage, read_write> scalars : array<f32>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(local_invocation_index) lid : u32) {
-    var acc = 0.0;
-    for (var i = lid; i < params.groups; i += 256u) {
-        acc += partials[i];
-    }
-    scratchA[lid] = acc;
-    scratchB[lid] = 0.0;
-    treeSum(lid);
-    if (lid == 0u) {
-        scalars[PQ] = scratchA[0];
-        scalars[ALPHA] = scalars[RHO] / scratchA[0];
-    }
-}
-)wgsl";
-
-// x += alpha p, r -= alpha q, z = r / diag (the stencil's slot 0); partials
-// of z.r and r.r.  With
-// params.pad0 = 1 it is the start instead: r = b - q (q = A x), z = r / diag.
+// alpha = rho / p.q; x += alpha p, r -= alpha q, z = r / diag (the stencil's
+// slot 0); partials of z.r (slot 2 + current) and r.r.  With params.start it
+// is the start instead: r = b - q (q = A x, p holds b), z = r / diag.
 constexpr const char *massPcgUpdate = R"wgsl(
-@group(0) @binding(1) var<storage, read> scalars : array<f32>;
-@group(0) @binding(2) var<storage, read_write> x : array<f32>;
-@group(0) @binding(3) var<storage, read> p : array<f32>;
-@group(0) @binding(4) var<storage, read> q : array<f32>;
-@group(0) @binding(5) var<storage, read_write> r : array<f32>;
-@group(0) @binding(6) var<storage, read> coef : array<f32>;   // slot 0: the diagonal
-@group(0) @binding(7) var<storage, read_write> z : array<f32>;
-@group(0) @binding(8) var<storage, read_write> partials : array<f32>;
+@group(0) @binding(1) var<storage, read_write> x : array<f32>;
+@group(0) @binding(2) var<storage, read> p : array<f32>;
+@group(0) @binding(3) var<storage, read> q : array<f32>;
+@group(0) @binding(4) var<storage, read_write> r : array<f32>;
+@group(0) @binding(5) var<storage, read> coef : array<f32>;   // slot 0: the diagonal
+@group(0) @binding(6) var<storage, read_write> z : array<f32>;
+@group(0) @binding(7) var<storage, read_write> partials : array<f32>;
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>,
         @builtin(local_invocation_index) lid : u32,
         @builtin(workgroup_id) wid : vec3<u32>,
         @builtin(num_workgroups) groups : vec3<u32>) {
+    var alpha = 0.0;
+    if (params.start == 0u) {
+        // rho from the last update (slot 1 - current) and this p.q
+        let s = sumSlots(ZR + 1u - params.current, PQ, lid);
+        alpha = s.x / s.y;
+    }
     let n = threadIndex(gid, groups);
     var zr = 0.0;
     var rr = 0.0;
     if (n < params.nodes) {
         var rn : f32;
-        if (params.pad0 == 1u) {
-            rn = p[n] - q[n];   // start: p holds b
+        if (params.start == 1u) {
+            rn = p[n] - q[n];
         } else {
-            let alpha = scalars[ALPHA];
             x[n] = x[n] + alpha * p[n];
             rn = r[n] - alpha * q[n];
         }
@@ -278,32 +286,8 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
     treeSum(lid);
     if (lid == 0u) {
         let g = groupIndex(wid, groups);
-        partials[g] = scratchA[0];
-        partials[params.groups + g] = scratchB[0];
-    }
-}
-)wgsl";
-
-// z.r and r.r from the partials; beta = new rho / old rho (one workgroup)
-constexpr const char *massPcgBeta = R"wgsl(
-@group(0) @binding(1) var<storage, read> partials : array<f32>;
-@group(0) @binding(2) var<storage, read_write> scalars : array<f32>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(local_invocation_index) lid : u32) {
-    var a = 0.0;
-    var b = 0.0;
-    for (var i = lid; i < params.groups; i += 256u) {
-        a += partials[i];
-        b += partials[params.groups + i];
-    }
-    scratchA[lid] = a;
-    scratchB[lid] = b;
-    treeSum(lid);
-    if (lid == 0u) {
-        scalars[BETA] = scratchA[0] / scalars[RHO];
-        scalars[RHO] = scratchA[0];
-        scalars[RR] = scratchB[0];
+        partials[(ZR + params.current) * params.groups + g] = scratchA[0];
+        partials[RR * params.groups + g] = scratchB[0];
     }
 }
 )wgsl";
