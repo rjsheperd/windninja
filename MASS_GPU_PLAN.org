@@ -783,7 +783,9 @@ Assembly sums with =omp atomic= and velocity recovery merges per-thread
 sums in a =critical= section, so multi-threaded results can differ in the
 last bits between runs (not seen on Big Butte fine). A deterministic
 gather (as in the GPU kernels) would fix it.
-** TODO Solver comment says "2-norm of residual"; it is relative to ‖b‖
+** DONE Solver comment says "2-norm of residual"; it is relative to ‖b‖
+Fixed 2026-10-22: =stop_tol='s comment in =ninja::simulate_wind= now says
+relative to the right-hand side's 2-norm (=SolveMassPcg='s test).
 =ninja.cpp= (=stop_tol=): the test is ‖r‖₂/‖b‖₂ ≤ 0.1.
 ** BLOCKED MINRES fallback is unreachable
 Needs RJ: delete it, or make a non-converged CG fall back to it?

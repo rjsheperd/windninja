@@ -271,7 +271,7 @@ bool ninja::simulate_wind()
 /*  USER INPUTS                             */
 /*  ----------------------------------------*/
      int MAXITS = 100000;             //MAXITS is the maximum number of iterations in the solver
-     double stop_tol = 1E-1;          //stopping criteria for iterations (2-norm of residual)
+     double stop_tol = 1E-1;          //stopping criteria for iterations (2-norm of the residual relative to the 2-norm of the right-hand side)
      int print_iters = 10;          //Iterations to print out
     /*
     ** Set matching its from config options, default to 150.
