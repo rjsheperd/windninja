@@ -562,10 +562,24 @@ See the Inbox.
 - [X] Documentation updates (=src/ninja/gpu/README.org=,
       =src/ninja/gpu/wasm/README.org=)
 
-** TODO 3.1a DEM in, wind out in the browser [0/5]
-- [ ] Core-free mass mesh from a DEM (=Mesh='s terrain-following layers:
+** IN-PROGRESS 3.1a DEM in, wind out in the browser [1/5]
+- [X] Core-free mass mesh from a DEM (=Mesh='s terrain-following layers:
       layer heights, growth, domain height), like =TerrainGrid= for RANS;
       native =Mesh= vs the core-free one, node by node.
+      =src/ninja/mass_terrain.{h,cpp}=: =MassTerrainGrid()= (a DEM already
+      at the mesh resolution; =buildStandardMesh='s nodes and layers),
+      =MassDomainHeight()= (=compute_domain_height=), =MassMeshResolution()=
+      (=compute_cellsize=). Tests =mass_fem/terrain_grid_matches_mesh=
+      (=Mesh::buildStandardMesh= on the same DEM: every node bit-identical,
+      for grass, and trees with the output or the input height setting the
+      domain height) and =mass_fem/mesh_resolution_matches_mesh= (coarse,
+      medium, fine). Mutations: x without the half cell, layer exponent off
+      by one, no output-height check, input-height check ignoring the canopy
+      (caught only after adding a case where the input height decides),
+      nYcells from the x length: each caught.
+      Still WindNinja's: resampling a DEM to the mesh resolution
+      (=AsciiGrid::resample_Grid_in_place=); the browser takes a DEM at the
+      mesh resolution for now.
 - [ ] Core-free domain-average initialization (log profile from the input
       speed, height and roughness; neutral αV), matching
       =domainAverageInitialization= without stability.

@@ -25,6 +25,9 @@
  *****************************************************************************/
 
 #include "mass_fem.h"
+#include "mass_terrain.h"
+#include "WindNinjaInputs.h"
+#include "mesh.h"
 
 #include <cmath>
 #include <vector>
@@ -226,6 +229,86 @@ BOOST_AUTO_TEST_CASE(inverted_element_throws)
     std::vector<double> zero(g.numNodes(), 0.0), alphaV(g.numNodes(), 1.0);
     BOOST_CHECK_THROW(AssembleMass(g, zero.data(), zero.data(), zero.data(), alphaV.data(), 1.0),
                       std::runtime_error);
+}
+
+/* A hill DEM at 30 m, as an Elevation (native) and a TerrainDem (core-free). */
+static void HillDems(Elevation &native, TerrainDem &plain)
+{
+    plain.nCols = 40;
+    plain.nRows = 30;
+    plain.cellSize = 30.0;
+    plain.xll = 500000.0;
+    plain.yll = 4800000.0;
+    plain.z.clear();
+    for(int r = 0; r < plain.nRows; r++)
+        for(int c = 0; c < plain.nCols; c++)
+        {
+            double z = 1000.37 + 150.0 * std::exp(-((c - 20) * (c - 20) + (r - 12) * (r - 12)) / 40.0) +
+                       0.013 * c * r;
+            plain.z.push_back(z);
+            native(r, c) = z;   // row 0 south in both
+        }
+}
+
+/*
+** The core-free mesh is WindNinja's: Mesh::buildStandardMesh on the same
+** DEM (at the mesh resolution, so no resampling) gives the same nodes, bit
+** for bit: grass, and trees whose canopy plus the output height, or plus
+** the input height, sets the domain height.
+*/
+BOOST_AUTO_TEST_CASE(terrain_grid_matches_mesh)
+{
+    struct Case { double canopy, inputHeight, outputHeight; };
+    for(Case k : {Case{0.0, 6.096, 10.0}, Case{15.4, 6.096, 10.0}, Case{15.4, 20.0, 6.096}})
+    {
+        const double canopy = k.canopy;
+        WindNinjaInputs input;
+        input.dem = Elevation(40, 30, 500000.0, 4800000.0, 30.0, -9999.0, Elevation::meters);
+        TerrainDem plain;
+        HillDems(input.dem, plain);
+        input.surface.Rough_h.set_headerData(input.dem);
+        for(int r = 0; r < 30; r++)
+            for(int c = 0; c < 40; c++)
+                input.surface.Rough_h(r, c) = canopy;
+        input.inputWindHeight = k.inputHeight;
+        input.outputWindHeight = k.outputHeight;
+
+        Mesh mesh;
+        mesh.set_numVertLayers(20);
+        mesh.set_meshResolution(30.0, lengthUnits::meters);
+        mesh.buildStandardMesh(input);
+        MassGrid expected = MassGrid::FromMesh(mesh);
+
+        MassMeshOptions options;
+        options.inputHeight = k.inputHeight;
+        options.outputHeight = k.outputHeight;
+        options.canopyHeight = canopy;
+        MassGrid ours = MassTerrainGrid(plain, options);
+
+        BOOST_REQUIRE_EQUAL(ours.ncols, expected.ncols);
+        BOOST_REQUIRE_EQUAL(ours.nrows, expected.nrows);
+        BOOST_REQUIRE_EQUAL(ours.nlayers, expected.nlayers);
+        int mismatches = 0;
+        for(int n = 0; n < ours.numNodes(); n++)
+            mismatches += ours.x[n] != expected.x[n] || ours.y[n] != expected.y[n] ||
+                          ours.z[n] != expected.z[n];
+        BOOST_CHECK_EQUAL(mismatches, 0);
+        BOOST_CHECK_EQUAL(MassDomainHeight(plain, 30.0, options), mesh.domainHeight);
+    }
+}
+
+/* Mesh::compute_cellsize for the coarse, medium and fine choices. */
+BOOST_AUTO_TEST_CASE(mesh_resolution_matches_mesh)
+{
+    for(Mesh::eMeshChoice choice : {Mesh::coarse, Mesh::medium, Mesh::fine})
+    {
+        Elevation dem(173, 211, 500000.0, 4800000.0, 27.3, -9999.0, Elevation::meters);
+        Mesh mesh;
+        mesh.set_meshResChoice(choice);
+        mesh.compute_cellsize(dem);
+        BOOST_CHECK_EQUAL(MassMeshResolution(173, 211, 27.3, mesh.targetNumHorizCells),
+                          mesh.meshResolution);
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

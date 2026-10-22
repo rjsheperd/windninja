@@ -420,6 +420,10 @@ add_test(mass_fem_zero_phi_keeps_initial_wind
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/zero_phi_keeps_initial_wind)
 add_test(mass_fem_linear_phi_gradient
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/linear_phi_gradient)
+add_test(mass_fem_terrain_grid_matches_mesh
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/terrain_grid_matches_mesh)
+add_test(mass_fem_mesh_resolution_matches_mesh
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/mesh_resolution_matches_mesh)
 add_test(mass_fem_inverted_element_throws
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/inverted_element_throws)
 add_test(mass_pcg_solves_to_tolerance
