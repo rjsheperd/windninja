@@ -96,6 +96,15 @@ endif(WITH_WEBGPU)
 target_compile_definitions(test_main PRIVATE
                            WINDNINJA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
+# The mass solver from a DEM through the core-free path (MASS_GPU_PLAN 3.1a),
+# for scripts/check_mass_dem.sh
+add_executable(mass_dem_solve mass_dem_solve.cpp)
+add_dependencies(mass_dem_solve ninja)
+target_link_libraries(mass_dem_solve ${LINK_LIBS})
+if(WITH_WEBGPU)
+    target_link_libraries(mass_dem_solve ninja_gpu)
+endif(WITH_WEBGPU)
+
 # Compare momentum solver output against autotest/golden/momentum
 add_executable(compare_momentum compare_momentum.cpp momentum_compare.cpp)
 target_link_libraries(compare_momentum ${GDAL_LIBRARY})
@@ -500,7 +509,6 @@ if(WITH_WEBGPU)
                  COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_gpu_wxmodel.sh
                          $<TARGET_FILE:WindNinja_cli>)
         set_tests_properties(momentum_gpu_wxmodel PROPERTIES SKIP_RETURN_CODE 77)
-        # fallback to the CPU backend when the GPU can't run (plan 5.3)
         # the mass solver on the GPU against the CPU, and its fallback
         foreach(mode match no_adapter)
             add_test(NAME mass_gpu_${mode}
@@ -508,6 +516,12 @@ if(WITH_WEBGPU)
                              $<TARGET_FILE:WindNinja_cli> ${mode})
             set_tests_properties(mass_gpu_${mode} PROPERTIES SKIP_RETURN_CODE 77)
         endforeach(mode)
+        # the browser's DEM-to-wind path on the GPU against the CLI (plan 3.1a)
+        add_test(NAME mass_gpu_dem
+                 COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_mass_dem.sh
+                         $<TARGET_FILE:WindNinja_cli> $<TARGET_FILE:mass_dem_solve> gpu)
+        set_tests_properties(mass_gpu_dem PROPERTIES SKIP_RETURN_CODE 77)
+        # fallback to the CPU backend when the GPU can't run (plan 5.3)
         foreach(mode no_adapter oom)
             add_test(NAME momentum_gpu_fallback_${mode}
                      COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_fallback.sh
@@ -631,6 +645,14 @@ if(RUN_CFG_TESTS AND NOT WITH_WEBGPU)
                          ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data"
                          PASS_REGULAR_EXPRESSION "'momentum_backend' of webgpu is not valid or not available in this build")
 endif()
+
+# The browser's core-free DEM-to-wind path (mass_dem) on the CPU writes the
+# CLI's output exactly (MASS_GPU_PLAN 3.1a)
+if(NINJA_CLI)
+    add_test(NAME mass_dem_cpu
+             COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_mass_dem.sh
+                     $<TARGET_FILE:WindNinja_cli> $<TARGET_FILE:mass_dem_solve> cpu)
+endif(NINJA_CLI)
 
 # Tests that use the GPU don't run at the same time as each other (even
 # under ctest -j): concurrent WebGPU runs slow each other down, and timing

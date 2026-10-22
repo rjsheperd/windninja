@@ -583,7 +583,7 @@ See the Inbox.
 - [X] Core-free domain-average initialization (log profile from the input
       speed, height and roughness; neutral αV), matching
       =domainAverageInitialization= without stability.
-      =src/ninja/mass_wind_init.{h,cpp}=: =InitialWind()= with
+      =src/ninja/mass_wind.{h,cpp}=: =InitialWind()= with
       =DomainAverageWind= (speed, direction, input height, z₀, canopy and
       displacement heights, latitude, the DEM's angle from north). Reuses
       WindNinja's own =windProfile=, =wind_sd_to_uv= and =wrap0to360=

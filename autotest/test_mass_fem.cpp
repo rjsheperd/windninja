@@ -26,7 +26,7 @@
 
 #include "mass_fem.h"
 #include "mass_terrain.h"
-#include "mass_wind_init.h"
+#include "mass_wind.h"
 #include "domainAverageInitialization.h"
 #include "wn_3dScalarField.h"
 #include "WindNinjaInputs.h"

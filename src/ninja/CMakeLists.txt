@@ -41,7 +41,8 @@ set(NINJA_SOURCES air.cpp
                   mass_grid_mesh.cpp
                   mass_pcg.cpp
                   mass_terrain.cpp
-                  mass_wind_init.cpp
+                  mass_wind.cpp
+                  mass_dem.cpp
                   rans_abl.cpp
                   rans_grid.cpp
                   rans_grid_mesh.cpp

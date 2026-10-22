@@ -1,7 +1,7 @@
 /******************************************************************************
  *
  * Project:  WindNinja
- * Purpose:  Mass-consistent solver: domain-average initial wind
+ * Purpose:  Mass-consistent solver: domain-average wind, initial and output
  *
  ******************************************************************************
  *
@@ -24,8 +24,8 @@
  *
  *****************************************************************************/
 
-#ifndef MASS_WIND_INIT_H
-#define MASS_WIND_INIT_H
+#ifndef MASS_WIND_H
+#define MASS_WIND_H
 
 #include <vector>
 
@@ -50,8 +50,23 @@ struct DomainAverageWind
     double angleFromNorth = 0.0;   // degrees, the DEM grid's north offset (Elevation)
 };
 
+// The neutral boundary-layer height, m (initializeBoundaryLayer).
+double BoundaryLayerHeight(const DomainAverageWind &wind);
+
 // u0, v0, w0 per node of grid (MassGrid's order; the ground layer is the DEM).
 void InitialWind(const MassGrid &grid, const DomainAverageWind &wind, std::vector<double> &u0,
                  std::vector<double> &v0, std::vector<double> &w0);
 
-#endif /* MASS_WIND_INIT_H */
+/*
+** WindNinja's output wind (ninja::interp_uvw): per DEM cell, the wind at
+** outputHeight above the canopy from the solved u, v, w; the profile
+** (windProfile, as InitialWind) within the first layer, linear between
+** layers above it.  speed is horizontal (m/s); angle is the direction the
+** wind comes from, degrees clockwise from the grid's north (WindNinja's
+** AngleGrid, as written to ASCII output).  Row 0 south, as the grid.
+*/
+void OutputWind(const MassGrid &grid, const std::vector<double> &u, const std::vector<double> &v,
+                const std::vector<double> &w, const DomainAverageWind &wind, double outputHeight,
+                std::vector<double> &speed, std::vector<double> &angle);
+
+#endif /* MASS_WIND_H */
