@@ -142,6 +142,7 @@ BOOST_AUTO_TEST_CASE(iteration_cap)
     BOOST_CHECK(!r.converged);
     BOOST_CHECK_EQUAL(r.iterations, 2);
     BOOST_CHECK_CLOSE(r.residual, RelativeResidual(s, phi), 1e-6);
+    BOOST_CHECK_CLOSE(MassRelativeResidual(s, phi.data()), RelativeResidual(s, phi), 1e-9);
 }
 
 /* Progress every N iterations; a throwing cancel check stops the solve. */

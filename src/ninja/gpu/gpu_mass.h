@@ -88,6 +88,12 @@ private:
 ** in f32.  alpha and beta stay on the GPU; the host reads back r.r every
 ** checkEvery iterations to test ||r|| / ||b|| <= tol, so a converged solve
 ** can run up to checkEvery - 1 iterations past the tolerance.
+**
+** f32 limit (MASS_GPU_PLAN.org 2.3): the true residual follows the
+** reported one down to about 1e-2 and stalls near 1e-3 (Big Butte fine),
+** while the reported one keeps falling.  WindNinja stops at 0.1.  For
+** tighter tolerances, refine: residual in double on the CPU, correction
+** solved here.
 */
 class MassPcg
 {

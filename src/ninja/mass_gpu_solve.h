@@ -37,7 +37,8 @@
 ** back.  options.jacobi is ignored (always Jacobi); progress and
 ** checkCancel run at each residual check (every 10 iterations).  Throws
 ** gpu::Unavailable when there is no WebGPU adapter, gpu::Error on GPU
-** failures.  adapter, if given, receives the adapter's name.  Free of
+** failures.  In f32 the true residual is reliable only down to tol ~ 1e-2
+** (gpu::MassPcg); WindNinja uses 0.1.  adapter, if given, receives the adapter's name.  Free of
 ** WindNinja core.
 */
 MassSolveResult SolveMassOnGpu(int ncols, int nrows, int nlayers, const MassSystem &system,

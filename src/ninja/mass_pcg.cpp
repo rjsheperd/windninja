@@ -163,3 +163,15 @@ MassSolveResult SolveMassPcg(const MassSystem &system, double *phi,
     result.converged = resid <= options.tol;
     return result;
 }
+
+double MassRelativeResidual(const MassSystem &system, const double *x)
+{
+    const int n = (int)system.RHS.size();
+    std::vector<double> ax(n);
+    SymmetricMultiply(n, system.SK.data(), system.col_ind.data(), system.row_ptr.data(), x,
+                      ax.data());
+    for(int i = 0; i < n; i++)
+        ax[i] = system.RHS[i] - ax[i];
+    double normb = Norm2(n, system.RHS.data());
+    return Norm2(n, ax.data()) / (normb == 0.0 ? 1.0 : normb);
+}

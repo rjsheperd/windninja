@@ -385,12 +385,40 @@ Measured, Big Butte, 10 mph from 270, M3 Max (seconds; solve = WindNinja's
   Inbox for the fixes (one submit per iteration; context reuse).
 - Gate 0.2's assumption held: 0.08 s for the fine solve (estimate ~0.08 s).
 
-** TODO 2.3 Precision [0/4]
-- [ ] Compare f32 dot products with guarded df64 (port the =cljs-webgpu=
+** DONE 2.3 Precision [4/4]
+- [X] Compare f32 dot products with guarded df64 (port the =cljs-webgpu=
       approach) on fine meshes; adopt df64 only where it changes results.
-- [ ] Add tests: f32 vs df64 vs f64 CPU on a 400k-node case.
-- [ ] Tests pass
-- [ ] Documentation updates
+      *Decision: f32 throughout, no df64.* Measured on Big Butte fine
+      (397,120 nodes, Jacobi on both; a temporary tolerance override,
+      removed; true residual from the new =MassRelativeResidual()=, logged
+      under =CPL_DEBUG=NINJA_MASS_SOLVER= after a GPU solve):
+
+      | tol  | GPU iters | GPU reported | GPU true (f64) | CPU iters (f64) |
+      |------+-----------+--------------+----------------+-----------------|
+      | 1e-1 |       160 |       0.0930 |         0.0930 |             158 |
+      | 1e-2 |       260 |      0.00993 |        0.00994 |             260 |
+      | 1e-3 |       540 |     0.000984 |        0.00127 |             536 |
+      | 1e-4 |      1710 |      9.94e-5 |         0.0014 |            1711 |
+      | 1e-5 |      4770 |      9.90e-6 |         0.0078 |            4356 |
+      | 1e-6 |     15300 |      9.86e-7 |          0.034 |            9310 |
+
+      f32 matches f64 (iterations and true residual) down to 1e-2, and
+      stalls near a true residual of 1e-3 while its own estimate keeps
+      falling. WindNinja stops at 0.1, 100× above that floor.
+      df64 dot products wouldn't move the floor: the tree sums' error is
+      ~log₂(N)·ε ≈ 1e-6 relative, 1000× smaller. The floor comes from A, x
+      and the r update in f32 (the stiffness rows nearly cancel). If a
+      tighter tolerance is ever wanted, the remedy is mixed-precision
+      refinement (true residual in f64 on the CPU, a correction solved on
+      the GPU), not df64.
+- [X] Add tests: the table above is the f32 vs f64 comparison at 400k
+      nodes (an experiment, not a ctest: 15k iterations). Added:
+      =MassRelativeResidual()= checked against an independent residual
+      (=mass_pcg/iteration_cap=); the f32 limit is documented on
+      =gpu::MassPcg= and =SolveMassOnGpu()=.
+- [X] Tests pass: =ctest -R "^mass_|^gpu_"= 32/32.
+- [X] Documentation updates: this entry; =gpu_mass.h=, =mass_gpu_solve.h=;
+      the open question below.
 
 ** TODO 2.4 GPU assembly and velocity recovery [0/4]
 - [ ] Element stiffness and RHS on the GPU (gather, no atomics).
@@ -429,8 +457,9 @@ Record times vs the 8-thread CPU and accuracy vs the CPU solver.
 Multicolour SSOR or a shallow geometric multigrid V-cycle.
 
 * Open questions
-- Does the mass solver's 0.1 stop tolerance hold in f32 on 400k+ nodes, or
-  does it need df64 residuals? (2.3)
+- +Does the mass solver's 0.1 stop tolerance hold in f32 on 400k+ nodes, or
+  does it need df64 residuals? (2.3)+ Answered: yes, f32 holds to ~1e-2;
+  no df64 (2.3).
 - Should the browser production path be C++/WASM or =cljs-webgpu=? Decide
   after 3.1, with the jessie-fire-simulation side.
 

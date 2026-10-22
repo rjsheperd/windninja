@@ -685,7 +685,9 @@ bool ninja::solve(const MassSystem &system, double *x, int NUMNP, int max_iter, 
             std::string adapter;
             result = SolveMassOnGpu(mesh.ncols, mesh.nrows, mesh.nlayers, system, x, options, &adapter);
             solved = true;
-            CPLDebug("NINJA_MASS_SOLVER", "GPU solve on %s", adapter.c_str());
+            if(CPLGetConfigOption("CPL_DEBUG", nullptr))   // f32 recurrence vs the true residual
+                CPLDebug("NINJA_MASS_SOLVER", "GPU solve on %s, true relative residual %g",
+                         adapter.c_str(), MassRelativeResidual(system, x));
         }
         catch(const gpu::Unavailable &e)
         {

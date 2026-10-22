@@ -61,4 +61,8 @@ struct MassSolveResult
 MassSolveResult SolveMassPcg(const MassSystem &system, double *phi,
                              const MassSolveOptions &options);
 
+/* ||b - A x||_2 / ||b||_2 in double, with ||b|| taken as 1 when b = 0 (as
+** SolveMassPcg does). */
+double MassRelativeResidual(const MassSystem &system, const double *x);
+
 #endif /* MASS_PCG_H */
