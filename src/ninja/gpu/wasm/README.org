@@ -1,13 +1,14 @@
 #+TITLE: WebGPU layer in the browser (WebAssembly)
 
 Two modules: =saxpy_wasm= (the GPU layer's own check, =index.html=) and
-=windninja_wasm=, *the momentum solver* (=solver.html=).
+=windninja_wasm=, *the momentum solver and the mass solver* (=solver.html=).
 
 * The solver module (=windninja_wasm=)
 WindNinja's RANS momentum solver on WebGPU, from a DEM given as an array.
 It's =SolveDemOnGpu= (=src/ninja/rans_dem_solve.h=), the same code the native
 WebGPU backend runs, built from the core-free RANS sources. No GDAL,
-Boost or WindNinja core. Release: 57 KB JS + 178 KB wasm.
+Boost or WindNinja core. Release: 57 KB JS + 222 KB wasm (178 KB before the
+mass solver).
 - =windninja_solve(nCols, nRows, cellSize, elevation, speed, inputHeight,
   direction, z0, maxSteps, u, v, k)=: elevation row 0 north (image order),
   metres; speed m/s at =inputHeight= m above the canopy, from =direction=
@@ -17,9 +18,25 @@ Boost or WindNinja core. Release: 57 KB JS + 178 KB wasm.
   =await Module.ccall('windninja_solve', 'number', [...], [...], {async: true})=;
   it waits on the GPU, so under JSPI it's a suspending export
   (=-sJSPI_EXPORTS=).
+- =windninja_mass_solve(ncols, nrows, nlayers, x, y, z, u0, v0, w0, alphaV,
+  alphaH, gpu, u, v, w)=: the mass-consistent solve (=MASS_GPU_PLAN.org=
+  3.1) on a terrain-following grid given per node (node =col + ncols * (row
+  + nrows * layer)=): =gpu= 1 runs =SolveMassWindOnGpu= (Jacobi, f32), 0
+  the CPU (=AssembleMass=, =SolveMassPcg= with SSOR, =RecoverVelocity=,
+  f64). It writes u, v, w per node and returns the iteration count, -1 (not
+  converged), -2 (no WebGPU) or -3 (error). A suspending export too. Not
+  yet from a DEM: WindNinja's mass mesh and initialization are core (plan
+  3.1a).
 - =main()= is a self-test. It solves =hill_selftest.h='s hill and checks the
   statistics against the native result (autotest =gpu/dem_solve_hill=), to
   1e-3 relative. Measured in headless Chromium on Apple Metal: within 2e-7.
+  Then =mass_selftest.h='s ridge, on the GPU and the CPU, against the native
+  statistics (autotest =gpu/mass_wind_selftest=) to 1e-5 (GPU) and 1e-8
+  (CPU) relative, tight enough to tell the two solvers apart; the browser
+  matched to all 9 printed digits. Then it times the mass solve at a
+  fine-mesh size (137×147×20 = 402,780 nodes), system to wind: GPU ~32 ms,
+  CPU ~525 ms (single-threaded wasm; native single-threaded is ~545 ms, so
+  wasm costs nothing measurable here).
 - =solver.html= runs the self-test on load, then lets you load an ASCII
   grid DEM (or use a built-in hill), set the wind and draw a speed map.
   The built-in 80×60×20 hill solves in about 3 s.

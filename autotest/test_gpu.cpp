@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -28,6 +29,7 @@
 #include "rans_grid.h"
 #include "rans_multigrid.h"
 #include "wasm/hill_selftest.h"
+#include "wasm/mass_selftest.h"
 #include "rans_solver.h"
 #include "rans_wind.h"
 
@@ -1009,6 +1011,37 @@ BOOST_AUTO_TEST_CASE( mass_wind_folded_throws )
     BOOST_CHECK_THROW(SolveMassWindOnGpu(g, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0,
                                          MassSolveOptions(), u.data(), v.data(), w.data()),
                       std::runtime_error);
+}
+
+// The browser module's mass self-test problem, natively, on the GPU and the
+// CPU (see mass_selftest.h), against the expected statistics.
+BOOST_AUTO_TEST_CASE( mass_wind_selftest )
+{
+    if(context() == nullptr)
+        return;
+    MassGrid g = ::mass_selftest::Grid();
+    ::mass_selftest::Wind in = ::mass_selftest::Initial(g);
+    int n = g.numNodes();
+    std::vector<double> u(n), v(n), w(n);
+    SolveMassWindOnGpu(g, in.u0.data(), in.v0.data(), in.w0.data(), in.alphaV.data(), in.alphaH,
+                       MassSolveOptions(), u.data(), v.data(), w.data());
+    ::mass_selftest::Stats gpuStats = ::mass_selftest::Summarize(g, u, v, w);
+
+    MassSystem s = AssembleMass(g, in.u0.data(), in.v0.data(), in.w0.data(), in.alphaV.data(),
+                                in.alphaH);
+    std::vector<double> phi(n, 0.0);
+    SolveMassPcg(s, phi.data(), MassSolveOptions());
+    RecoverVelocity(g, phi.data(), in.u0.data(), in.v0.data(), in.w0.data(), in.alphaV.data(),
+                    in.alphaH, u.data(), v.data(), w.data());
+    ::mass_selftest::Stats cpuStats = ::mass_selftest::Summarize(g, u, v, w);
+
+    BOOST_TEST_MESSAGE(std::setprecision(9) << "mass self-test gpu: " << gpuStats.meanSpeed << ", "
+                       << gpuStats.maxSpeed << ", " << gpuStats.meanW << "; cpu: " << cpuStats.meanSpeed
+                       << ", " << cpuStats.maxSpeed << ", " << cpuStats.meanW);
+    BOOST_CHECK(::mass_selftest::Matches(gpuStats, ::mass_selftest::expectedGpu,
+                                        ::mass_selftest::gpuTolerance));
+    BOOST_CHECK(::mass_selftest::Matches(cpuStats, ::mass_selftest::expectedCpu,
+                                        ::mass_selftest::cpuTolerance));
 }
 
 // Not in ctest: the whole GPU solve at the fine-mesh size, against the CPU
