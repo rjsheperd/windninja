@@ -107,8 +107,17 @@ RansSolver WindSetup(const RansGrid &g, double speed, double inputHeight, double
                      double directionFrom)
 {
     double ustar = AblFrictionVelocity(speed, inputHeight, z0);
-    // artificial compressibility: wave speed comparable to the flow speed
-    double beta = std::max(1.0, 1.25 * speed * speed);
+    // artificial compressibility: the wave speed must be comparable to the
+    // fastest flow, which is the inflow log profile at the top of the
+    // deepest column, not the input-height speed.  With the input speed alone,
+    // a forecast at 2 m above a tree canopy (fast flow aloft) gave beta 20
+    // under 45 m/s winds, and the solution never settled.
+    double depth = 0.0;
+    for(int j = 0; j <= g.ny; j++)
+        for(int i = 0; i <= g.nx; i++)
+            depth = std::max(depth, g.z[g.node(i, j, g.nz)] - g.z[g.node(i, j, 0)]);
+    double fastest = std::max(speed, AblInletVelocity(ustar, depth, z0));
+    double beta = std::max(1.0, 1.25 * fastest * fastest);
     RansSolver s(g, RANS_AIR_NU, beta);
     ApplyWindBoundaries(s, ustar, z0, directionFrom);
     InitializeLogProfile(s, ustar, z0, directionFrom);

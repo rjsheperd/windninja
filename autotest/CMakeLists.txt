@@ -462,6 +462,10 @@ if(WITH_WEBGPU)
                  COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_gpu_gridded.sh
                          $<TARGET_FILE:WindNinja_cli>)
         set_tests_properties(momentum_gpu_gridded PROPERTIES SKIP_RETURN_CODE 77)
+        add_test(NAME momentum_gpu_wxmodel
+                 COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_gpu_wxmodel.sh
+                         $<TARGET_FILE:WindNinja_cli>)
+        set_tests_properties(momentum_gpu_wxmodel PROPERTIES SKIP_RETURN_CODE 77)
         # fallback to the CPU backend when the GPU can't run (plan 5.3)
         foreach(mode no_adapter oom)
             add_test(NAME momentum_gpu_fallback_${mode}

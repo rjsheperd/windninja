@@ -1357,9 +1357,23 @@ today.
       Measured 1.65° mean difference on the GPU, about the grid convergence
       there. OpenFOAM's own gridded vs domain-average differ more (0.66
       m/s, 4.4°): at 300 iterations its answer depends on the initial field.
-      Weather-model initialization shares the domain-mean path
-      (=wxModelInitialization= sets =inputDirection_proj= the same way); not
-      run here (the NOMADS downloads are rate-limited).
+      Weather-model initialization: run with the repo's local NDFD forecast
+      (=data/20170603T1800.nc=, =cli_wxModelInitialization_local_model.cfg=,
+      Big Butte, =vegetation = trees=) as =momentum_gpu_wxmodel=. It found a
+      real bug. Its 10 m wind sits 2 m above the tree canopy, so the inflow
+      aloft is fast (45 m/s at the domain top from a 4 m/s input). The
+      artificial-compressibility β was set from the input speed (β = 20),
+      far below U² aloft, and the solve never settled: mean 25.6 mph, max 82,
+      still changing 4.5 m/s per 100 steps at the 20,000-step cap.
+      *Fix (=WindSetup=): β from the fastest inflow, the log profile at the
+      top of the deepest column.* It now settles in 10,700 steps, with mean
+      27.4 / max 55.9 mph against OpenFOAM's 27.2 / 55.2 on the same case.
+      The mean is 3× the input because of the shallow height above the trees,
+      in both backends (existing WindNinja semantics). With the new β the
+      golden set still passes and mostly improves against OpenFOAM fine (Big
+      Butte coarse 135: 0.661 → 0.558 m/s; coarse 270: 0.564 → 0.548), and
+      converges faster. The browser self-test's reference values were
+      updated and it still matches (1e-7).
 - Test infrastructure: the GPU tests share a ctest =RESOURCE_LOCK=
   (=webgpu=). In a =ctest -j 3= run without it, concurrent WebGPU runs plus
   the OpenMP-heavy CPU tests stretched GPU tests from about 11 s to about
@@ -1413,7 +1427,9 @@ today.
 * Phase 6: Validation and performance
 Goal: evidence that the GPU backend is fit for operational use.
 
-** TODO 6.1 Field-data validation
+** WAIT 6.1 Field-data validation
+Waiting on the team: the repo has no field-campaign observations (Big
+Butte, Askervein, Bolund), only station files for point initialization.
 - [ ] Get the observation datasets used in prior WindNinja validation (Big
       Butte, Askervein; Bolund if available). Ask the team for the canonical
       copies.

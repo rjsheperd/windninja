@@ -97,7 +97,7 @@ inline Stats Summarize(const DemWind &w)
 
 // measured natively on Apple M3 Max (Dawn, Metal); f32 on any GPU should
 // agree well within the tolerance
-const Stats expected = {4.51100246, 7.27946994, 0.42714281};
+const Stats expected = {4.54135083, 7.49628572, 0.417968784};
 const double tolerance = 1e-3;   // relative
 
 inline bool Matches(const Stats &s)
