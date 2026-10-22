@@ -181,7 +181,8 @@ double MassPcg::residualSquared()
 }
 
 MassPcg::Result MassPcg::solve(const std::vector<double> &b, std::vector<double> &x, double tol,
-                               int maxIterations, int checkEvery)
+                               int maxIterations, int checkEvery,
+                               const std::function<void(int, double)> &onCheck)
 {
     if(b.size() != nodes_ || x.size() != nodes_)
         throw Error("gpu::MassPcg::solve: vectors don't match the grid");
@@ -216,7 +217,11 @@ MassPcg::Result MassPcg::solve(const std::vector<double> &b, std::vector<double>
         beta_.dispatch({&params_, &partials_, &scalars_}, 1);
         result.iterations = i;
         if(i % checkEvery == 0 || i == maxIterations)
+        {
             result.residual = std::sqrt(residualSquared()) / normb;
+            if(onCheck)
+                onCheck(i, result.residual);
+        }
     }
     result.converged = result.residual <= tol;
 

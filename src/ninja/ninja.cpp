@@ -29,6 +29,11 @@
 
 #include "ninja.h"
 
+#ifdef WITH_WEBGPU
+#include "gpu_context.h"
+#include "mass_gpu_solve.h"
+#endif
+
 extern boost::local_time::tz_database globalTimeZoneDB;
 
 /**Ninja constructor
@@ -666,10 +671,35 @@ bool ninja::solve(const MassSystem &system, double *x, int NUMNP, int max_iter, 
         input.Com->ninjaCom(ninjaComClass::ninjaSolverProgress, "%d",(int) (time_percent_complete+0.5)); //Tell the GUI what the percentage to complete for the ninja is
     };
 
-    MassSolveResult result = SolveMassPcg(system, x, options);
+    MassSolveResult result;
+    bool solved = false;
+#ifdef WITH_WEBGPU
+    //NINJA_MASS_SOLVER=WEBGPU solves on the GPU (MASS_GPU_PLAN.org); without an adapter, the CPU
+    if(EQUAL(CPLGetConfigOption("NINJA_MASS_SOLVER", "CPU"), "WEBGPU"))
+    {
+        try
+        {
+            // NINJA_WEBGPU_DISABLE: behave as if there were no adapter (tests)
+            if(CPLTestBool(CPLGetConfigOption("NINJA_WEBGPU_DISABLE", "NO")))
+                throw gpu::Unavailable("WebGPU: no adapter (NINJA_WEBGPU_DISABLE)");
+            std::string adapter;
+            result = SolveMassOnGpu(mesh.ncols, mesh.nrows, mesh.nlayers, system, x, options, &adapter);
+            solved = true;
+            CPLDebug("NINJA_MASS_SOLVER", "GPU solve on %s", adapter.c_str());
+        }
+        catch(const gpu::Unavailable &e)
+        {
+            input.Com->ninjaCom(ninjaComClass::ninjaWarning,
+                                "Mass solver: %s; solving on the CPU instead.", e.what());
+        }
+    }
+#endif
+    if(!solved)
+        result = SolveMassPcg(system, x, options);
 
-    CPLDebug("NINJA_MASS_SOLVER", "PCG (%s): %d iterations, relative residual %g, NUMNP %d",
-             result.jacobi ? "Jacobi" : "SSOR", result.iterations, result.residual, NUMNP);
+    CPLDebug("NINJA_MASS_SOLVER", "PCG (%s%s): %d iterations, relative residual %g, NUMNP %d",
+             result.jacobi ? "Jacobi" : "SSOR", solved ? ", GPU" : "", result.iterations,
+             result.residual, NUMNP);
 
     if(!result.converged)
         throw std::runtime_error("Solution did not converge.\nMAXITS reached.");

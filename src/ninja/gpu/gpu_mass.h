@@ -29,6 +29,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "gpu_context.h"
@@ -101,8 +102,11 @@ public:
     };
 
     // Solves A x = b starting from x; throws Error if r.r stops being finite.
+    // onCheck(iteration, residual) runs at each residual check and may
+    // throw to stop.
     Result solve(const std::vector<double> &b, std::vector<double> &x, double tol,
-                 int maxIterations, int checkEvery = 10);
+                 int maxIterations, int checkEvery = 10,
+                 const std::function<void(int, double)> &onCheck = nullptr);
 
 private:
     void dispatchNodes(Kernel &kernel, const std::vector<const Buffer *> &bindings);

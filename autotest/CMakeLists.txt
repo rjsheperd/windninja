@@ -493,6 +493,13 @@ if(WITH_WEBGPU)
                          $<TARGET_FILE:WindNinja_cli>)
         set_tests_properties(momentum_gpu_wxmodel PROPERTIES SKIP_RETURN_CODE 77)
         # fallback to the CPU backend when the GPU can't run (plan 5.3)
+        # the mass solver on the GPU against the CPU, and its fallback
+        foreach(mode match no_adapter)
+            add_test(NAME mass_gpu_${mode}
+                     COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_mass_gpu.sh
+                             $<TARGET_FILE:WindNinja_cli> ${mode})
+            set_tests_properties(mass_gpu_${mode} PROPERTIES SKIP_RETURN_CODE 77)
+        endforeach(mode)
         foreach(mode no_adapter oom)
             add_test(NAME momentum_gpu_fallback_${mode}
                      COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_fallback.sh
@@ -622,7 +629,7 @@ endif()
 # checks such as momentum_backend_webgpu_cancel then fail.
 get_directory_property(ALL_TESTS TESTS)
 foreach(t ${ALL_TESTS})
-    if(t MATCHES "^(gpu_|momentum_gpu_|momentum_backend_webgpu_|cfg_momentum_webgpu_)")
+    if(t MATCHES "^(gpu_|mass_gpu_|momentum_gpu_|momentum_backend_webgpu_|cfg_momentum_webgpu_)")
         set_property(TEST ${t} APPEND PROPERTY RESOURCE_LOCK webgpu)
     endif()
 endforeach()

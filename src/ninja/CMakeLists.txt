@@ -147,7 +147,8 @@ set(NINJA_SOURCES ${NINJA_SOURCES}
 
 if(WITH_WEBGPU)
     set(NINJA_SOURCES ${NINJA_SOURCES} rans_gpu_bridge.cpp rans_gpu_solve.cpp
-                                   rans_dem_solve.cpp webgpu_rans_backend.cpp)
+                                   rans_dem_solve.cpp webgpu_rans_backend.cpp
+                                   mass_gpu_solve.cpp)
 endif(WITH_WEBGPU)
 
 if(WITH_NOMADS_SUPPORT)

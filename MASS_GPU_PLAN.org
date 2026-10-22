@@ -340,17 +340,50 @@ per iteration with 5 separate submits each. The 0.2 gate assumed ~0.45 ms
 and ~80 ms. This grid converges faster than Big Butte (SSOR 26 vs 57
 iterations), so the real comparison is 2.2a.
 
-** TODO 2.2a Run the GPU solve inside WindNinja [0/5]
-- [ ] =NINJA_MASS_SOLVER=WEBGPU= (config option, like =NINJA_MASS_PRECOND=)
+** DONE 2.2a Run the GPU solve inside WindNinja [5/5]
+- [X] =NINJA_MASS_SOLVER=WEBGPU= (config option, like =NINJA_MASS_PRECOND=)
       makes =ninja::solve()= pack the system and call =gpu::MassPcg=,
       falling back to the CPU (with a warning) when there is no adapter;
-      =WITH_WEBGPU= builds only.
-- [ ] Time Big Butte coarse/medium/fine end to end and per phase against
-      CPU SSOR (=scripts/mass_solver_timing.sh=).
-- [ ] Add tests: a CLI run with the option matches the CPU output within
-      a measured tolerance; no-adapter fallback.
-- [ ] Tests pass
-- [ ] Documentation updates
+      =WITH_WEBGPU= builds only. =mass_gpu_solve.{h,cpp}=
+      (=SolveMassOnGpu()=, core-free, WebGPU builds) creates the context,
+      packs the stencil and solves; progress and cancel run at each
+      residual check (=MassPcg::solve()= gained an =onCheck= callback).
+      =NINJA_WEBGPU_DISABLE= forces the fallback, as for momentum.
+- [X] Time Big Butte coarse/medium/fine end to end and per phase against
+      CPU SSOR (=scripts/mass_solver_timing.sh= now has a WEBGPU row).
+- [X] Add tests: =scripts/check_mass_gpu.sh= (ctest =mass_gpu_match=,
+      =mass_gpu_no_adapter=, under the =webgpu= resource lock). =match=:
+      Big Butte small, coarse mesh, GPU vs CPU: speed RMSE ≤ 0.05 mph, max
+      ≤ 0.5, mean direction ≤ 0.5° (seen 0.031, 0.21, 0.08°); a GPU solve
+      stopped at tolerance 0.6 fails it (0.17, 1.49, 0.40°). =no_adapter=:
+      the warning, then the CPU's SSOR solve and output.
+- [X] Tests pass: =ctest -R "^mass_|^gpu_"= 32/32. Default (CPU) output
+      still byte-identical to the pre-1.1 binary (1 thread, coarse and fine).
+- [X] Documentation updates: this entry; =src/ninja/gpu/README.org=.
+
+Measured, Big Butte, 10 mph from 270, M3 Max (seconds; solve = WindNinja's
+"Solver time", total = whole run; =scripts/mass_solver_timing.sh=):
+
+| mesh   |  nodes | solver      | iters | solve 8 thr | solve 1 thr | total 8 thr | total 1 thr |
+|--------+--------+-------------+-------+-------------+-------------+-------------+-------------|
+| coarse |  78000 | CPU SSOR    |    52 |       0.153 |       0.152 |       0.176 |       0.190 |
+| coarse |  78000 | GPU Jacobi  |   130 |       0.064 |       0.054 |       0.090 |       0.093 |
+| medium | 197760 | CPU SSOR    |    55 |       0.378 |       0.420 |       0.424 |       0.501 |
+| medium | 197760 | GPU Jacobi  |   150 |       0.074 |       0.068 |       0.126 |       0.149 |
+| fine   | 397120 | CPU SSOR    |    57 |       0.747 |       0.839 |       0.831 |       0.989 |
+| fine   | 397120 | GPU Jacobi  |   160 |       0.080 |       0.074 |       0.166 |       0.226 |
+
+- *Fine mesh: solve 9.4× faster, whole run 5.0×* (8 threads); 11× and
+  4.4× on 1 thread. The GPU solve doesn't depend on CPU threads.
+- Output vs CPU SSOR on the default Big Butte (fine): speed RMSE 0.015 mph,
+  max 0.25, direction RMSE 0.17°, the same as CPU Jacobi vs CPU SSOR
+  (0.015, 0.27, 0.18°): solver-tolerance noise, not GPU error.
+- Where the GPU solve's time goes (temporary timing, removed): context
+  creation ~10 ms, setup (pack, upload, 6 pipelines) 10–21 ms, iterations
+  33–42 ms. So ~0.25 ms per iteration even on the coarse mesh: the 5
+  separate submits per iteration dominate, not the arithmetic. See the
+  Inbox for the fixes (one submit per iteration; context reuse).
+- Gate 0.2's assumption held: 0.08 s for the fine solve (estimate ~0.08 s).
 
 ** TODO 2.3 Precision [0/4]
 - [ ] Compare f32 dot products with guarded df64 (port the =cljs-webgpu=
@@ -426,3 +459,11 @@ The symmetric upper-triangle product (=SymmetricMultiply=, formerly
 is why the solve barely speeds up with threads (0.1). Storing the full
 matrix (or the 27-point stencil, as Phase 2 does on the GPU) would let the
 CPU product run fully in parallel too.
+** TODO GPU mass solve: one submit per iteration, and reuse the context
+Each iteration is 5 =Kernel::dispatch= calls, each its own encoder and
+submit (~23 µs + scheduling); ~0.25 ms per iteration on the coarse mesh
+where the arithmetic is ~0.05 ms. Recording all 5 passes (or several
+iterations between checks) in one command encoder should cut the
+iterations' 33–42 ms substantially. The context (~10 ms) and pipelines
+(~10–20 ms) are rebuilt per solve; point initialization and time series
+solve many times on one mesh (Phase 4.1), so keep them.
