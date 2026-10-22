@@ -50,6 +50,7 @@ struct DemWindProblem
     double meshResolution = 0.0;  // m; also the first layer's thickness
     int layers = 20;              // cells in the vertical
     double growth = 1.1;          // layer growth above the first layer
+    bool volume = false;          // also return the 3-D fields
 };
 
 struct DemWind
@@ -58,6 +59,10 @@ struct DemWind
     std::vector<double> u, v, k;
     double sampleHeight = 0.0;    // m above ground of the ground cells' centres
     GpuSolveReport report;
+    // with DemWindProblem::volume: every cell's centre elevation and fields,
+    // cell index col + nCols * (row + nRows * layer), row 0 south
+    int layers = 0;
+    std::vector<double> cellZ, volumeU, volumeV, volumeW, volumeK;
 };
 
 /* Throws RansDivergedError, gpu::Error, or what checkCancel throws. */

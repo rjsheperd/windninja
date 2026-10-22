@@ -100,6 +100,21 @@ bool CpuRansBackend::solve(const MomentumProblem &problem,
     com->ninjaCom(ninjaComClass::ninjaNone, "CPU RANS stopped after %d cycles, residual %g.", it, worst);
 
     sample(problem, g, s.u, s.v, s.k, firstLayer, result);
+    if(problem.wantVolume)
+    {
+        MomentumVolume &vol = result.volume;
+        vol.nx = g.nx;
+        vol.ny = g.ny;
+        vol.nz = g.nz;
+        vol.xll = problem.dem->get_xllCorner();
+        vol.yll = problem.dem->get_yllCorner();
+        vol.cellSize = problem.dem->get_cellSize();
+        vol.z = g.cz;   // RansGrid's z is not shifted
+        vol.u = s.u;
+        vol.v = s.v;
+        vol.w = s.w;
+        vol.k = s.k;
+    }
     return accept(result);
 }
 

@@ -30,6 +30,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "ascii_grid.h"
 #include "Elevation.h"
@@ -56,6 +57,7 @@ struct MomentumProblem
     int cellBudget;          // target number of cells (WindNinjaInputs::meshCount)
     int iterations;
     int nThreads;
+    bool wantVolume = false; // also fill MomentumResult::volume
 };
 
 /*
@@ -66,6 +68,27 @@ struct MomentumProblem
 ** rather than of the output height.  The caller then log-profiles them down
 ** to the output height, so every backend gets the same post-processing.
 */
+/*
+** A backend's 3-D solution on its terrain-following grid, for the outputs
+** sampled on the mass-solver mesh (VTK, turbulence, colMax).  Cell columns
+** sit on the DEM's cell centres (column (i, j) at xll + (i + 0.5) cellSize,
+** row j from the south), each with nz cells; cell index i + nx * (j + ny * k).
+** Empty (nx == 0) when the backend has none.
+*/
+struct MomentumVolume
+{
+    int nx = 0, ny = 0, nz = 0;
+    double xll = 0.0, yll = 0.0, cellSize = 0.0;
+    std::vector<double> z;               // cell-centre elevation, m
+    std::vector<double> u, v, w, k;
+
+    /* Values at (x, y, z) (absolute coordinates): bilinear between the four
+    ** nearest columns, linear in height within each.  Returns false below a
+    ** column's lowest cell centre (the caller fills near-ground values). */
+    bool sample(double x, double y, double zp, double &uOut, double &vOut,
+                double &wOut, double &kOut) const;
+};
+
 struct MomentumResult
 {
     AsciiGrid<double> u;
@@ -75,6 +98,7 @@ struct MomentumResult
     double sampleHeight;     // m above the ground that u, v, k represent when
                              // !outputHeightResolved (the caller converts to
                              // height above the canopy per cell)
+    MomentumVolume volume;   // when the caller asks for it (wantVolume)
 };
 
 /*

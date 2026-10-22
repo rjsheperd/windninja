@@ -75,6 +75,7 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
     p.meshResolution = problem.meshResolution;
     p.layers = layers;
     p.growth = growth;
+    p.volume = problem.wantVolume;
     GpuSolveOptions options;
     options.multigridLevels = multigridLevels;
     options.maxIterations = maxIterations;
@@ -124,6 +125,21 @@ bool WebGpuRansBackend::solve(const MomentumProblem &problem,
             result.k(row, col) = wind.k[i];
         }
     result.sampleHeight = wind.sampleHeight;
+    if(problem.wantVolume)
+    {
+        MomentumVolume &vol = result.volume;
+        vol.nx = nCols;
+        vol.ny = problem.dem->get_nRows();
+        vol.nz = wind.layers;
+        vol.xll = problem.dem->get_xllCorner();
+        vol.yll = problem.dem->get_yllCorner();
+        vol.cellSize = problem.dem->get_cellSize();
+        vol.z = std::move(wind.cellZ);
+        vol.u = std::move(wind.volumeU);
+        vol.v = std::move(wind.volumeV);
+        vol.w = std::move(wind.volumeW);
+        vol.k = std::move(wind.volumeK);
+    }
     result.outputHeightResolved = 2.0 * wind.sampleHeight < problem.outputHeight;
     if(result.outputHeightResolved)
         throw std::runtime_error("RANS backend: output height inside the first layer is not supported yet");

@@ -1,39 +1,94 @@
-#+TITLE: WebGPU layer (=ninja_gpu=)
+#+TITLE: WebGPU layer and RANS solver (=ninja_gpu=)
 
-A thin RAII layer over the C =webgpu.h= API for the WebGPU momentum solver
-(see =WEBGPU_PLAN.org=, Phase 3). Natively it runs on Dawn; in a browser
-the same code builds with Emscripten's =emdawnwebgpu= port.
+The WebGPU momentum solver: a thin RAII layer over the C =webgpu.h= API, and
+the RANS solver's numerics as WGSL compute stages (see =WEBGPU_PLAN.org=,
+Phases 3–5). Natively it runs on Dawn; in a browser the same code builds
+with Emscripten's =emdawnwebgpu= port (=wasm/=).
 
 * Contents
 - =gpu_context.h/.cpp= :: =gpu::Context= (instance, adapter, device, queue),
-  =gpu::Buffer= (storage or uniform buffer with upload and readback) and
-  =gpu::Kernel= (a WGSL compute pipeline with an automatic layout).
-- =gpu_kernels.h= :: WGSL sources embedded as strings.
+  =gpu::Buffer= (storage or uniform buffer, upload and readback with byte
+  offsets) and =gpu::Kernel= (a WGSL compute pipeline with an automatic
+  layout).
+- =gpu_grid.h/.cpp= :: the terrain-following grid's metrics and the fields,
+  packed as structure-of-arrays slots in a few buffers. WebGPU guarantees
+  only 8 storage buffers per shader stage.
+- =gpu_reduce.h/.cpp= :: =gpu::Reducer=, a two-pass sum on the GPU (residual
+  norms).
+- =gpu_rans.h/.cpp=, =gpu_rans_kernels.h= :: =gpu::RansSolver=, the CPU
+  =RansSolver='s numerics as stages: Green-Gauss gradients, fluxes
+  (reconstruction, Rusanov-type flux with outlet backflow, viscous stress,
+  upwind k-ε, rough-wall functions), and the pseudo-time update. Each stage
+  is a face pass (per-face values) and a cell gather (upper face minus lower
+  face): no atomics, so results are deterministic.
+- =gpu_multigrid.h/.cpp=, =gpu_multigrid_kernels.h= :: =gpu::RansMultigrid=,
+  FAS multigrid on the CPU multigrid's hierarchy. On the GPU it gives the
+  same answers more slowly, so the backend runs single grid by default.
+- =gpu_kernels.h= :: test kernels (saxpy, reduction).
+
+Outside this directory, free of WindNinja core so the browser module shares
+them (=src/ninja/=):
+- =rans_terrain= :: =TerrainGrid()= from a plain DEM;
+- =rans_wind= :: =WindSetup()=;
+- =rans_gpu_bridge= :: CPU solver types to GPU ones;
+- =rans_gpu_solve= :: =SolveOnGpu()=, the loop: CFL back-off, residual and
+  output-change stops;
+- =rans_dem_solve= :: =SolveDemOnGpu()=, DEM in, ground-layer wind out.
+
+=WebGpuRansBackend= (=src/ninja/webgpu_rans_backend.*=) is the momentum
+backend that runs them inside WindNinja.
 
 * Rules
-- It depends only on Dawn, not on WindNinja core (no GDAL, Boost or
-  =NINJA_INCLUDES=), so the solver-only WebAssembly module can reuse it.
+- This directory depends only on Dawn, not on WindNinja core (no GDAL,
+  Boost or =NINJA_INCLUDES=).
 - Host code uses the C =webgpu.h= API, not Dawn's unstable =webgpu_cpp.h=.
 - Every wait on the GPU goes through =Context::wait()= (=wgpuInstanceWaitAny=).
-  Natively it blocks; a browser build needs Emscripten JSPI or Asyncify there.
-- Errors throw =gpu::Error=; no adapter or device throws =gpu::Unavailable=.
-  WGSL compile errors carry =line L:C:= positions.
+  Natively it blocks; in the browser it needs Emscripten's JSPI or Asyncify.
+- Errors throw =gpu::Error=, which carries WebGPU's message on one line; no
+  adapter or device throws =gpu::Unavailable=. WGSL compile errors carry
+  =line L:C:= positions.
+- Each GPU stage has a test against the CPU solver's (=gpu/kernel_*=,
+  =gpu/multigrid_matches_cpu=), with tolerances from measurement and a
+  mutation check that the test catches a broken stage.
+
+* Using the backend
+#+begin_src sh
+momentum_flag    = true
+momentum_backend = webgpu        # or cpu, or openfoam in NINJAFOAM builds
+#+end_src
+Runtime options (GDAL config options or environment variables):
+- =NINJA_MOMENTUM_FALLBACK= (default =YES=) :: with no adapter, a lost
+  device, or a rejected allocation, warn with the reason and rerun on the CPU
+  backend.
+- =SIMPLEFOAM_NTRIES= (default 3) :: on divergence, after the backend's own
+  CFL back-off, retry on a smoothed DEM, as OpenFOAM does.
+- =WRITE_TURBULENCE= :: turbulence and colMax output, sampled from the 3-D
+  solution onto the mass mesh, as VTK output is.
+- Test hooks: =NINJA_WEBGPU_DISABLE= (act as if there were no adapter) and
+  =NINJA_WEBGPU_TEST_ALLOC_BYTES= (allocate a buffer of this size first).
 
 * Build and test
 #+begin_src sh
 scripts/fetch_dawn.sh /path/to/dawn      # prints the Dawn_DIR to use
 cmake -DWITH_WEBGPU=ON -DDawn_DIR=... <src>
-ctest -R '^gpu_'
+ctest -R '^gpu_|momentum_gpu_|momentum_backend_webgpu_|cfg_momentum_webgpu_'
 #+end_src
-On a machine without a WebGPU adapter the =gpu_*= tests print
-=SKIP: no WebGPU adapter= and ctest reports them as skipped.
+- Without a WebGPU adapter, the GPU tests report as skipped.
+- The GPU tests share a ctest =RESOURCE_LOCK= (=webgpu=), so =ctest -j=
+  doesn't run them at the same time: concurrent WebGPU runs slow each other
+  down. They also run slower beside the OpenMP-heavy CPU tests.
+- The golden tests (=momentum_gpu_golden_*=) check flat terrain against
+  OpenFOAM with GATE 0's limits, and terrain against OpenFOAM's fine mesh
+  (no worse than OpenFOAM at the same mesh; see
+  =autotest/golden/momentum/README.md=).
 
 * Overhead benchmark
 =gpu_overhead_bench= (built with =WITH_WEBGPU=) times dispatch, wait, upload
 and readback costs at 25k to 10M elements, plus the CPU solver per iteration
-at 100k cells. Results and what they mean for Phase 4 are in
-=WEBGPU_PLAN.org= task 3.3.
+at 100k cells. Results and what they mean are in =WEBGPU_PLAN.org= task 3.3:
+about 23 µs per dispatch and 0.2–0.5 ms per wait on an M3 Max, so read back
+rarely.
 
 * Browser build
-=wasm/= builds this layer for the browser with Emscripten; see
-=wasm/README.org=.
+=wasm/= builds this layer, and the whole solver (=windninja_wasm=), for the
+browser with Emscripten; see =wasm/README.org=.

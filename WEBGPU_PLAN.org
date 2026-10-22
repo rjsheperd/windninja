@@ -1327,16 +1327,53 @@ today.
 - Manual GUI checklist (record results here): select backend, run, cancel, and
   re-run with different directions.
 
-** TODO 5.2 Feature parity
-- [ ] Diurnal hand-off (=diurnal_ninja= on the momentum grids).
-- [ ] Turbulence output and colMax.
-- [ ] VTK output, written directly from the native 3-D fields.
-- [ ] Weather-model and gridded initialization (domain-mean inflow, same as
-      today).
-- [ ] Multiple runs in an army.
+** DONE 5.2 Feature parity
+- [X] Diurnal hand-off (=diurnal_ninja= on the momentum grids). It already
+      worked: diurnal runs the mass solver from the momentum surface output,
+      not the 3-D mass mesh. =cfg_momentum_webgpu_bigbutte_diurnal= (12 s). GPU
+      diurnal vs OpenFOAM diurnal (Big Butte coarse, 20 ft): 0.500 m/s,
+      4.7°, no larger than without diurnal (0.555, 5.7°).
+- [X] Turbulence output and colMax, and
+- [X] VTK output, written directly from the native 3-D fields:
+      - the RANS backends return an optional 3-D =MomentumVolume= (cell
+        centre heights and u, v, w, k; =MomentumProblem::wantVolume=, set
+        when the mass mesh is needed);
+      - =NinjaFoam::sampleMomentumVolume()= samples it onto the mass mesh
+        in place of OpenFOAM's probes: bilinear between columns, linear in
+        height, and the probes' no-data below the ground cell's centre, so
+        =fillEmptyProbeVals= log-profiles near the ground as before;
+      - the "not available with this backend" gate is gone.
+      Big Butte with VTK, KMZ and =WRITE_TURBULENCE= writes the same files as
+      OpenFOAM: VTK volume and surface (same sizes), colMax GeoTIFF, and a KMZ
+      with the colMax layer. colMax means differ (1.80 vs 1.25 m/s): the known
+      k difference. The =.prj= WKT dialect differs (ESRI vs EPSG form, same
+      CRS).
+- [X] Weather-model and gridded initialization (domain-mean inflow, same as
+      today). Gridded verified on the GPU, with uniform 10 mph / 270° grids
+      over Big Butte (=momentum_gpu_gridded=). Note WindNinja's convention:
+      gridded directions are grid-relative (=inputDirection_proj = meanDir=),
+      while domain-average ones are geographic (=geog − angleFromNorth=). So
+      a uniform 270° grid isn't the same inflow as a 270° domain average.
+      Measured 1.65° mean difference on the GPU, about the grid convergence
+      there. OpenFOAM's own gridded vs domain-average differ more (0.66
+      m/s, 4.4°): at 300 iterations its answer depends on the initial field.
+      Weather-model initialization shares the domain-mean path
+      (=wxModelInitialization= sets =inputDirection_proj= the same way); not
+      run here (the NOMADS downloads are rate-limited).
+- Test infrastructure: the GPU tests share a ctest =RESOURCE_LOCK=
+  (=webgpu=). In a =ctest -j 3= run without it, concurrent WebGPU runs plus
+  the OpenMP-heavy CPU tests stretched GPU tests from about 11 s to about
+  711 s and failed the cancel test's timing check. This was also the source
+  of 4.4's unexplained 228 s. With the lock, all 71 momentum/GPU tests pass
+  in 7 min under =-j 3=. The cancel test now bounds only the cancel latency
+  it promises, not the total time.
+- [X] Multiple runs in an army: =momentum_backend_webgpu_army_3_runs= (0°,
+      135° and 270° in one army through the C API, then in reverse order in a
+      new army: all six grids byte-identical, 62 s).
 *** Tests
 - =momentum_gpu_diurnal=: the diurnal cfg passes, and its outputs are within
-  tolerance of OpenFOAM plus diurnal.
+  tolerance of OpenFOAM plus diurnal. (=cfg_momentum_webgpu_bigbutte_diurnal=;
+  the comparison is above.)
 - =momentum_gpu_turbulence_kmz=: the KMZ contains the turbulence and colMax
   layers.
 - =momentum_gpu_army_3_runs=: three directions in one army give three output

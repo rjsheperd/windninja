@@ -61,5 +61,14 @@ DemWind SolveDemOnGpu(gpu::Context &context, const TerrainDem &dem, const DemWin
     wind.v.assign(v.begin(), v.begin() + n2);
     wind.k.assign(k.begin(), k.begin() + n2);
     wind.sampleHeight = firstLayer / 2.0;
+    if(problem.volume)
+    {
+        wind.layers = g.nz;
+        wind.cellZ = g.cz;   // RansGrid's z is not shifted
+        wind.volumeU = std::move(u);
+        wind.volumeV = std::move(v);
+        wind.volumeW = s.fields.download(gpu::fieldW);
+        wind.volumeK = std::move(k);
+    }
     return wind;
 }

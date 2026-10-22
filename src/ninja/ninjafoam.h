@@ -192,6 +192,10 @@ private:
     Mesh massMesh;
     wn_3dScalarField massMesh_u, massMesh_v, massMesh_w;
     wn_3dScalarField massMesh_k;
+    // a RANS backend's 3-D solution, sampled onto the mass mesh instead of
+    // OpenFOAM probes (VTK, turbulence, colMax)
+    MomentumVolume momentumVolume;
+    void sampleMomentumVolume();
     void GenerateAndSampleMassMesh();
     void generateMassMesh();
     void writeProbeSampleFile(const wn_3dArray& x, const wn_3dArray& y, const wn_3dArray& z, 

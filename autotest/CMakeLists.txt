@@ -377,6 +377,11 @@ if(WITH_WEBGPU)
     set_tests_properties(momentum_backend_webgpu_c_api_run PROPERTIES
                          ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data"
                          SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
+    add_test(momentum_backend_webgpu_army_3_runs
+             ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/webgpu_army_3_runs)
+    set_tests_properties(momentum_backend_webgpu_army_3_runs PROPERTIES
+                         ENVIRONMENT "WINDNINJA_DATA=${PROJECT_SOURCE_DIR}/data"
+                         SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
     add_test(momentum_backend_webgpu_cfl_backoff
              ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_backend/webgpu_cfl_backoff)
     set_tests_properties(momentum_backend_webgpu_cfl_backoff PROPERTIES
@@ -448,6 +453,15 @@ if(WITH_WEBGPU)
             set_tests_properties(momentum_gpu_golden_${goldencase} PROPERTIES
                                  SKIP_RETURN_CODE 77)
         endforeach(goldencase)
+        # VTK, turbulence and colMax from the GPU's 3-D solution (plan 5.2)
+        add_test(NAME momentum_gpu_turbulence_kmz
+                 COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_gpu_outputs.sh
+                         $<TARGET_FILE:WindNinja_cli>)
+        set_tests_properties(momentum_gpu_turbulence_kmz PROPERTIES SKIP_RETURN_CODE 77)
+        add_test(NAME momentum_gpu_gridded
+                 COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_gpu_gridded.sh
+                         $<TARGET_FILE:WindNinja_cli>)
+        set_tests_properties(momentum_gpu_gridded PROPERTIES SKIP_RETURN_CODE 77)
         # fallback to the CPU backend when the GPU can't run (plan 5.3)
         foreach(mode no_adapter oom)
             add_test(NAME momentum_gpu_fallback_${mode}
@@ -573,3 +587,12 @@ if(RUN_CFG_TESTS AND NOT WITH_WEBGPU)
                          PASS_REGULAR_EXPRESSION "'momentum_backend' of webgpu is not valid or not available in this build")
 endif()
 
+# Tests that use the GPU don't run at the same time as each other (even
+# under ctest -j): concurrent WebGPU runs slow each other down, and timing
+# checks such as momentum_backend_webgpu_cancel then fail.
+get_directory_property(ALL_TESTS TESTS)
+foreach(t ${ALL_TESTS})
+    if(t MATCHES "^(gpu_|momentum_gpu_|momentum_backend_webgpu_|cfg_momentum_webgpu_)")
+        set_property(TEST ${t} APPEND PROPERTY RESOURCE_LOCK webgpu)
+    endif()
+endforeach()

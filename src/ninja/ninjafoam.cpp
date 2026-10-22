@@ -239,16 +239,6 @@ bool NinjaFoam::simulate_wind()
     }
     
     
-    if( !useOpenFoam && ( input.volVTKOutFlag == true || input.writeTurbulence == true ) )
-    {
-        // the mass-mesh sampling behind these outputs reads the OpenFOAM case
-        input.Com->ninjaCom(ninjaComClass::ninjaWarning,
-                "VTK and turbulence output are not available with the '%s' momentum backend yet; skipping them.",
-                get_momentumBackendName(input.momentumBackend).c_str());
-        input.volVTKOutFlag = false;
-        input.writeTurbulence = false;
-    }
-
     if( input.volVTKOutFlag == true || input.writeTurbulence == true )
     {
         writeMassMesh = true;
@@ -348,7 +338,10 @@ bool NinjaFoam::simulate_wind()
     {
         try
         {
-            solutionStatus = selected->solve(MakeMomentumProblem(input), input.Com,
+            MomentumProblem problem = MakeMomentumProblem(input);
+            // the RANS backends' 3-D fields feed the mass-mesh outputs
+            problem.wantVolume = writeMassMesh && !useOpenFoam;
+            solutionStatus = selected->solve(problem, input.Com,
                     [this]() { checkCancel(); },
                     [this](const MomentumResult &r) { return ApplyMomentumResult(r); },
                     result);
@@ -377,6 +370,8 @@ bool NinjaFoam::simulate_wind()
             input.dem.smooth_elevation(smoothDist);
         }
     }
+
+    momentumVolume = std::move(result.volume);
 
     // optional raw result dump for backend comparisons (the golden u/v/k.asc)
     const char *pszResultDir = CPLGetConfigOption("NINJA_MOMENTUM_RESULT_DIR", NULL);
@@ -2954,6 +2949,13 @@ bool NinjaFoam::ApplyMomentumResult(const MomentumResult &result)
 void NinjaFoam::generateMassMesh()
 {
     massMesh.buildStandardMesh(input);
+    if( input.momentumBackend != WindNinjaInputs::openFoamBackend )
+    {
+        sampleMomentumVolume();
+        fillEmptyProbeVals( massMesh.ZORD, input.dem.get_nCols(), input.dem.get_nRows(), massMesh.nlayers, massMesh_u, massMesh_v, massMesh_w );
+        fillEmptyProbeVals( massMesh.ZORD, input.dem.get_nCols(), input.dem.get_nRows(), massMesh.nlayers, massMesh_k );
+        return;
+    }
 
     writeProbeSampleFile( massMesh.XORD, massMesh.YORD, massMesh.ZORD, input.dem.xllCorner, input.dem.yllCorner, input.dem.get_nCols(), input.dem.get_nRows(), massMesh.nlayers );
 
@@ -2976,6 +2978,45 @@ void NinjaFoam::generateMassMesh()
 
     fillEmptyProbeVals( massMesh.ZORD, input.dem.get_nCols(), input.dem.get_nRows(), massMesh.nlayers, massMesh_u, massMesh_v, massMesh_w );
     fillEmptyProbeVals( massMesh.ZORD, input.dem.get_nCols(), input.dem.get_nRows(), massMesh.nlayers, massMesh_k );
+}
+
+/*
+** The RANS backends' equivalent of the OpenFOAM probes: the mass mesh's
+** points sampled from the backend's 3-D solution (MomentumVolume::sample).
+** Points below a column's lowest cell centre get the probes' no-data value
+** (-9999), so fillEmptyProbeVals log-profiles them as it does for OpenFOAM.
+*/
+void NinjaFoam::sampleMomentumVolume()
+{
+    if( momentumVolume.nx == 0 )
+        throw std::runtime_error("the momentum backend returned no 3-D solution to sample");
+    massMesh_u.allocate(&massMesh);
+    massMesh_v.allocate(&massMesh);
+    massMesh_w.allocate(&massMesh);
+    massMesh_k.allocate(&massMesh);
+    const double noDataVal = -9999;
+    const int ncols = input.dem.get_nCols(), nrows = input.dem.get_nRows();
+    for(int layerIdx = 0; layerIdx < massMesh.nlayers; layerIdx++)
+        for(int rowIdx = 0; rowIdx < nrows; rowIdx++)
+            for(int colIdx = 0; colIdx < ncols; colIdx++)
+            {
+                int ptIdx = layerIdx*nrows*ncols + rowIdx*ncols + colIdx;
+                double u, v, w, k;
+                if( momentumVolume.sample(massMesh.XORD(ptIdx) + input.dem.xllCorner,
+                                          massMesh.YORD(ptIdx) + input.dem.yllCorner,
+                                          massMesh.ZORD(ptIdx), u, v, w, k) )
+                {
+                    massMesh_u(ptIdx) = u;
+                    massMesh_v(ptIdx) = v;
+                    massMesh_w(ptIdx) = w;
+                    massMesh_k(ptIdx) = k;
+                }
+                else
+                {
+                    massMesh_u(ptIdx) = massMesh_v(ptIdx) = massMesh_w(ptIdx) = noDataVal;
+                    massMesh_k(ptIdx) = noDataVal;
+                }
+            }
 }
 
 void NinjaFoam::writeProbeSampleFile( const wn_3dArray& x, const wn_3dArray& y, const wn_3dArray& z, 
