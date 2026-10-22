@@ -61,6 +61,8 @@
 #include "ninja_conv.h"
 #include "mass_pcg.h"
 
+#include <memory>
+
 #include "constants.h"
 #include "ascii_grid.h"
 #include "SurfProperties.h"
@@ -118,6 +120,10 @@
 //#define NINJA_DEBUG_VERBOSE
 
 #include "callbackFunctions.h"
+
+#ifdef WITH_WEBGPU
+class MassGpuSolver;   // mass_gpu_solve.h
+#endif
 
 class ninja
 {
@@ -391,6 +397,9 @@ private:
 
     double *PHI;
     MassSystem massSystem;   //Phi's linear system (mass_fem.h)
+#ifdef WITH_WEBGPU
+    std::unique_ptr<MassGpuSolver> massGpu;   //the GPU mass solver, kept across a run's solves
+#endif
     double alphaH; //alpha horizontal from governing equation, weighting for change in horizontal winds
     double alpha;                //alpha = alphaH/alphaV, determined by stability
     AsciiGrid<double> *uDiurnal, *vDiurnal, *wDiurnal, *height;

@@ -473,7 +473,8 @@ if(WITH_WEBGPU)
                     kernel_mass_recover_matches_cpu mass_wind_matches_cpu
                     mass_wind_folded_throws mass_wind_selftest
                     mass_dem_selftest mass_wind_kept_on_shared_device
-                    kernel_mass_output_matches_cpu mass_dem_kept_matches_download)
+                    kernel_mass_output_matches_cpu mass_dem_kept_matches_download
+                    mass_gpu_solver_repeats)
         add_test(gpu_${gputest}
                  ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=gpu/${gputest})
         # machines without a WebGPU adapter skip rather than fail

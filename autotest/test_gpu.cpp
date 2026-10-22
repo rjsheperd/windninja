@@ -1221,6 +1221,45 @@ BOOST_AUTO_TEST_CASE( mass_dem_kept_matches_download )
     }
 }
 
+// One MassGpuSolver for repeated solves (as point initialization's matching
+// loop): each solve equals a fresh one exactly, whatever came before, so
+// nothing carries over but the context, geometry and pipelines.
+BOOST_AUTO_TEST_CASE( mass_gpu_solver_repeats )
+{
+    gpu::Context *c = context();
+    if(c == nullptr)
+        return;
+    MassGrid g = ::mass_selftest::Grid(24, 20, 8);
+    ::mass_selftest::Wind a = ::mass_selftest::Initial(g), b = a;
+    int n = g.numNodes();
+    for(int i = 0; i < n; i++)   // a different wind: turned and slower
+    {
+        b.u0[i] = 0.6 * a.v0[i];
+        b.v0[i] = -0.6 * a.u0[i];
+    }
+    auto fresh = [&](const ::mass_selftest::Wind &in, std::vector<double> &u) {
+        std::vector<double> v(n), w(n);
+        u.resize(n);
+        SolveMassWindOnGpu(*c, g, in.u0.data(), in.v0.data(), in.w0.data(), in.alphaV.data(),
+                           in.alphaH, MassSolveOptions(), u.data(), v.data(), w.data());
+    };
+    std::vector<double> ua, ub;
+    fresh(a, ua);
+    fresh(b, ub);
+
+    MassGpuSolver solver(*c, g);
+    std::vector<double> u(n), v(n), w(n);
+    int differ = 0;
+    for(const ::mass_selftest::Wind *in : {&a, &b, &a})
+    {
+        solver.solve(in->u0.data(), in->v0.data(), in->w0.data(), in->alphaV.data(), in->alphaH,
+                     MassSolveOptions(), u.data(), v.data(), w.data());
+        differ += u != (in == &a ? ua : ub);
+    }
+    BOOST_CHECK_EQUAL(differ, 0);
+    BOOST_CHECK(ua != ub);
+}
+
 // Not in ctest: the whole GPU solve at the fine-mesh size, against the CPU
 // solver on the same system.  --run_test=gpu/mass_pcg_timing --log_level=message
 BOOST_AUTO_TEST_CASE( mass_pcg_timing )

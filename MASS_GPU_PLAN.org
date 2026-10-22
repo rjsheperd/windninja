@@ -707,11 +707,35 @@ Not done: =SolveMassDemKeptOnGpu= builds the GPU geometry and pipelines
 twice (once in =SolveMassWindKeptOnGpu=), ~10–20 ms; Phase 4 reuses them.
 
 * Phase 4: Repeated solves
-** TODO 4.1 Warm starts and multi-RHS batching [0/4]
-- [ ] Warm-start point initialization and time series from the previous Φ.
-- [ ] Batched SpMV for k right-hand sides (directions, ensembles).
-- [ ] Add tests: same answers as separate solves; iteration-count drop.
-- [ ] Tests pass / Documentation updates
+** DONE 4.1 Warm starts and multi-RHS batching [5/5]
+Measured first (2026-10-22): point initialization, Missoula Valley, 4
+stations, 250 m mesh (211,200 nodes), trees, 8 threads: *3* matching
+iterations (solves); CG iterations 50/46/46 (CPU SSOR) and 150/140/140
+(GPU). Simulation time 1.185 s CPU, 0.214 s GPU; wall time 5.05 s and 2.82 s
+— ~2.6 s of every run is outside the simulation (startup, station data),
+not the solver. Per GPU solve ~60 ms, of which ~25 ms was creating the
+context, geometry and pipelines again.
+- [X] Reuse what repeats: =MassGpuSolver= (=mass_gpu_solve.h=) keeps the
+      context, geometry, pipelines and buffers across solves on one grid;
+      =ninja= holds one per run (=massGpu=, made on the first GPU solve,
+      replaced if the mesh changes, dropped in =deallocate()=). The free
+      functions wrap it; =SolveMassDemKeptOnGpu= no longer builds the GPU
+      geometry and pipelines twice. Point run: simulation 0.214 → 0.158 s
+      (−26%), outputs byte-identical to before.
+- [X] Warm-start point initialization and time series from the previous Φ:
+      *not done, by decision.* A warm start lands elsewhere inside the 0.1
+      tolerance, so it changes WindNinja's output (the mutation below shows
+      it), to save ~10 ms of a ~50 ms GPU solve (~150 → maybe ~100
+      iterations at ~0.17 ms). Not worth an output change unasked.
+- [X] Batched SpMV for k right-hand sides: *not done, by decision.* No
+      WindNinja workflow solves several right-hand sides on one mesh in
+      one run (armies are separate runs). A better idea for direction
+      sweeps is in Open questions (superposition).
+- [X] Add tests: =gpu/mass_gpu_solver_repeats= (one solver, winds a, b, a:
+      each equal to a fresh solve, exactly). Mutation: carrying the
+      previous Φ over as the start (a warm start) → caught.
+- [X] Tests pass / Documentation updates: 47/47 mass and GPU tests;
+      =share.html=, =solver.html= pass; this entry.
 
 ** TODO 4.2 Better preconditioner (only if Phase 0/2 numbers call for it)
 Multicolour SSOR or a shallow geometric multigrid V-cycle.
@@ -722,6 +746,18 @@ Multicolour SSOR or a shallow geometric multigrid V-cycle.
   no df64 (2.3).
 - Should the browser production path be C++/WASM or =cljs-webgpu=? Decide
   after 3.1, with the jessie-fire-simulation side.
+- Superposition for direction sweeps (an idea, not WindNinja's current
+  behaviour): with uniform vegetation and a domain-average wind, the
+  stiffness matrix doesn't depend on the wind, and the right-hand side is
+  linear in u₀. For a fixed speed the initial profile has the same shape in
+  every direction, so Φ(θ) = cos θ·Φ_east + sin θ·Φ_north, and any number
+  of directions (a fire ensemble) would cost two solves to a tight
+  tolerance. It would not reproduce WindNinja's per-run 0.1-tolerance
+  answers bit for bit (they're solver-dependent at that level, 2.5), so
+  it's a choice for the fire-model side.
+- Wall time outside the solver: ~2.6 s of a point-initialization run
+  (startup, station data) dwarfs the GPU solve (~0.16 s). Worth profiling
+  if the CLI's interactive speed matters.
 
 * Inbox
 Found while working; not part of the current task.
@@ -748,7 +784,7 @@ The symmetric upper-triangle product (=SymmetricMultiply=, formerly
 is why the solve barely speeds up with threads (0.1). Storing the full
 matrix (or the 27-point stencil, as Phase 2 does on the GPU) would let the
 CPU product run fully in parallel too.
-** TODO GPU mass solve: one submit per iteration, and reuse the context
+** TODO GPU mass solve: one submit per iteration (context reuse done in 4.1)
 Each iteration is 5 =Kernel::dispatch= calls, each its own encoder and
 submit (~23 µs + scheduling); ~0.25 ms per iteration on the coarse mesh
 where the arithmetic is ~0.05 ms. Recording all 5 passes (or several

@@ -31,6 +31,7 @@
 #include <string>
 
 #include "gpu_context.h"
+#include "gpu_mass.h"
 #include "mass_dem.h"
 #include "mass_pcg.h"
 
@@ -51,6 +52,49 @@ MassSolveResult SolveMassWindOnGpu(const MassGrid &grid, const double *u0, const
                                    const double *w0, const double *alphaV, double alphaH,
                                    const MassSolveOptions &options, double *u, double *v,
                                    double *w, std::string *adapter = nullptr);
+
+/*
+** The mass solve on the GPU, keeping what repeats across solves on one grid
+** (MASS_GPU_PLAN.org 4.1): the context, the grid's geometry, the pipelines
+** and the buffers.  Point initialization's matching loop and time series
+** solve again and again on one mesh; creating these each time cost ~25 ms
+** of a ~60 ms solve.  Each solve starts from Phi = 0, as the CPU does.
+*/
+class MassGpuSolver
+{
+public:
+    // Its own context; throws gpu::Unavailable without an adapter.
+    explicit MassGpuSolver(const MassGrid &grid);
+    // On an existing context (e.g. one sharing a page's device).
+    MassGpuSolver(gpu::Context &context, const MassGrid &grid);
+
+    gpu::Context &context() { return *context_; }
+    const MassGrid &grid() const { return grid_; }
+
+    // As SolveMassWindOnGpu: u, v, w per node.
+    MassSolveResult solve(const double *u0, const double *v0, const double *w0,
+                          const double *alphaV, double alphaH, const MassSolveOptions &options,
+                          double *u, double *v, double *w);
+    // The same, leaving the wind in wind() (3 * nodes f32, u, v, w slots),
+    // valid until the next solve.
+    MassSolveResult solveKept(const double *u0, const double *v0, const double *w0,
+                              const double *alphaV, double alphaH,
+                              const MassSolveOptions &options);
+    const gpu::Buffer &wind() const { return windOut_; }
+    // WindNinja's output wind from wind() into out (gpu::MassFem::outputWind).
+    void outputWind(const gpu::MassFem::OutputWindParams &params, gpu::Buffer &out);
+
+private:
+    MassGpuSolver(std::unique_ptr<gpu::Context> owned, gpu::Context *context,
+                  const MassGrid &grid);
+
+    std::unique_ptr<gpu::Context> owned_;   // when it made its own
+    gpu::Context *context_;
+    MassGrid grid_;
+    gpu::MassFem fem_;
+    gpu::MassPcg pcg_;
+    gpu::Buffer windIn_, alphaIn_, windOut_;
+};
 
 // The same on an existing context (e.g. one sharing a page's device).
 MassSolveResult SolveMassWindOnGpu(gpu::Context &context, const MassGrid &grid, const double *u0,

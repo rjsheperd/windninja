@@ -732,12 +732,16 @@ bool ninja::solveMassOnGpu(int max_iter, int print_iters, double tol)
         u.allocate(&mesh);           //u is positive toward East
         v.allocate(&mesh);           //v is positive toward North
         w.allocate(&mesh);           //w is positive up
-        std::string adapter;
-        MassSolveResult result = SolveMassWindOnGpu(MassGrid::FromMesh(mesh), &u0(0), &v0(0), &w0(0),
-                                                    &alphaVfield(0), alphaH,
-                                                    massSolveOptions(max_iter, print_iters, tol),
-                                                    &u(0), &v(0), &w(0), &adapter);
-        CPLDebug("NINJA_MASS_SOLVER", "GPU solve on %s", adapter.c_str());
+        //keep the context, geometry and pipelines across this run's solves (point
+        //initialization's matching loop); a new one if the mesh changed
+        MassGrid grid = MassGrid::FromMesh(mesh);
+        if(!massGpu || massGpu->grid().x != grid.x || massGpu->grid().y != grid.y ||
+           massGpu->grid().z != grid.z)
+            massGpu.reset(new MassGpuSolver(grid));
+        MassSolveResult result = massGpu->solve(&u0(0), &v0(0), &w0(0), &alphaVfield(0), alphaH,
+                                                massSolveOptions(max_iter, print_iters, tol),
+                                                &u(0), &v(0), &w(0));
+        CPLDebug("NINJA_MASS_SOLVER", "GPU solve on %s", massGpu->context().adapterName().c_str());
         CPLDebug("NINJA_MASS_SOLVER", "PCG (Jacobi, GPU): %d iterations, relative residual %g, NUMNP %d",
                  result.iterations, result.residual, mesh.NUMNP);
         if(!result.converged)
@@ -2920,6 +2924,9 @@ void ninja::deleteDynamicMemory()
 		PHI=NULL;
 	}
 	massSystem = MassSystem();
+#ifdef WITH_WEBGPU
+	massGpu.reset();
+#endif
 	//if(u)
 	//{	delete[] u;
 	//	u=NULL;
