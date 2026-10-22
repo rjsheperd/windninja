@@ -1,7 +1,12 @@
 #!/bin/bash
 
-# Run one golden case on the WebGPU momentum backend and compare it with the
-# OpenFOAM golden output against GATE 0's tolerances (WEBGPU_PLAN).
+# Run one golden case on the WebGPU momentum backend and check it against the
+# OpenFOAM golden output (WEBGPU_PLAN):
+# - terrain cases with a fine-mesh reference (<terrain>_fine_<direction>):
+#   no worse than OpenFOAM at the same mesh, both compared with OpenFOAM fine
+#   at the 20 ft output (compare_momentum --relative; GATE 2 decision,
+#   2026-10-21);
+# - otherwise (flat): GATE 0's absolute tolerances.
 #
 # Usage: scripts/check_momentum_gpu_golden.sh <WindNinja_cli> <compare_momentum> <case>
 # Exit: 0 within tolerance, 1 outside it or on error, 77 (ctest skip) when
@@ -36,4 +41,9 @@ if ! MOMENTUM_BACKEND=webgpu MOMENTUM_CASES="^$CASE\$" \
     exit 1
 fi
 grep "RANS" "$OUT/$CASE/metadata.txt"
-"$COMPARE" "$OUT/$CASE" "$GOLDEN/$CASE" $MAX_SPEED_RMSE $MAX_DIRECTION $MAX_K_RMSE
+FINE="$(echo "$CASE" | sed -E 's/_(coarse|medium)_/_fine_/')"
+if [ "$FINE" != "$CASE" ] && [ -d "$GOLDEN/$FINE" ]; then
+    "$COMPARE" --relative "$OUT/$CASE" "$GOLDEN/$CASE" "$GOLDEN/$FINE"
+else
+    "$COMPARE" "$OUT/$CASE" "$GOLDEN/$CASE" $MAX_SPEED_RMSE $MAX_DIRECTION $MAX_K_RMSE
+fi

@@ -424,11 +424,16 @@ if(WITH_WEBGPU)
                              SKIP_REGULAR_EXPRESSION "SKIP: no WebGPU adapter")
     endforeach(gputest)
     if(NINJAFOAM AND NINJA_CLI)
-        # the WebGPU backend against OpenFOAM's golden output, GATE 0
-        # tolerances.  Only the cases that pass today: ridge_coarse_270 and
-        # big_butte_small_coarse_270 fail on the shared RANS numerics (the
-        # CPU backend fails them the same way; WEBGPU_PLAN 2.5 / 4.4).
-        foreach(goldencase flat_coarse_270)
+        # the WebGPU backend against OpenFOAM's golden output: flat with
+        # GATE 0's tolerances; terrain no worse than OpenFOAM at the same
+        # mesh, against OpenFOAM's fine mesh (scripts/check_momentum_gpu_golden.sh).
+        # Not ridge_coarse_270: OpenFOAM's own solution there doesn't settle.
+        foreach(goldencase flat_coarse_270
+                           big_butte_small_coarse_0 big_butte_small_coarse_135
+                           big_butte_small_coarse_270 big_butte_small_medium_0
+                           big_butte_small_medium_135 big_butte_small_medium_270)
+            # (not mackay_small_coarse_270 yet: its fine OpenFOAM reference
+            # needs DEM-smoothing retries, so there is no fair one)
             add_test(NAME momentum_gpu_golden_${goldencase}
                      COMMAND ${PROJECT_SOURCE_DIR}/scripts/check_momentum_gpu_golden.sh
                              $<TARGET_FILE:WindNinja_cli> $<TARGET_FILE:compare_momentum>
@@ -454,6 +459,12 @@ add_test(momentum_compare_circular_difference_wraps
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/circular_difference_wraps)
 add_test(momentum_compare_relative_rmse
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/relative_rmse)
+add_test(momentum_compare_resample_linear_exact
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/resample_linear_exact)
+add_test(momentum_compare_resampled_identity_golden_case
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/resampled_identity_golden_case)
+add_test(momentum_compare_resampled_matches_independent_check
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/resampled_matches_independent_check)
 add_test(momentum_compare_no_data_skipped
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=momentum_compare/no_data_skipped)
 add_test(momentum_compare_mismatched_size_throws

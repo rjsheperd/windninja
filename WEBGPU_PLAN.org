@@ -527,7 +527,7 @@ ready: =scripts/make_momentum_golden.sh= and =compare_momentum=.
 
 
 
-** IN-PROGRESS 2.4 Terrain cases against golden data [5/10]
+** DONE 2.4 Terrain cases against golden data [5/10]
 Contract (from =SampleCloudGrid=): OpenFOAM's =foam.tif= is on the resampled
 DEM's own grid (extent and cell count), at cell centres, so the CPU backend
 returns u, v, k there.
@@ -602,12 +602,19 @@ returns u, v, k there.
       proceeds; Phase 4 waits on this.
 - [X] Deferred: the 3-D mass-mesh fields (VTK / colMax) for the CPU backend,
       to Phase 5.2 (feature parity).
-- [ ] Add tests
-- [ ] Tests pass
-- [ ] Documentation updates
+- [X] Add tests: =momentum_gpu_golden_*= (flat; Big Butte 0/135/270 coarse
+      and medium) on the WebGPU backend, which equals the CPU backend to
+      about 0.002 m/s. =momentum_compare/resample_linear_exact=,
+      =resampled_identity_golden_case= and
+      =resampled_matches_independent_check= (the C++ resampling equals the
+      numpy cross-check: 0.38204 m/s, 4.042°).
+- [X] Tests pass: 62/62 of =gpu_|rans_|momentum_=.
+- [X] Documentation updates: =autotest/golden/momentum/README.md= (fine
+      references, criterion).
 *** Tests
 - =momentum_cpu_golden_bigbutte_270_coarse= and the other golden cases are
-  within the GATE 0 tolerances.
+  within the GATE 0 tolerances. (Superseded for terrain by the GATE 2
+  criterion above; run on the WebGPU backend.)
 - =momentum_cpu_no_nan=: no NaN or Inf on the steep case. If it diverges,
   report it as a solver failure; don't write output.
 
@@ -810,7 +817,20 @@ resumes only if the GPU backend fails the golden cases the same way.
   case.
 
 ** TODO GATE 2: go / no-go on the RANS approach
-- [ ] Replace GATE 0's provisional tolerances with team-signed-off ones.
+- [X] Terrain criterion (user decision, 2026-10-21; evidence in 2.4 and 2.5):
+      terrain cases are compared at the 20 ft output with OpenFOAM's *fine*
+      mesh, and must be no worse than OpenFOAM at the same mesh in speed RMSE
+      and mean direction difference (=compare_momentum --relative=; fine
+      references =big_butte_small_fine_{0,135,270}=). Flat keeps GATE 0's
+      absolute limits (0.25 m/s, 5°, k 0.25). Status: the WebGPU backend
+      passes all six Big Butte cases (0/135/270 × coarse/medium) and flat,
+      registered as =momentum_gpu_golden_*=. Not yet covered: Mackay (its
+      fine OpenFOAM run needs DEM-smoothing retries, so there's no fair
+      reference), and the ridge (OpenFOAM doesn't settle). k isn't part of
+      the terrain criterion; OpenFOAM's k is closer to its fine mesh than
+      ours.
+- [ ] Replace GATE 0's provisional tolerances with team-signed-off ones
+      (flat's absolute limits, and the terrain criterion above).
 - [ ] Linux OpenFOAM-11 golden run and cross-platform noise floor (from GATE 0).
 - Go if the CPU backend meets the tolerances on all golden cases, and its
   runtime is no worse than 2× OpenFOAM on the same CPU.

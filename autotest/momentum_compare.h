@@ -39,7 +39,9 @@ struct CompareGrid
     int nCols;
     int nRows;
     double noData;
-    std::vector<double> values;
+    std::vector<double> values;   // row 0 is north
+    double xll = 0.0, yll = 0.0;  // lower-left corner
+    double cellSize = 0.0;
 };
 
 struct MomentumMetrics
@@ -68,5 +70,21 @@ CompareGrid ReadCompareGrid(const std::string &path);
 ** directories (see autotest/golden/momentum/README.md).  b is the reference.
 */
 MomentumMetrics CompareMomentumCases(const std::string &a, const std::string &b);
+
+/*
+** src resampled bilinearly at target's cell centres (into target's layout,
+** no-data NaN).  Cells outside src's centres, or next to its no-data, are
+** NaN.
+*/
+CompareGrid ResampleTo(const CompareGrid &src, const CompareGrid &target);
+
+/*
+** As CompareMomentumCases, but the reference b may be on another grid (a
+** finer mesh): its 20 ft wind is resampled onto a's cells through the u and
+** v components.  A rim of `rim` cells of a is left out.  k is not compared
+** (kRelativeRmse is NaN): k.asc is first-cell k, at mesh-dependent heights.
+*/
+MomentumMetrics CompareMomentumCasesResampled(const std::string &a, const std::string &b,
+                                              int rim = 2);
 
 #endif /* MOMENTUM_COMPARE_H */

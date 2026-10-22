@@ -1,0 +1,21 @@
+case: big_butte_small_fine_270
+dem: big_butte_small.tif
+mesh_choice: fine
+input: 10 mph from 270 deg at 20 ft, grass
+number_of_iterations: 300
+mesh_resolution_m: 25.19
+refinement_rounds: 2
+first_cell_height_m: 25.19
+output_height_resolved: no
+openfoam_version: 11
+windninja_commit: 60793e4bdbb01ab3df9d8c795162528fe3dfde50
+platform: Darwin arm64
+retries: 0
+final_time: 352s
+final_initial_residuals:
+  k: 0.0002190777033
+  Ux: 3.391268142e-05
+  Uy: 0.0002561568781
+  Uz: 9.898737477e-05
+  p: 0.002913319193
+  epsilon: 0.0001384970463

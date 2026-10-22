@@ -21,6 +21,24 @@ Each case directory holds:
 All cases are 10 mph at 20 ft over grass, domain average initialization, 300
 iterations and 2 processes.
 
+Fine-mesh references
+--------------------
+
+`big_butte_small_fine_{0,135,270}` are OpenFOAM's fine mesh (25 m). They
+are the reference for the terrain criterion (WEBGPU_PLAN GATE 2, decided
+2026-10-21). On steep terrain, OpenFOAM's own coarse and medium results
+differ by 0.38–0.47 m/s at 20 ft, so matching OpenFOAM at the same mesh
+within GATE 0's 0.25 m/s would mean reproducing its mesh error. Instead, a
+new backend's terrain result is compared with the fine mesh at the 20 ft
+output and must be no worse than OpenFOAM at the same mesh, in speed RMSE
+and mean direction difference:
+
+    compare_momentum --relative CASE_DIR big_butte_small_coarse_270 big_butte_small_fine_270
+
+Fine cases keep only `vel` and `ang`, as compressed GeoTIFFs (`vel.tif`,
+`ang.tif`). There's no Mackay fine reference: OpenFOAM needs 3 retries
+there, and each retry smooths the DEM, so it wouldn't be the same terrain.
+
 Regenerating
 ------------
 

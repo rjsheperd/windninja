@@ -26,6 +26,7 @@
 
 #include "momentum_compare.h"
 
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -112,6 +113,62 @@ BOOST_AUTO_TEST_CASE( mismatched_size_throws )
     CompareGrid a = MakeGrid({1.0, 2.0});
     CompareGrid b = MakeGrid({1.0, 2.0, 3.0});
     BOOST_CHECK_THROW(Rmse(a, b), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_CASE( resample_linear_exact )
+{
+    // f = 2x + 3y at cell centres of a 10 x 8 grid of 10 m cells
+    CompareGrid src;
+    src.nCols = 10; src.nRows = 8; src.noData = -9999.0;
+    src.xll = 1000.0; src.yll = 2000.0; src.cellSize = 10.0;
+    for(int r = 0; r < src.nRows; r++)
+        for(int c = 0; c < src.nCols; c++)
+        {
+            double x = src.xll + (c + 0.5) * 10.0, y = src.yll + (src.nRows - r - 0.5) * 10.0;
+            src.values.push_back(2.0 * x + 3.0 * y);
+        }
+    // a coarser, offset target partly outside src's cell centres
+    CompareGrid target;
+    target.nCols = 9; target.nRows = 7; target.noData = -9999.0;
+    target.xll = 1001.0; target.yll = 2002.0; target.cellSize = 13.0;
+    target.values.assign(9 * 7, 0.0);
+    CompareGrid out = ResampleTo(src, target);
+    int inside = 0;
+    for(int r = 0; r < target.nRows; r++)
+        for(int c = 0; c < target.nCols; c++)
+        {
+            double x = target.xll + (c + 0.5) * 13.0, y = target.yll + (target.nRows - r - 0.5) * 13.0;
+            double v = out.values[(size_t)r * target.nCols + c];
+            bool in = x >= 1005.0 && x <= 1095.0 && y >= 2005.0 && y <= 2075.0;
+            if(in)
+            {
+                BOOST_CHECK_SMALL(v - (2.0 * x + 3.0 * y), 1e-9);
+                inside++;
+            }
+            else
+                BOOST_CHECK(std::isnan(v));
+        }
+    BOOST_CHECK_GT(inside, 20);
+}
+
+BOOST_AUTO_TEST_CASE( resampled_identity_golden_case )
+{
+    std::string c = GoldenCase("big_butte_small_coarse_270");
+    MomentumMetrics m = CompareMomentumCasesResampled(c, c);
+    BOOST_CHECK_SMALL(m.speedRmse, 1e-9);
+    BOOST_CHECK_SMALL(m.directionMeanAbs, 1e-6);
+    BOOST_CHECK(std::isnan(m.kRelativeRmse));
+}
+
+BOOST_AUTO_TEST_CASE( resampled_matches_independent_check )
+{
+    // OpenFOAM coarse vs medium at 20 ft, cross-checked with an independent
+    // numpy implementation (WEBGPU_PLAN 2.4: 0.382 m/s, 4.04 deg)
+    MomentumMetrics m = CompareMomentumCasesResampled(GoldenCase("big_butte_small_coarse_270"),
+                                                      GoldenCase("big_butte_small_medium_270"));
+    BOOST_TEST_MESSAGE("speed RMSE " << m.speedRmse << ", direction " << m.directionMeanAbs);
+    BOOST_CHECK_CLOSE(m.speedRmse, 0.382, 1.0);
+    BOOST_CHECK_CLOSE(m.directionMeanAbs, 4.04, 1.0);
 }
 
 BOOST_AUTO_TEST_CASE( no_valid_cells_throws )

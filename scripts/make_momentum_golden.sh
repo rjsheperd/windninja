@@ -13,6 +13,10 @@
 #   vel.asc, ang.asc     - WindNinja_cli ascii speed (mph) and direction output
 #   metadata.txt         - versions, settings, final residuals and retries
 #
+# Fine-mesh cases (*_fine_*) are references for the terrain criterion
+# (compare_momentum --relative): they keep only vel and ang, as compressed
+# GeoTIFFs (vel.tif, ang.tif), since their ASCII grids are large.
+#
 # Usage:
 #   source <openfoam>/etc/bashrc
 #   scripts/make_momentum_golden.sh <path/to/WindNinja_cli> [OUT_DIR]
@@ -184,6 +188,22 @@ EOF
         grep 'Initial residual' "$case_dir/log.simpleFoam" | tail -6 |
             sed -E 's/.*Solving for ([A-Za-z]+), Initial residual = ([^,]+),.*/  \1: \2/'
     } > "$out/metadata.txt"
+    compress_fine "$name" "$out"
+}
+
+# Fine-mesh references keep only vel and ang, compressed.
+compress_fine()
+{
+    local name="$1" out="$2"
+    if [[ "$name" != *_fine_* ]]; then
+        return
+    fi
+    for grid in vel ang; do
+        gdal_translate -q -of GTiff -ot Float32 -co COMPRESS=DEFLATE -co PREDICTOR=3 \
+                       "$out/$grid.asc" "$out/$grid.tif"
+        rm -f "$out/$grid.asc"
+    done
+    rm -f "$out/u.asc" "$out/v.asc" "$out/k.asc"
 }
 
 for mesh in coarse medium; do
@@ -195,5 +215,14 @@ done
 run_case "mackay_small_coarse_270" "$WINDNINJA_DATA/mackay_small.tif" coarse 270
 run_case "flat_coarse_270" "$WORK_DIR/flat.tif" coarse 270
 run_case "ridge_coarse_270" "$WORK_DIR/ridge.tif" coarse 270
+# fine-mesh references for the terrain criterion (OpenFOAM only)
+if [ "$BACKEND" = openfoam ]; then
+    for direction in 270 0 135; do
+        run_case "big_butte_small_fine_${direction}" \
+                 "$WINDNINJA_DATA/big_butte_small.tif" fine "$direction"
+    done
+    # (no mackay_small_fine_270: OpenFOAM needs 3 retries there, each on a
+    # smoothed DEM, so the reference wouldn't be the same terrain)
+fi
 
 echo "Golden output written to $OUT_DIR"
