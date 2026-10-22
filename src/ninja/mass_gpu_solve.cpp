@@ -26,24 +26,41 @@
 
 #include "mass_gpu_solve.h"
 
-#include <algorithm>
+#include <stdexcept>
 #include <vector>
 
 #include "gpu_context.h"
 #include "gpu_mass.h"
 
-MassSolveResult SolveMassOnGpu(int ncols, int nrows, int nlayers, const MassSystem &system,
-                               double *phi, const MassSolveOptions &options,
-                               std::string *adapter)
+MassSolveResult SolveMassWindOnGpu(const MassGrid &grid, const double *u0, const double *v0,
+                                   const double *w0, const double *alphaV, double alphaH,
+                                   const MassSolveOptions &options, double *u, double *v,
+                                   double *w, std::string *adapter)
 {
     gpu::Context context;
     if(adapter)
         *adapter = context.adapterName();
-    gpu::MassPcg pcg(context, gpu::PackMassStencil(ncols, nrows, nlayers, system.SK.data(),
-                                                   system.col_ind.data(),
-                                                   system.row_ptr.data()));
-    const std::size_t n = system.RHS.size();
-    std::vector<double> x(phi, phi + n);
+    const std::size_t n = grid.numNodes();
+    gpu::MassFem fem(context, gpu::MakeMassGeometry(grid.ncols, grid.nrows, grid.nlayers,
+                                                    grid.x.data(), grid.y.data(), grid.z.data()));
+    gpu::MassPcg pcg(context, grid.ncols, grid.nrows, grid.nlayers);
+
+    std::vector<float> wind(3 * n), alpha(alphaV, alphaV + n);
+    for(std::size_t i = 0; i < n; i++)
+    {
+        wind[i] = (float)u0[i];
+        wind[n + i] = (float)v0[i];
+        wind[2 * n + i] = (float)w0[i];
+    }
+    gpu::Buffer windIn(context, 3 * n * sizeof(float)), alphaIn(context, n * sizeof(float)),
+        windOut(context, 3 * n * sizeof(float));
+    windIn.upload(wind);
+    alphaIn.upload(alpha);
+    pcg.solution().upload(std::vector<float>(n, 0.0f));
+    fem.assemble(windIn, alphaIn, (float)alphaH, pcg.coefficients(), pcg.rhs());
+    if(fem.foldedElements())
+        throw std::runtime_error("Volume Jacobian 1 is zero or negative.");   // as AssembleMass
+
     double startResidual = -1.0;
     auto onCheck = [&](int iteration, double residual) {
         if(startResidual < 0.0)
@@ -53,10 +70,16 @@ MassSolveResult SolveMassOnGpu(int ncols, int nrows, int nlayers, const MassSyst
         if(options.progress)
             options.progress(iteration, residual, startResidual);
     };
-    const int checkEvery = 10;
-    gpu::MassPcg::Result r = pcg.solve(system.RHS, x, options.tol, options.maxIterations,
-                                       checkEvery, onCheck);
-    std::copy(x.begin(), x.end(), phi);
+    gpu::MassPcg::Result r = pcg.solveOnDevice(options.tol, options.maxIterations, 10, onCheck);
+
+    fem.recover(pcg.solution(), windIn, alphaIn, (float)alphaH, windOut);
+    windOut.download(wind.data(), 3 * n * sizeof(float));
+    for(std::size_t i = 0; i < n; i++)
+    {
+        u[i] = wind[i];
+        v[i] = wind[n + i];
+        w[i] = wind[2 * n + i];
+    }
 
     MassSolveResult result;
     result.iterations = r.iterations;

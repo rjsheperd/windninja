@@ -123,6 +123,9 @@ public:
     void upload(const void *data, std::size_t bytes, std::size_t offset = 0);
     // Copies bytes from offset back through a staging buffer.
     void download(void *data, std::size_t bytes, std::size_t offset = 0);
+    // Queues a GPU-side copy of the first bytes of from into this buffer
+    // (a multiple of 4).
+    void copyFrom(const Buffer &from, std::size_t bytes);
 
     template <typename T> void upload(const std::vector<T> &v)
     {

@@ -423,7 +423,10 @@ private:
 
     double getSmallestRadiusOfInfluence();
     void get_rootname(const char *NAME,char *shortname);
+    MassSolveOptions massSolveOptions(int MAXITS, int print_iters, double stop_tol);
     bool solve(const MassSystem &system, double *PHI, int NUMNP, int MAXITS, int print_iters, double stop_tol);
+    bool useGpuMass() const;
+    bool solveMassOnGpu(int MAXITS, int print_iters, double stop_tol);
 
     /*-----------------------------------------------------------------------------
      * alternative solvers                                                           
@@ -480,7 +483,7 @@ private:
     //double stability_function(double z_over_L, double L_switch);
     bool writePrjFile(std::string inPrjString, std::string outFileName);
     bool checkForNullRun();
-    void discretize(); 
+    void discretize(bool assemble = true);
     void computeUVWField();
     void prepareOutput();
     bool matched(int iter);

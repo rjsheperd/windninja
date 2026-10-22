@@ -32,17 +32,21 @@
 #include "mass_pcg.h"
 
 /*
-** SolveMassPcg's job on the GPU (gpu::MassPcg, Jacobi-preconditioned, f32):
-** packs the system into the stencil, solves from phi and copies the answer
-** back.  options.jacobi is ignored (always Jacobi); progress and
-** checkCancel run at each residual check (every 10 iterations).  Throws
-** gpu::Unavailable when there is no WebGPU adapter, gpu::Error on GPU
-** failures.  In f32 the true residual is reliable only down to tol ~ 1e-2
-** (gpu::MassPcg); WindNinja uses 0.1.  adapter, if given, receives the adapter's name.  Free of
-** WindNinja core.
+** The mass solver's whole job on the GPU, wind in and wind out: builds the
+** system from the grid, the initial wind (u0, v0, w0) and alphaV
+** (gpu::MassFem), solves for Phi from zero (gpu::MassPcg, Jacobi, f32) and
+** recovers u, v, w (all per node, MassGrid's order).  As AssembleMass,
+** SolveMassPcg and RecoverVelocity on the CPU; options.jacobi is ignored
+** (always Jacobi); progress and checkCancel run at each residual check
+** (every 10 iterations).  In f32 the residual is reliable down to tol ~
+** 1e-2 (gpu::MassPcg); WindNinja uses 0.1.  A folded element throws
+** std::runtime_error, as AssembleMass.  Throws gpu::Unavailable when
+** there is no WebGPU adapter, gpu::Error on GPU failures.  adapter, if
+** given, receives the adapter's name.  Free of WindNinja core.
 */
-MassSolveResult SolveMassOnGpu(int ncols, int nrows, int nlayers, const MassSystem &system,
-                               double *phi, const MassSolveOptions &options,
-                               std::string *adapter = nullptr);
+MassSolveResult SolveMassWindOnGpu(const MassGrid &grid, const double *u0, const double *v0,
+                                   const double *w0, const double *alphaV, double alphaH,
+                                   const MassSolveOptions &options, double *u, double *v,
+                                   double *w, std::string *adapter = nullptr);
 
 #endif /* MASS_GPU_SOLVE_H */

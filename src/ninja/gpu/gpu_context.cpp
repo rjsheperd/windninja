@@ -372,6 +372,18 @@ void Buffer::download(void *data, std::size_t bytes, std::size_t offset)
         throw Error("WebGPU readback: " + error);
 }
 
+void Buffer::copyFrom(const Buffer &from, std::size_t bytes)
+{
+    if(bytes % 4 != 0 || bytes > size_ || bytes > from.size())
+        throw Error("WebGPU: buffer copy of " + std::to_string(bytes) + " bytes out of range");
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(context_.device(), nullptr);
+    wgpuCommandEncoderCopyBufferToBuffer(encoder, from.handle(), 0, buffer_, 0, bytes);
+    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
+    wgpuQueueSubmit(context_.queue(), 1, &commands);
+    wgpuCommandBufferRelease(commands);
+    wgpuCommandEncoderRelease(encoder);
+}
+
 Kernel::Kernel(Context &context, const char *wgsl, const char *entryPoint)
     : context_(context)
 {

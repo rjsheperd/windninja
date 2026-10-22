@@ -91,17 +91,23 @@ MassStencil PackMassStencil(int ncols, int nrows, int nlayers, const double *SK,
     return st;
 }
 
-MassOperator::MassOperator(Context &context, const MassStencil &stencil)
-    : context_(context), nodes_(stencil.nodes()),
+MassOperator::MassOperator(Context &context, int ncols, int nrows, int nlayers)
+    : context_(context), nodes_((std::size_t)ncols * nrows * nlayers),
       params_(context, sizeof(Params), Buffer::Uniform),
-      coef_(context, stencil.coef.size() * sizeof(float)),
+      coef_(context, MassStencil::slots * nodes_ * sizeof(float)),
       kernel_(context, kernels::massApply)
 {
-    if(stencil.coef.size() != MassStencil::slots * nodes_ || nodes_ > UINT32_MAX)
-        throw Error("gpu::MassOperator: stencil size doesn't match its grid");
-    Params p = {(uint32_t)stencil.ncols, (uint32_t)stencil.nrows, (uint32_t)stencil.nlayers,
-                (uint32_t)nodes_};
+    if(nodes_ > UINT32_MAX)
+        throw Error("gpu::MassOperator: too many nodes");
+    Params p = {(uint32_t)ncols, (uint32_t)nrows, (uint32_t)nlayers, (uint32_t)nodes_};
     params_.upload(&p, sizeof p);
+}
+
+MassOperator::MassOperator(Context &context, const MassStencil &stencil)
+    : MassOperator(context, stencil.ncols, stencil.nrows, stencil.nlayers)
+{
+    if(stencil.coef.size() != MassStencil::slots * nodes_)
+        throw Error("gpu::MassOperator: stencil size doesn't match its grid");
     coef_.upload(stencil.coef);
 }
 
@@ -131,12 +137,12 @@ std::string pcgSource(const char *stage)
 
 } // namespace
 
-MassPcg::MassPcg(Context &context, const MassStencil &stencil)
-    : context_(context), nodes_(stencil.nodes()),
-      gx_(0), gy_(0), op_(context, stencil),
+MassPcg::MassPcg(Context &context, int ncols, int nrows, int nlayers)
+    : context_(context), nodes_((std::size_t)ncols * nrows * nlayers),
+      gx_(0), gy_(0), op_(context, ncols, nrows, nlayers),
       params_(context, sizeof(PcgParams), Buffer::Uniform),
       startParams_(context, sizeof(PcgParams), Buffer::Uniform),
-      invDiag_(context, nodes_ * sizeof(float)), x_(context, nodes_ * sizeof(float)),
+      b_(context, nodes_ * sizeof(float)), x_(context, nodes_ * sizeof(float)),
       r_(context, nodes_ * sizeof(float)), z_(context, nodes_ * sizeof(float)),
       p_(context, nodes_ * sizeof(float)), q_(context, nodes_ * sizeof(float)),
       scalars_(context, SCALARS * sizeof(float)),
@@ -145,26 +151,25 @@ MassPcg::MassPcg(Context &context, const MassStencil &stencil)
       apply_(context, pcgSource(kernels::massPcgApply).c_str()),
       alpha_(context, pcgSource(kernels::massPcgAlpha).c_str()),
       update_(context, pcgSource(kernels::massPcgUpdate).c_str()),
-      beta_(context, pcgSource(kernels::massPcgBeta).c_str())
+      beta_(context, pcgSource(kernels::massPcgBeta).c_str()),
+      reducer_(context)
 {
     std::size_t groups = (nodes_ + 255) / 256;
     gx_ = (uint32_t)(groups < maxGroupsX ? groups : maxGroupsX);
     gy_ = (uint32_t)((groups + gx_ - 1) / gx_);
-    PcgParams pp = {(uint32_t)stencil.ncols, (uint32_t)stencil.nrows, (uint32_t)stencil.nlayers,
+    PcgParams pp = {(uint32_t)ncols, (uint32_t)nrows, (uint32_t)nlayers,
                     (uint32_t)nodes_, gx_ * gy_, 0, 0, 0};
     params_.upload(&pp, sizeof pp);
     pp.start = 1;
     startParams_.upload(&pp, sizeof pp);
+}
 
-    std::vector<float> inv(nodes_);
-    for(std::size_t n = 0; n < nodes_; n++)
-    {
-        float d = stencil.coef[n];
-        if(!(d > 0.0f))
-            throw Error("gpu::MassPcg: non-positive diagonal at node " + std::to_string(n));
-        inv[n] = 1.0f / d;
-    }
-    invDiag_.upload(inv);
+MassPcg::MassPcg(Context &context, const MassStencil &stencil)
+    : MassPcg(context, stencil.ncols, stencil.nrows, stencil.nlayers)
+{
+    if(stencil.coef.size() != MassStencil::slots * nodes_)
+        throw Error("gpu::MassPcg: stencil size doesn't match its grid");
+    op_.coefficients().upload(stencil.coef);
 }
 
 void MassPcg::dispatchNodes(Kernel &kernel, const std::vector<const Buffer *> &bindings)
@@ -187,24 +192,32 @@ MassPcg::Result MassPcg::solve(const std::vector<double> &b, std::vector<double>
 {
     if(b.size() != nodes_ || x.size() != nodes_)
         throw Error("gpu::MassPcg::solve: vectors don't match the grid");
+    std::vector<float> xf(x.begin(), x.end()), bf(b.begin(), b.end());
+    x_.upload(xf);
+    b_.upload(bf);
+    Result result = solveOnDevice(tol, maxIterations, checkEvery, onCheck);
+    x_.download(xf.data(), nodes_ * sizeof(float));
+    x.assign(xf.begin(), xf.end());
+    return result;
+}
+
+MassPcg::Result MassPcg::solveOnDevice(double tol, int maxIterations, int checkEvery,
+                                       const std::function<void(int, double)> &onCheck)
+{
     if(checkEvery < 1)
         checkEvery = 1;
-    double normb = 0.0;
-    for(double v : b)
-        normb += v * v;
-    normb = std::sqrt(normb);
+    double normb = std::sqrt(reducer_.sum(b_, 0, nodes_, true));
     if(normb == 0.0)
         normb = 1.0;
 
     // start: q = A x, r = b - q, z = r / diag, rho = z.r; p holds b until
     // the first direction, and rho starts at infinity so that beta = 0.
-    std::vector<float> xf(x.begin(), x.end()), bf(b.begin(), b.end());
-    x_.upload(xf);
-    p_.upload(bf);
+    p_.copyFrom(b_, nodes_ * sizeof(float));
     float scalars[SCALARS] = {INFINITY, 0, 0, 0, 0, 0, 0, 0};
     scalars_.upload(scalars, sizeof scalars);
     op_.apply(x_, q_);
-    dispatchNodes(update_, {&startParams_, &scalars_, &x_, &p_, &q_, &r_, &invDiag_, &z_, &partials_});
+    const Buffer &coef = op_.coefficients();
+    dispatchNodes(update_, {&startParams_, &scalars_, &x_, &p_, &q_, &r_, &coef, &z_, &partials_});
     beta_.dispatch({&params_, &partials_, &scalars_}, 1);
 
     Result result;
@@ -212,9 +225,9 @@ MassPcg::Result MassPcg::solve(const std::vector<double> &b, std::vector<double>
     for(int i = 1; i <= maxIterations && result.residual > tol; i++)
     {
         dispatchNodes(direction_, {&params_, &scalars_, &z_, &p_});
-        dispatchNodes(apply_, {&params_, &op_.coefficients(), &p_, &q_, &partials_});
+        dispatchNodes(apply_, {&params_, &coef, &p_, &q_, &partials_});
         alpha_.dispatch({&params_, &partials_, &scalars_}, 1);
-        dispatchNodes(update_, {&params_, &scalars_, &x_, &p_, &q_, &r_, &invDiag_, &z_, &partials_});
+        dispatchNodes(update_, {&params_, &scalars_, &x_, &p_, &q_, &r_, &coef, &z_, &partials_});
         beta_.dispatch({&params_, &partials_, &scalars_}, 1);
         result.iterations = i;
         if(i % checkEvery == 0 || i == maxIterations)
@@ -225,9 +238,6 @@ MassPcg::Result MassPcg::solve(const std::vector<double> &b, std::vector<double>
         }
     }
     result.converged = result.residual <= tol;
-
-    x_.download(xf.data(), nodes_ * sizeof(float));
-    x.assign(xf.begin(), xf.end());
     return result;
 }
 
@@ -267,7 +277,7 @@ MassFem::MassFem(Context &context, const MassGeometry &geometry)
     : context_(context), nodes_(geometry.nodes()), ncols_(geometry.ncols),
       nrows_(geometry.nrows), nlayers_(geometry.nlayers),
       params_(context, sizeof(AssembleParams), Buffer::Uniform),
-      xyz_(context, geometry.xyz.size() * sizeof(float)),
+      xyz_(context, geometry.xyz.size() * sizeof(float)), folded_(context, sizeof(uint32_t)),
       assemble_(context, (std::string(kernels::massFemPrelude) + kernels::massAssemble).c_str()),
       recover_(context, (std::string(kernels::massFemPrelude) + kernels::massRecover).c_str())
 {
@@ -294,7 +304,16 @@ void MassFem::assemble(const Buffer &wind0, const Buffer &alphaV, float alphaH, 
     if(wind0.size() < 3 * nodes_ * f || alphaV.size() < nodes_ * f ||
        coef.size() < MassStencil::slots * nodes_ * f || rhs.size() < nodes_ * f)
         throw Error("gpu::MassFem::assemble: buffer shorter than the grid");
-    dispatch(assemble_, {&params_, &xyz_, &wind0, &alphaV, &coef, &rhs}, alphaH);
+    uint32_t zero = 0;
+    folded_.upload(&zero, sizeof zero);
+    dispatch(assemble_, {&params_, &xyz_, &wind0, &alphaV, &coef, &rhs, &folded_}, alphaH);
+}
+
+bool MassFem::foldedElements()
+{
+    uint32_t flag = 0;
+    folded_.download(&flag, sizeof flag);
+    return flag != 0;
 }
 
 void MassFem::recover(const Buffer &phi, const Buffer &wind0, const Buffer &alphaV,

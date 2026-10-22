@@ -29,6 +29,8 @@
 
 #include "ninja.h"
 
+#include <memory>
+
 #ifdef WITH_WEBGPU
 #include "gpu_context.h"
 #include "mass_gpu_solve.h"
@@ -395,8 +397,9 @@ do
 
 		input.Com->ninjaCom(ninjaComClass::ninjaNone, "Building equations...");
 
-		//build A arrray
-		discretize();
+		//build A arrray (on the GPU instead with NINJA_MASS_SOLVER=WEBGPU)
+		const bool gpuMass = useGpuMass();
+		discretize(!gpuMass);
 
         checkCancel();
 
@@ -421,14 +424,20 @@ do
 			startSolve = omp_get_wtime();
 		#endif
 
-		//solver
+		//solver: on the GPU (system, Phi and u,v,w there), else the CPU
+		const bool solvedOnGpu = gpuMass && solveMassOnGpu(MAXITS, print_iters, stop_tol);
+		if(!solvedOnGpu)
+		{
+		    if(gpuMass)   //no adapter: build the system on the CPU after all
+		        massSystem = AssembleMass(MassGrid::FromMesh(mesh), &u0(0), &v0(0), &w0(0),
+		                                  &alphaVfield(0), alphaH);
 
-		//if the CG solver diverges, try the minres solver
-
-		if(solve(massSystem, PHI, mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
-		    if(solveMinres(massSystem.SK.data(), massSystem.RHS.data(), PHI,
-		          massSystem.row_ptr.data(), massSystem.col_ind.data(), mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
-			throw std::runtime_error("Solver returned false.");
+		    //if the CG solver diverges, try the minres solver
+		    if(solve(massSystem, PHI, mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
+		        if(solveMinres(massSystem.SK.data(), massSystem.RHS.data(), PHI,
+		              massSystem.row_ptr.data(), massSystem.col_ind.data(), mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
+		    	throw std::runtime_error("Solver returned false.");
+		}
 
 		#ifdef _OPENMP
 			endSolve = omp_get_wtime();
@@ -442,8 +451,9 @@ do
 /*  COMPUTE UVW WIND FIELD                   */
 /*  ----------------------------------------*/
 
-		 //compute uvw field from phi field
-		 computeUVWField();
+		 //compute uvw field from phi field (the GPU path already has)
+		 if(!solvedOnGpu)
+		     computeUVWField();
 
 		 checkCancel();
 
@@ -632,7 +642,11 @@ double ninja::getSmallestRadiusOfInfluence()
  * @param tol Convergence tolerance to stop at.
  * @return Returns true if solver converges and completes properly.
  */
-bool ninja::solve(const MassSystem &system, double *x, int NUMNP, int max_iter, int print_iters, double tol)
+/**
+ * @brief The mass solver's options: tolerance, iterations, NINJA_MASS_PRECOND,
+ * and the cancel check, warnings and GUI progress through input.Com.
+ */
+MassSolveOptions ninja::massSolveOptions(int max_iter, int print_iters, double tol)
 {
     MassSolveOptions options;
     options.tol = tol;
@@ -644,15 +658,15 @@ bool ninja::solve(const MassSystem &system, double *x, int NUMNP, int max_iter, 
     options.warn = [this](const std::string &message) {
         input.Com->ninjaCom(ninjaComClass::ninjaWarning, message.c_str());
     };
-    double residual_percent_complete_old = -1.;
-    options.progress = [&](int i, double resid, double start_resid) {
+    auto residual_percent_complete_old = std::make_shared<double>(-1.);
+    options.progress = [this, tol, residual_percent_complete_old](int i, double resid, double start_resid) {
 #ifdef NINJA_DEBUG_VERBOSE
         input.Com->ninjaCom(ninjaComClass::ninjaDebug, "Iteration = %d\tResidual = %lf\ttol = %lf", i, resid, tol);
 #endif //NINJA_DEBUG_VERBOSE
         double residual_percent_complete=100-100*((resid-tol)/(start_resid-tol));
 
-        if(residual_percent_complete<residual_percent_complete_old)
-            residual_percent_complete=residual_percent_complete_old;
+        if(residual_percent_complete<*residual_percent_complete_old)
+            residual_percent_complete=*residual_percent_complete_old;
         if(residual_percent_complete<0.)
             residual_percent_complete=0.;
         else if(residual_percent_complete>100.)
@@ -661,7 +675,7 @@ bool ninja::solve(const MassSystem &system, double *x, int NUMNP, int max_iter, 
         double time_percent_complete=1.8*exp(0.0401*residual_percent_complete);
         if(time_percent_complete >= 99.0)
             time_percent_complete = 99.0;
-        residual_percent_complete_old=residual_percent_complete;
+        *residual_percent_complete_old=residual_percent_complete;
         //If its a foam+diurnal run, progressWeight==0.80, which means we need to modify the
         //diurnal time_percent_complete
         if(input.Com->progressWeight!=1.0)
@@ -671,43 +685,77 @@ bool ninja::solve(const MassSystem &system, double *x, int NUMNP, int max_iter, 
         input.Com->ninjaCom(ninjaComClass::ninjaSolverProgress, "%d",(int) (time_percent_complete+0.5)); //Tell the GUI what the percentage to complete for the ninja is
     };
 
-    MassSolveResult result;
-    bool solved = false;
-#ifdef WITH_WEBGPU
-    //NINJA_MASS_SOLVER=WEBGPU solves on the GPU (MASS_GPU_PLAN.org); without an adapter, the CPU
-    if(EQUAL(CPLGetConfigOption("NINJA_MASS_SOLVER", "CPU"), "WEBGPU"))
-    {
-        try
-        {
-            // NINJA_WEBGPU_DISABLE: behave as if there were no adapter (tests)
-            if(CPLTestBool(CPLGetConfigOption("NINJA_WEBGPU_DISABLE", "NO")))
-                throw gpu::Unavailable("WebGPU: no adapter (NINJA_WEBGPU_DISABLE)");
-            std::string adapter;
-            result = SolveMassOnGpu(mesh.ncols, mesh.nrows, mesh.nlayers, system, x, options, &adapter);
-            solved = true;
-            if(CPLGetConfigOption("CPL_DEBUG", nullptr))   // f32 recurrence vs the true residual
-                CPLDebug("NINJA_MASS_SOLVER", "GPU solve on %s, true relative residual %g",
-                         adapter.c_str(), MassRelativeResidual(system, x));
-        }
-        catch(const gpu::Unavailable &e)
-        {
-            input.Com->ninjaCom(ninjaComClass::ninjaWarning,
-                                "Mass solver: %s; solving on the CPU instead.", e.what());
-        }
-    }
-#endif
-    if(!solved)
-        result = SolveMassPcg(system, x, options);
+    return options;
+}
 
-    CPLDebug("NINJA_MASS_SOLVER", "PCG (%s%s): %d iterations, relative residual %g, NUMNP %d",
-             result.jacobi ? "Jacobi" : "SSOR", solved ? ", GPU" : "", result.iterations,
-             result.residual, NUMNP);
+bool ninja::solve(const MassSystem &system, double *x, int NUMNP, int max_iter, int print_iters, double tol)
+{
+    MassSolveResult result = SolveMassPcg(system, x, massSolveOptions(max_iter, print_iters, tol));
+
+    CPLDebug("NINJA_MASS_SOLVER", "PCG (%s): %d iterations, relative residual %g, NUMNP %d",
+             result.jacobi ? "Jacobi" : "SSOR", result.iterations, result.residual, NUMNP);
 
     if(!result.converged)
         throw std::runtime_error("Solution did not converge.\nMAXITS reached.");
 
     input.Com->ninjaCom(ninjaComClass::ninjaSolverProgress, "%d", 100); //When the solver finishes, set it to 100
     return true;
+}
+
+/**
+ * @brief NINJA_MASS_SOLVER=WEBGPU (config option) asks for the mass solver on the GPU.
+ */
+bool ninja::useGpuMass() const
+{
+#ifdef WITH_WEBGPU
+    return EQUAL(CPLGetConfigOption("NINJA_MASS_SOLVER", "CPU"), "WEBGPU");
+#else
+    return false;
+#endif
+}
+
+/**
+ * @brief Builds the system, solves for Phi and computes u, v, w on the GPU
+ * (SolveMassWindOnGpu, MASS_GPU_PLAN.org), from u0, v0, w0 and alphaVfield.
+ *
+ * @return false, with a warning, when there is no WebGPU adapter: the caller
+ * solves on the CPU instead.
+ */
+bool ninja::solveMassOnGpu(int max_iter, int print_iters, double tol)
+{
+#ifdef WITH_WEBGPU
+    try
+    {
+        // NINJA_WEBGPU_DISABLE: behave as if there were no adapter (tests)
+        if(CPLTestBool(CPLGetConfigOption("NINJA_WEBGPU_DISABLE", "NO")))
+            throw gpu::Unavailable("WebGPU: no adapter (NINJA_WEBGPU_DISABLE)");
+        u.allocate(&mesh);           //u is positive toward East
+        v.allocate(&mesh);           //v is positive toward North
+        w.allocate(&mesh);           //w is positive up
+        std::string adapter;
+        MassSolveResult result = SolveMassWindOnGpu(MassGrid::FromMesh(mesh), &u0(0), &v0(0), &w0(0),
+                                                    &alphaVfield(0), alphaH,
+                                                    massSolveOptions(max_iter, print_iters, tol),
+                                                    &u(0), &v(0), &w(0), &adapter);
+        CPLDebug("NINJA_MASS_SOLVER", "GPU solve on %s", adapter.c_str());
+        CPLDebug("NINJA_MASS_SOLVER", "PCG (Jacobi, GPU): %d iterations, relative residual %g, NUMNP %d",
+                 result.iterations, result.residual, mesh.NUMNP);
+        if(!result.converged)
+            throw std::runtime_error("Solution did not converge.\nMAXITS reached.");
+        input.Com->ninjaCom(ninjaComClass::ninjaSolverProgress, "%d", 100);
+        alphaVfield.deallocate();
+        return true;
+    }
+    catch(const gpu::Unavailable &e)
+    {
+        input.Com->ninjaCom(ninjaComClass::ninjaWarning,
+                            "Mass solver: %s; solving on the CPU instead.", e.what());
+        return false;
+    }
+#else
+    (void)max_iter; (void)print_iters; (void)tol;
+    return false;
+#endif
 }
 
 //  MINRES from PetSc (found in google code search)
@@ -1355,7 +1403,7 @@ bool ninja::checkForNullRun()
 /**Function to build discretized equations.
  *
  */
-void ninja::discretize()
+void ninja::discretize(bool assemble)
 {
     //The governing equation to solve is
     //
@@ -1503,9 +1551,10 @@ void ninja::discretize()
 
     CPLDebug("STABILITY", "alphaVfield(0,0,0) = %lf\n", alphaVfield(0,0,0));
 
-    //build the system, boundary conditions included
-    massSystem = AssembleMass(MassGrid::FromMesh(mesh), &u0(0), &v0(0), &w0(0),
-                              &alphaVfield(0), alphaH);
+    //build the system, boundary conditions included (unless the GPU will)
+    if(assemble)
+        massSystem = AssembleMass(MassGrid::FromMesh(mesh), &u0(0), &v0(0), &w0(0),
+                                  &alphaVfield(0), alphaH);
 
      stb.alphaField.deallocate();
 }

@@ -237,7 +237,8 @@ fn main(@builtin(local_invocation_index) lid : u32) {
 }
 )wgsl";
 
-// x += alpha p, r -= alpha q, z = r / diag; partials of z.r and r.r.  With
+// x += alpha p, r -= alpha q, z = r / diag (the stencil's slot 0); partials
+// of z.r and r.r.  With
 // params.pad0 = 1 it is the start instead: r = b - q (q = A x), z = r / diag.
 constexpr const char *massPcgUpdate = R"wgsl(
 @group(0) @binding(1) var<storage, read> scalars : array<f32>;
@@ -245,7 +246,7 @@ constexpr const char *massPcgUpdate = R"wgsl(
 @group(0) @binding(3) var<storage, read> p : array<f32>;
 @group(0) @binding(4) var<storage, read> q : array<f32>;
 @group(0) @binding(5) var<storage, read_write> r : array<f32>;
-@group(0) @binding(6) var<storage, read> invDiag : array<f32>;
+@group(0) @binding(6) var<storage, read> coef : array<f32>;   // slot 0: the diagonal
 @group(0) @binding(7) var<storage, read_write> z : array<f32>;
 @group(0) @binding(8) var<storage, read_write> partials : array<f32>;
 
@@ -267,7 +268,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
             rn = r[n] - alpha * q[n];
         }
         r[n] = rn;
-        let zn = invDiag[n] * rn;
+        let zn = rn / coef[n];
         z[n] = zn;
         zr = zn * rn;
         rr = rn * rn;
@@ -385,12 +386,14 @@ fn element(origin : vec3<i32>) -> Element {
 // side, then Phi = 0 rows and columns on the sides and top.  A gather: each
 // node visits its (up to 8) elements, recomputes each element's centre
 // geometry and adds the element's terms for its own row, keeping only
-// couplings to itself and later nodes (the slots it owns).
+// couplings to itself and later nodes (the slots it owns).  An element with
+// DETJ <= 0 (folded) sets the folded flag; AssembleMass throws for it.
 constexpr const char *massAssemble = R"wgsl(
 @group(0) @binding(2) var<storage, read> wind0 : array<f32>;   // u0, v0, w0 slots
 @group(0) @binding(3) var<storage, read> alphaV : array<f32>;
 @group(0) @binding(4) var<storage, read_write> coef : array<f32>;
 @group(0) @binding(5) var<storage, read_write> rhs : array<f32>;
+@group(0) @binding(6) var<storage, read_write> folded : atomic<u32>;   // set: some DETJ <= 0
 
 // slot of the coupling to the node at offset d (index (d.x+1) + 3 (d.y+1)
 // + 9 (d.z+1)): 0 the diagonal, 1..13 gpu::massOffsets, -1 an earlier node
@@ -434,6 +437,9 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>,
                 continue;
             }
             let el = element(origin);
+            if (!(el.detJ > 0.0)) {
+                atomicStore(&folded, 1u);
+            }
             var hv = 0.0;
             var av = 0.0;
             for (var k = 0u; k < 8u; k++) {

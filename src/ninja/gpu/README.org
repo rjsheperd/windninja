@@ -50,8 +50,9 @@ them (=src/ninja/=):
   sees =Mesh=;
 - =mass_pcg= :: =SolveMassPcg()=, the mass solver's SSOR/Jacobi conjugate
   gradient (with =preconditioner.cpp=);
-- =mass_gpu_solve= :: =SolveMassOnGpu()=, the same job on the GPU
-  (=gpu::MassPcg=). WindNinja uses it when the config option
+- =mass_gpu_solve= :: =SolveMassWindOnGpu()=, the whole mass solve on
+  the GPU, wind in and wind out (=gpu::MassFem= assembles and recovers,
+  =gpu::MassPcg= solves). WindNinja uses it when the config option
   =NINJA_MASS_SOLVER=WEBGPU= is set, and falls back to the CPU when there
   is no adapter (=scripts/check_mass_gpu.sh=).
 

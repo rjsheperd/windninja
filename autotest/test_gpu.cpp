@@ -21,6 +21,7 @@
 #include "gpu_rans.h"
 #include "gpu_reduce.h"
 #include "mass_fem.h"
+#include "mass_gpu_solve.h"
 #include "mass_pcg.h"
 #include "rans_abl.h"
 #include "rans_gpu_bridge.h"
@@ -933,6 +934,81 @@ BOOST_AUTO_TEST_CASE( kernel_mass_recover_matches_cpu )
                        << " (the solve changed u by up to " << change / speed << ")");
     BOOST_REQUIRE_GT(change / speed, 1e-2);   // Phi does something here
     BOOST_CHECK_LT(worst / speed, 1e-5);
+}
+
+// Wind in, wind out on the GPU (SolveMassWindOnGpu: assemble, solve,
+// recover) against the CPU's AssembleMass, SolveMassPcg (Jacobi) and
+// RecoverVelocity, both to 1e-2: within 1e-3 of the max speed (seen 3.9e-4;
+// at 1e-2 the two solves still differ by solver tolerance).  A throwing
+// cancel check stops it.
+BOOST_AUTO_TEST_CASE( mass_wind_matches_cpu )
+{
+    if(context() == nullptr)
+        return;
+    MassGrid g = MassRidgeGrid(40, 33, 12);
+    int n = g.numNodes();
+    std::vector<double> u0(n), v0(n), w0(n), alphaV(n, 1.0);
+    for(int i = 0; i < n; i++)
+    {
+        u0[i] = 5.0 + 0.002 * g.x[i];
+        v0[i] = 1.0 - 0.001 * g.y[i];
+        w0[i] = 0.1 * std::sin(0.01 * i);
+    }
+    MassSolveOptions options;
+    options.tol = 1e-2;
+    options.jacobi = true;
+    MassSystem s = AssembleMass(g, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0);
+    std::vector<double> phi(n, 0.0), u(n), v(n), w(n);
+    SolveMassPcg(s, phi.data(), options);
+    RecoverVelocity(g, phi.data(), u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0,
+                    u.data(), v.data(), w.data());
+
+    std::vector<double> gu(n), gv(n), gw(n);
+    std::string adapter;
+    MassSolveResult r = SolveMassWindOnGpu(g, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0,
+                                           options, gu.data(), gv.data(), gw.data(), &adapter);
+    BOOST_CHECK(r.converged);
+    BOOST_CHECK(r.jacobi);
+    BOOST_CHECK(!adapter.empty());
+    double speed = 0.0, worst = 0.0;
+    for(int i = 0; i < n; i++)
+    {
+        speed = std::max(speed, std::hypot(u0[i], v0[i]));
+        worst = std::max({worst, std::fabs(gu[i] - u[i]), std::fabs(gv[i] - v[i]),
+                          std::fabs(gw[i] - w[i])});
+    }
+    BOOST_TEST_MESSAGE("mass wind: " << r.iterations << " iterations, worst |GPU - CPU| / max speed "
+                       << worst / speed);
+    BOOST_CHECK_LT(worst / speed, 1e-3);
+
+    int calls = 0;
+    options.tol = 1e-6;
+    options.checkCancel = [&]() {
+        if(++calls == 2)
+            throw std::runtime_error("cancelled");
+    };
+    BOOST_CHECK_THROW(SolveMassWindOnGpu(g, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0,
+                                         options, gu.data(), gv.data(), gw.data()),
+                      std::runtime_error);
+    BOOST_CHECK_EQUAL(calls, 2);
+}
+
+// A folded element (top below bottom) is rejected on the GPU as on the CPU.
+BOOST_AUTO_TEST_CASE( mass_wind_folded_throws )
+{
+    if(context() == nullptr)
+        return;
+    MassGrid g = MassRidgeGrid(6, 5, 4);
+    int n = g.numNodes();
+    int layer = g.ncols * g.nrows;
+    for(int i = 0; i < layer; i++)
+        g.z[layer + i] = g.z[i] - 30.0;   // layer 1 below the ground: every element under it folds
+    std::vector<double> u0(n, 5.0), v0(n, 0.0), w0(n, 0.0), alphaV(n, 1.0), u(n), v(n), w(n);
+    BOOST_CHECK_THROW(AssembleMass(g, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0),
+                      std::runtime_error);
+    BOOST_CHECK_THROW(SolveMassWindOnGpu(g, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0,
+                                         MassSolveOptions(), u.data(), v.data(), w.data()),
+                      std::runtime_error);
 }
 
 // Not in ctest: the whole GPU solve at the fine-mesh size, against the CPU

@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "gpu_context.h"
+#include "gpu_reduce.h"
 
 namespace gpu {
 
@@ -69,9 +70,12 @@ class MassOperator
 {
 public:
     MassOperator(Context &context, const MassStencil &stencil);
+    // coefficients() to be filled on the GPU (MassFem::assemble)
+    MassOperator(Context &context, int ncols, int nrows, int nlayers);
 
     std::size_t nodes() const { return nodes_; }
     const Buffer &coefficients() const { return coef_; }
+    Buffer &coefficients() { return coef_; }
 
     // x and y hold at least nodes() floats; queued, not waited on
     void apply(const Buffer &x, Buffer &y);
@@ -99,6 +103,13 @@ class MassPcg
 {
 public:
     MassPcg(Context &context, const MassStencil &stencil);
+    // coefficients() and rhs() to be filled on the GPU (MassFem::assemble)
+    MassPcg(Context &context, int ncols, int nrows, int nlayers);
+
+    // the system and the solution, on the GPU (layouts as MassOperator)
+    Buffer &coefficients() { return op_.coefficients(); }
+    Buffer &rhs() { return b_; }
+    Buffer &solution() { return x_; }
 
     struct Result
     {
@@ -114,6 +125,11 @@ public:
                  int maxIterations, int checkEvery = 10,
                  const std::function<void(int, double)> &onCheck = nullptr);
 
+    // The same on the GPU's buffers: rhs() and the start in solution(),
+    // the answer left in solution().
+    Result solveOnDevice(double tol, int maxIterations, int checkEvery = 10,
+                         const std::function<void(int, double)> &onCheck = nullptr);
+
 private:
     void dispatchNodes(Kernel &kernel, const std::vector<const Buffer *> &bindings);
     double residualSquared();
@@ -122,8 +138,9 @@ private:
     std::size_t nodes_;
     uint32_t gx_, gy_;
     MassOperator op_;
-    Buffer params_, startParams_, invDiag_, x_, r_, z_, p_, q_, scalars_, partials_;
+    Buffer params_, startParams_, b_, x_, r_, z_, p_, q_, scalars_, partials_;
     Kernel direction_, apply_, alpha_, update_, beta_;
+    Reducer reducer_;   // ||b||
 };
 
 /*
@@ -161,6 +178,8 @@ public:
     // coef: MassStencil::slots * nodes floats; rhs: nodes floats.  Queued.
     void assemble(const Buffer &wind0, const Buffer &alphaV, float alphaH, Buffer &coef,
                   Buffer &rhs);
+    // whether the last assemble() met an element with DETJ <= 0 (waits)
+    bool foldedElements();
 
     // wind = wind0 + the smoothed gradient of phi scaled by 1/(2 alpha^2);
     // wind0 and wind: u, v, w slots.  Queued.
@@ -173,7 +192,7 @@ private:
     Context &context_;
     std::size_t nodes_;
     int ncols_, nrows_, nlayers_;
-    Buffer params_, xyz_;
+    Buffer params_, xyz_, folded_;
     Kernel assemble_, recover_;
 };
 

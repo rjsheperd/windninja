@@ -420,7 +420,7 @@ Measured, Big Butte, 10 mph from 270, M3 Max (seconds; solve = WindNinja's
 - [X] Documentation updates: this entry; =gpu_mass.h=, =mass_gpu_solve.h=;
       the open question below.
 
-** IN-PROGRESS 2.4 GPU assembly and velocity recovery [2/6]
+** DONE 2.4 GPU assembly and velocity recovery [6/6]
 - [X] Element stiffness and RHS on the GPU (gather, no atomics).
       =kernels::massAssemble=, =gpu::MassFem=, =gpu::MassGeometry=
       (=MakeMassGeometry()=: x, y, z in f32 relative to a local origin).
@@ -428,15 +428,27 @@ Measured, Big Butte, 10 mph from 270, M3 Max (seconds; solve = WindNinja's
       centre Jacobian and adds the element's terms to its own 14 slots and
       RHS, then applies the Φ = 0 rows and columns; writes straight into the
       stencil layout =MassOperator= / =MassPcg= use. A folded element
-      (DETJ ≤ 0) isn't detected on the GPU (the CPU throws); see the Inbox.
+      (DETJ ≤ 0) sets a flag (atomic); =SolveMassWindOnGpu()= then throws
+      the CPU's "Volume Jacobian 1 is zero or negative.".
 - [X] Velocity recovery on the GPU (=RecoverVelocity='s inverse-distance
       smoothing as a node gather). =kernels::massRecover=,
       =gpu::MassFem::recover()= (=MassAssembler= renamed =MassFem=, since
       it now mirrors all of =mass_fem=; both kernels share
       =kernels::massFemPrelude=, the element geometry at its centre).
-- [ ] =SolveMassOnGpu= keeps everything on the GPU: wind and αV in,
-      assemble, solve, recover, u/v/w out.
-- [-] Add tests: =gpu/kernel_mass_assemble_matches_cpu= (ridge grid at
+- [X] =SolveMassOnGpu= keeps everything on the GPU: wind and αV in,
+      assemble, solve, recover, u/v/w out. Now =SolveMassWindOnGpu()=
+      (replaces =SolveMassOnGpu()=, which took the CPU's system).
+      =gpu::MassPcg= can be built empty and filled on the GPU
+      (=coefficients()=, =rhs()=, =solution()=, =solveOnDevice()=; ‖b‖ by
+      =gpu::Reducer=; the preconditioner reads the diagonal from the
+      stencil's slot 0, so no host-side inverse). =gpu::Buffer::copyFrom()=
+      added. In =ninja=: =discretize(assemble)= computes αV and skips the
+      CPU system in GPU mode; =solveMassOnGpu()= fills u, v, w; without an
+      adapter the CPU system is built after all and the CPU path runs as
+      before. =massSolveOptions()= is shared by both paths. The GPU path no
+      longer logs the true f64 residual (there's no CPU system to check
+      against); =MassRelativeResidual()= stays for tests.
+- [X] Add tests: =gpu/kernel_mass_assemble_matches_cpu= (ridge grid at
       UTM-sized, non-integer coordinates, varying αV, all three wind
       components: coefficients within 1e-5 of the row's largest, RHS
       within 1e-4 of the largest; seen 2.6e-6, 4.9e-6). Mutation checks:
@@ -448,9 +460,31 @@ Measured, Big Butte, 10 mph from 270, M3 Max (seconds; solve = WindNinja's
       the max speed: every component within 1e-5 of the max speed; seen
       9e-7). Mutation checks: unweighted average, w scaled with αH,
       gradient from one shape function, wrong element centre, v from
-      ∂Φ/∂x: each caught.
-- [ ] Tests pass (so far: =ctest -R "^mass_|^gpu_"= 34/34)
-- [ ] Documentation updates
+      ∂Φ/∂x: each caught. =gpu/mass_wind_matches_cpu= (the whole GPU
+      pipeline vs AssembleMass + SolveMassPcg Jacobi + RecoverVelocity,
+      both to 1e-2: within 1e-3 of the max speed, seen 3.9e-4; a throwing
+      cancel stops it; mutations "no recovery" and "assembled with 2αH"
+      caught) and =gpu/mass_wind_folded_throws= (caught with the check
+      off). =scripts/check_mass_gpu.sh= still passes (speed RMSE 0.031
+      mph vs CPU SSOR).
+- [X] Tests pass: =ctest -R "^mass_|^gpu_"= 36/36; default (CPU) output
+      byte-identical (1 thread, coarse and fine).
+- [X] Documentation updates: this entry; =gpu/README.org=; headers.
+
+Measured, Big Butte, ASCII output (=scripts/mass_solver_timing.sh=, M3
+Max, seconds):
+
+| mesh   | CPU SSOR total 8 / 1 thr | GPU total 8 / 1 thr | GPU total in 2.2a |
+|--------+--------------------------+---------------------+-------------------|
+| coarse | 0.176 / 0.188            | 0.068 / 0.079       | 0.090 / 0.093     |
+| medium | 0.417 / 0.485            | 0.077 / 0.091       | 0.126 / 0.149     |
+| fine   | 0.837 / 0.984            | 0.114 / 0.112       | 0.166 / 0.226     |
+
+*Fine mesh, whole run: 7.3× faster than the CPU default on 8 threads,
+8.8× on 1 thread.* "Equation building" is now ~1 ms (αV only); the GPU
+"Solver" time (0.05–0.075 s) includes assembly and recovery. What's left
+outside it is mesh, initialization and output, all on the CPU.
+
 
 ** TODO 2.5 GATE: native speed and accuracy recorded
 Record times vs the 8-thread CPU and accuracy vs the CPU solver.
@@ -521,7 +555,8 @@ iterations between checks) in one command encoder should cut the
 iterations' 33–42 ms substantially. The context (~10 ms) and pipelines
 (~10–20 ms) are rebuilt per solve; point initialization and time series
 solve many times on one mesh (Phase 4.1), so keep them.
-** TODO GPU assembly doesn't detect folded elements
+** DONE GPU assembly doesn't detect folded elements
+Fixed in 2.4: an atomic flag, checked by =SolveMassWindOnGpu()=.
 =AssembleMass= throws "Volume Jacobian 1 is zero or negative." when an
 element's DETJ ≤ 0; =kernels::massAssemble= silently uses it. Write a flag
 (an atomic or a reduced max) and throw from =MassFem::assemble()= when set, once
