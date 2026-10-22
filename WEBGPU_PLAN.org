@@ -1295,8 +1295,15 @@ today.
 - [ ] Move =nIterations= / =meshCount= out of =#ifdef NINJAFOAM= in
       =WindNinjaInputs.h= and build =momentum_backend.cpp= unconditionally
       (deferred from 1.5).
+- [X] CLI cfg test: =autotest/config/momentum/momentum_webgpu_bigbutte.cfg=
+      (=cfg_momentum_webgpu_bigbutte=, 12 s). =run_momentum_cfg.py= is now
+      backend-aware: it needs an OpenFOAM environment only for
+      =momentum_backend = openfoam=, and skips webgpu without an adapter or in
+      a build without =WITH_WEBGPU=.
 *** Tests
 - =cli_momentum_webgpu_bigbutte.cfg= passes in =autotest/config/pass/=.
+  (Done as =cfg_momentum_webgpu_bigbutte=, alongside the other momentum
+  cfgs.)
 - The C API test runs one domain-average momentum run with the WebGPU backend.
 - Manual GUI checklist (record results here): select backend, run, cancel, and
   re-run with different directions.

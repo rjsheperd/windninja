@@ -6,8 +6,10 @@
 
 usage: run_momentum_cfg.py WindNinja_cli cfg_file
 
-Exits 77 (ctest SKIP_RETURN_CODE) when no OpenFOAM environment is loaded,
-so builds without OpenFOAM report the test as skipped, not failed.
+Exits 77 (ctest SKIP_RETURN_CODE) when the cfg's momentum_backend can't run
+here: openfoam (the default) without an OpenFOAM environment loaded, or
+webgpu without a WebGPU adapter.  Builds without them report the test as
+skipped, not failed.
 """
 
 import glob
@@ -53,7 +55,8 @@ def check_grid(path, lo, hi):
 
 
 def main(cli, cfg_file):
-    if not os.environ.get("WM_PROJECT_VERSION"):
+    backend = cfg_value(cfg_file, "momentum_backend") or "openfoam"
+    if backend == "openfoam" and not os.environ.get("WM_PROJECT_VERSION"):
         print("OpenFOAM environment not loaded (WM_PROJECT_VERSION unset); skipping")
         return SKIP
 
@@ -65,11 +68,16 @@ def main(cli, cfg_file):
     run = subprocess.run([cli, cfg_file], stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, universal_newlines=True)
     print(run.stdout)
+    if backend == "webgpu" and "no adapter" in run.stdout:
+        print("no WebGPU adapter; skipping")
+        return SKIP
+    if backend == "webgpu" and "not available in this build" in run.stdout:
+        print("WindNinja built without WITH_WEBGPU; skipping")
+        return SKIP
     if run.returncode != 0:
         print("WindNinja_cli exited with %d" % run.returncode)
         return 1
 
-    backend = cfg_value(cfg_file, "momentum_backend") or "openfoam"
     if "Momentum solver backend: %s" % backend not in run.stdout:
         print("run did not report momentum solver backend %r" % backend)
         return 1
