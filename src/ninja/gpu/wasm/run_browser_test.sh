@@ -4,8 +4,9 @@
 # WebGPU enabled, and report the module's RESULT line.
 #
 # Usage: src/ninja/gpu/wasm/run_browser_test.sh <WASM_BUILD_DIR> [PAGE]
-#   PAGE: index.html (the saxpy check, default) or solver.html (the solver's
-#   self-test against the native result)
+#   PAGE: index.html (the saxpy check, default), solver.html (the solvers'
+#   self-tests against the native results) or share.html (a page sharing
+#   its GPU device with the module)
 # Exit: 0 PASS, 1 FAIL, 77 SKIP (no spel, or no WebGPU in the browser)
 
 set -u
@@ -28,6 +29,12 @@ uv run --no-project python -u -m http.server 0 --bind 127.0.0.1 \
 SERVER=$!
 cleanup() {
     spel --session "$SESSION" close > /dev/null 2>&1
+    # close stops only the browser: stop the session's daemon too (it
+    # ignores SIGTERM) and remove its log, or they pile up run after run
+    pkill -KILL -f "spel daemon --session $SESSION\$" 2> /dev/null
+    for dir in "${TMPDIR:-/tmp}" "$(getconf DARWIN_USER_TEMP_DIR 2> /dev/null)"; do
+        [ -n "$dir" ] && rm -f "${dir%/}/spel-$SESSION.log"
+    done
     kill "$SERVER" 2> /dev/null
     rm -f "$LOG"
 }

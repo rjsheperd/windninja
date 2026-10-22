@@ -867,7 +867,12 @@ the answer depends on the preconditioner by more than users might expect.
 A tighter tolerance (0.01 costs the GPU ~260 vs ~160 iterations, ~0.02 s
 on the fine mesh) would make the result less solver-dependent. A science
 question for the WindNinja team, not a GPU one.
-** TODO run_browser_test.sh leaves spel daemons running
+** DONE run_browser_test.sh leaves spel daemons running
+Fixed 2026-10-22: =cleanup()= now also kills the session's daemon
+(=pkill -KILL -f "spel daemon --session <session>$"=) and removes its log
+from =$TMPDIR= and the system temp dir (=getconf DARWIN_USER_TEMP_DIR=;
+inside a nix shell =$TMPDIR= differs). Checked: a run leaves no daemon and
+no log behind; the two left by the old version just before were stopped.
 Each run starts =spel daemon --session windninja-wasm-<pid>= and its
 cleanup calls =spel --session … close=, which closes the browser but not
 the daemon: 22 idle daemons had piled up on this machine (the oldest 1.4
