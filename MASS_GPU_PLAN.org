@@ -189,10 +189,27 @@ Findings:
   readbacks every 10 iterations (~5 ms) ≈ 0.08 s, against 0.69 s native
   (≈9×) and probably 1–3 s in single-threaded WebAssembly (≈15–35×).
 
-** TODO 0.2 GATE: is the GPU mass solver worth building?
+** DONE 0.2 GATE: is the GPU mass solver worth building? [3/3]
 Decide from 0.1: if Jacobi needs so many iterations that the GPU estimate
 falls below the browser CPU time by less than ~5×, start with a multicolour
 or multigrid preconditioner instead, or stop.
+
+Decision (2026-10-22): *go, with Jacobi-PCG*. Jacobi needs only 125–158
+iterations, and the fine-mesh estimate is ~0.08 s against 0.69 s native
+(≈9×) and an estimated 1–3 s in the browser (≈15–35×), above the 5× bar.
+Phase 4.2 (better preconditioner) stays optional.
+
+Assumptions to check, because the decision rests on them:
+- The per-iteration GPU cost (~0.45 ms at 400k nodes) is an estimate from
+  the RANS kernels' measured dispatch/wait costs; 2.2 measures it. If it is
+  over ~1.5 ms, the native gain falls under 3× and only the browser case
+  remains.
+- The browser CPU time is unmeasured; 3.1 measures it (the same solve
+  compiled to wasm on the CPU, as the comparison).
+- Recorded unattended; RJ can overturn it.
+- [X] Add tests: SKIP (decision only).
+- [X] Tests pass: SKIP (decision only).
+- [X] Documentation updates: decision recorded here.
 
 * Phase 1: Core-free mass solver (no behaviour change)
 ** TODO 1.1 Extract mesh, assembly and solve from =ninja= [0/5]
@@ -241,6 +258,8 @@ Record times vs the 8-thread CPU and accuracy vs the CPU solver.
 ** TODO 3.1 Mass solver in =windninja_wasm= [0/4]
 - [ ] Export a suspending =windninja_mass_solve=; shared native/browser
       self-test fixture.
+- [ ] Time the CPU solve compiled to wasm in the same page, the browser
+      baseline the 0.2 gate assumed (1–3 s on the fine mesh).
 - [ ] Add tests: headless browser run (=run_browser_test.sh=) matches native.
 - [ ] Tests pass
 - [ ] Documentation updates (=src/ninja/gpu/README.org=)
