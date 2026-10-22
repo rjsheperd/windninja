@@ -1,0 +1,231 @@
+/******************************************************************************
+ *
+ * Project:  WindNinja
+ * Purpose:  Tests for the mass solver's FEM assembly and velocity recovery
+ *
+ ******************************************************************************
+ *
+ * THIS SOFTWARE WAS DEVELOPED AT THE ROCKY MOUNTAIN RESEARCH STATION (RMRS)
+ * MISSOULA FIRE SCIENCES LABORATORY BY EMPLOYEES OF THE FEDERAL GOVERNMENT
+ * IN THE COURSE OF THEIR OFFICIAL DUTIES. PURSUANT TO TITLE 17 SECTION 105
+ * OF THE UNITED STATES CODE, THIS SOFTWARE IS NOT SUBJECT TO COPYRIGHT
+ * PROTECTION AND IS IN THE PUBLIC DOMAIN. RMRS MISSOULA FIRE SCIENCES
+ * LABORATORY ASSUMES NO RESPONSIBILITY WHATSOEVER FOR ITS USE BY OTHER
+ * PARTIES,  AND MAKES NO GUARANTEES, EXPRESSED OR IMPLIED, ABOUT ITS QUALITY,
+ * RELIABILITY, OR ANY OTHER CHARACTERISTIC.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ *
+ *****************************************************************************/
+
+#include "mass_fem.h"
+
+#include <cmath>
+#include <vector>
+
+#include <boost/test/unit_test.hpp>
+
+/*
+** A ncols x nrows x nlayers grid with unit spacing, the ground at
+** ground(x, y) and each layer one unit above the last.
+*/
+template <typename Ground>
+static MassGrid UnitGrid(int ncols, int nrows, int nlayers, Ground ground)
+{
+    MassGrid g;
+    g.ncols = ncols;
+    g.nrows = nrows;
+    g.nlayers = nlayers;
+    for(int k = 0; k < nlayers; k++)
+        for(int i = 0; i < nrows; i++)
+            for(int j = 0; j < ncols; j++)
+            {
+                g.x.push_back(j);
+                g.y.push_back(i);
+                g.z.push_back(ground(j, i) + k);
+            }
+    return g;
+}
+
+static MassGrid FlatGrid(int ncols, int nrows, int nlayers)
+{
+    return UnitGrid(ncols, nrows, nlayers, [](double, double) { return 0.0; });
+}
+
+static MassGrid SlopedGrid(int ncols, int nrows, int nlayers)
+{
+    return UnitGrid(ncols, nrows, nlayers,
+                    [](double x, double y) { return 0.3 * x + 0.2 * std::sin(y); });
+}
+
+static int Node(const MassGrid &g, int col, int row, int layer)
+{
+    return col + g.ncols * (row + g.nrows * layer);
+}
+
+static double Entry(const MassSystem &s, int row, int col)
+{
+    for(int l = s.row_ptr[row]; l < s.row_ptr[row + 1]; l++)
+        if(s.col_ind[l] == col)
+            return s.SK[l];
+    BOOST_FAIL("no entry in the pattern");
+    return 0.0;
+}
+
+BOOST_AUTO_TEST_SUITE(mass_fem)
+
+/*
+** Unit cubes: per element DETJ = 1/8 and dN/dx = +-1/4, so an element adds
+** (1/16)(Rx sx sx' + Ry sy sy' + Rz sz sz') to each pair of its nodes.
+** alphaH = 1, alphaV = 2: Rx = Ry = 1/2, Rz = 1/8.
+*/
+BOOST_AUTO_TEST_CASE(unit_cube_stiffness)
+{
+    MassGrid g = FlatGrid(3, 3, 3);
+    std::vector<double> zero(g.numNodes(), 0.0), alphaV(g.numNodes(), 2.0);
+    MassSystem s = AssembleMass(g, zero.data(), zero.data(), zero.data(), alphaV.data(), 1.0);
+
+    int ground = Node(g, 1, 1, 0), middle = Node(g, 1, 1, 1);
+    // 4 and 8 elements of (1/16)(1/2 + 1/2 + 1/8)
+    BOOST_CHECK_CLOSE(Entry(s, ground, ground), 0.28125, 1e-12);
+    BOOST_CHECK_CLOSE(Entry(s, middle, middle), 0.5625, 1e-12);
+    // vertical neighbours share 4 elements: (1/16)(1/2 + 1/2 - 1/8)
+    BOOST_CHECK_CLOSE(Entry(s, ground, middle), 0.21875, 1e-12);
+}
+
+/*
+** RHS = integral of N div(u0): u0 = x has div 1, and each element gives
+** each of its nodes DETJ = 1/8.
+*/
+BOOST_AUTO_TEST_CASE(divergence_rhs)
+{
+    MassGrid g = FlatGrid(3, 3, 3);
+    std::vector<double> u0(g.x), zero(g.numNodes(), 0.0), alphaV(g.numNodes(), 1.0);
+    MassSystem s = AssembleMass(g, u0.data(), zero.data(), zero.data(), alphaV.data(), 1.0);
+    BOOST_CHECK_CLOSE(s.RHS[Node(g, 1, 1, 0)], 0.5, 1e-12);
+    BOOST_CHECK_CLOSE(s.RHS[Node(g, 1, 1, 1)], 1.0, 1e-12);
+}
+
+/* A uniform wind over sloped terrain is divergence free: no source. */
+BOOST_AUTO_TEST_CASE(uniform_flow_no_source)
+{
+    MassGrid g = SlopedGrid(6, 5, 4);
+    std::vector<double> u0(g.numNodes(), 4.0), v0(g.numNodes(), -3.0), w0(g.numNodes(), 0.5);
+    std::vector<double> alphaV(g.numNodes(), 1.0);
+    MassSystem s = AssembleMass(g, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0);
+    for(double r : s.RHS)
+        BOOST_CHECK_SMALL(r, 1e-12);
+}
+
+/*
+** Upper-triangle CSR of the 27-point stencil: sorted columns >= row, 14
+** entries for an interior node; boundary rows (sides, top) are the
+** identity with zero RHS, and no row keeps a boundary column off the
+** diagonal.
+*/
+BOOST_AUTO_TEST_CASE(pattern_and_boundaries)
+{
+    MassGrid g = SlopedGrid(5, 4, 4);
+    std::vector<double> u0(g.x), v0(g.numNodes(), 1.0), w0(g.numNodes(), 0.0);
+    std::vector<double> alphaV(g.numNodes(), 1.0);
+    MassSystem s = AssembleMass(g, u0.data(), v0.data(), w0.data(), alphaV.data(), 1.0);
+
+    BOOST_REQUIRE_EQUAL(s.row_ptr.size(), (size_t)g.numNodes() + 1);
+    BOOST_CHECK_EQUAL(s.row_ptr[Node(g, 2, 1, 1) + 1] - s.row_ptr[Node(g, 2, 1, 1)], 14);
+    for(int layer = 0; layer < g.nlayers; layer++)
+        for(int row = 0; row < g.nrows; row++)
+            for(int col = 0; col < g.ncols; col++)
+            {
+                int n = Node(g, col, row, layer);
+                bool boundary = col == 0 || col == g.ncols - 1 || row == 0 ||
+                                row == g.nrows - 1 || layer == g.nlayers - 1;
+                BOOST_CHECK_EQUAL(s.col_ind[s.row_ptr[n]], n);
+                for(int l = s.row_ptr[n] + 1; l < s.row_ptr[n + 1]; l++)
+                    BOOST_CHECK_GT(s.col_ind[l], s.col_ind[l - 1]);
+                if(boundary)
+                {
+                    BOOST_CHECK_EQUAL(s.SK[s.row_ptr[n]], 1.0);
+                    for(int l = s.row_ptr[n] + 1; l < s.row_ptr[n + 1]; l++)
+                        BOOST_CHECK_EQUAL(s.SK[l], 0.0);
+                    BOOST_CHECK_EQUAL(s.RHS[n], 0.0);
+                }
+                else
+                {
+                    BOOST_CHECK_GT(s.SK[s.row_ptr[n]], 0.0);
+                }
+            }
+    // interior rows: zero in every boundary column
+    for(int n = 0; n < g.numNodes(); n++)
+        for(int l = s.row_ptr[n] + 1; l < s.row_ptr[n + 1]; l++)
+        {
+            int c = s.col_ind[l];
+            int col = c % g.ncols, row = (c / g.ncols) % g.nrows, layer = c / (g.ncols * g.nrows);
+            if(col == 0 || col == g.ncols - 1 || row == 0 || row == g.nrows - 1 ||
+               layer == g.nlayers - 1)
+                BOOST_CHECK_EQUAL(s.SK[l], 0.0);
+        }
+}
+
+/* Phi = 0 leaves the initial wind unchanged. */
+BOOST_AUTO_TEST_CASE(zero_phi_keeps_initial_wind)
+{
+    MassGrid g = SlopedGrid(5, 4, 3);
+    int n = g.numNodes();
+    std::vector<double> phi(n, 0.0), u0(n), v0(n), w0(n), alphaV(n, 1.5), u(n), v(n), w(n);
+    for(int i = 0; i < n; i++)
+    {
+        u0[i] = 1.0 + 0.1 * i;
+        v0[i] = -2.0 + 0.05 * i;
+        w0[i] = 0.01 * i;
+    }
+    RecoverVelocity(g, phi.data(), u0.data(), v0.data(), w0.data(), alphaV.data(), 2.0,
+                    u.data(), v.data(), w.data());
+    for(int i = 0; i < n; i++)
+    {
+        BOOST_CHECK_EQUAL(u[i], u0[i]);
+        BOOST_CHECK_EQUAL(v[i], v0[i]);
+        BOOST_CHECK_EQUAL(w[i], w0[i]);
+    }
+}
+
+/*
+** Phi linear in x, y, z: trilinear elements represent it exactly, so every
+** node gets u = u0 + a / (2 alphaH^2), v = v0 + b / (2 alphaH^2),
+** w = w0 + c / (2 alphaV^2), on sloped terrain too.
+*/
+BOOST_AUTO_TEST_CASE(linear_phi_gradient)
+{
+    MassGrid g = SlopedGrid(6, 5, 4);
+    int n = g.numNodes();
+    const double a = 0.7, b = -1.3, c = 2.1, alphaH = 2.0, alphaVal = 0.5;
+    std::vector<double> phi(n), zero(n, 0.0), alphaV(n, alphaVal), u(n), v(n), w(n);
+    for(int i = 0; i < n; i++)
+        phi[i] = a * g.x[i] + b * g.y[i] + c * g.z[i];
+    RecoverVelocity(g, phi.data(), zero.data(), zero.data(), zero.data(), alphaV.data(), alphaH,
+                    u.data(), v.data(), w.data());
+    for(int i = 0; i < n; i++)
+    {
+        BOOST_CHECK_CLOSE(u[i], a / (2 * alphaH * alphaH), 1e-9);
+        BOOST_CHECK_CLOSE(v[i], b / (2 * alphaH * alphaH), 1e-9);
+        BOOST_CHECK_CLOSE(w[i], c / (2 * alphaVal * alphaVal), 1e-9);
+    }
+}
+
+/* A folded element (top below bottom) is rejected, as before. */
+BOOST_AUTO_TEST_CASE(inverted_element_throws)
+{
+    MassGrid g = FlatGrid(2, 2, 2);
+    for(int i = 4; i < 8; i++)
+        g.z[i] = -1.0;
+    std::vector<double> zero(g.numNodes(), 0.0), alphaV(g.numNodes(), 1.0);
+    BOOST_CHECK_THROW(AssembleMass(g, zero.data(), zero.data(), zero.data(), alphaV.data(), 1.0),
+                      std::runtime_error);
+}
+
+BOOST_AUTO_TEST_SUITE_END()

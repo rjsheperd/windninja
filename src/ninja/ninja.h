@@ -59,6 +59,7 @@
 #include "cpl_string.h"
 
 #include "ninja_conv.h"
+#include "mass_fem.h"
 
 #include "constants.h"
 #include "ascii_grid.h"
@@ -388,9 +389,8 @@ private:
     wn_3dScalarField v0;		//v is positive toward North
     wn_3dScalarField w0;		//w is positive up
 
-    double *DIAG;
-    double *PHI, *RHS, *SK;
-    int *row_ptr, *col_ind;
+    double *PHI;
+    MassSystem massSystem;   //Phi's linear system (mass_fem.h)
     double alphaH; //alpha horizontal from governing equation, weighting for change in horizontal winds
     double alpha;                //alpha = alphaH/alphaV, determined by stability
     AsciiGrid<double> *uDiurnal, *vDiurnal, *wDiurnal, *height;
@@ -482,7 +482,6 @@ private:
     bool writePrjFile(std::string inPrjString, std::string outFileName);
     bool checkForNullRun();
     void discretize(); 
-    void setBoundaryConditions();
     void computeUVWField();
     void prepareOutput();
     bool matched(int iter);

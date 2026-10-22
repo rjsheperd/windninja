@@ -49,6 +49,7 @@ set(TEST_SOURCES test_main.cpp
                  test_rmtree.cpp
                  momentum_compare.cpp
                  test_momentum_compare.cpp
+                 test_mass_fem.cpp
                  test_rans_abl.cpp
                  test_rans_grid.cpp
                  test_rans_solver.cpp
@@ -406,6 +407,20 @@ add_test(rans_grid_from_mesh
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/from_mesh)
 add_test(rans_grid_bad_input
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_grid/bad_input)
+add_test(mass_fem_unit_cube_stiffness
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/unit_cube_stiffness)
+add_test(mass_fem_divergence_rhs
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/divergence_rhs)
+add_test(mass_fem_uniform_flow_no_source
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/uniform_flow_no_source)
+add_test(mass_fem_pattern_and_boundaries
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/pattern_and_boundaries)
+add_test(mass_fem_zero_phi_keeps_initial_wind
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/zero_phi_keeps_initial_wind)
+add_test(mass_fem_linear_phi_gradient
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/linear_phi_gradient)
+add_test(mass_fem_inverted_element_throws
+         ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=mass_fem/inverted_element_throws)
 add_test(rans_solver_freestream
          ${EXECUTABLE_OUTPUT_PATH}/test_main --run_test=rans_solver/freestream)
 add_test(rans_solver_mms_laminar

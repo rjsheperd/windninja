@@ -212,13 +212,48 @@ Assumptions to check, because the decision rests on them:
 - [X] Documentation updates: decision recorded here.
 
 * Phase 1: Core-free mass solver (no behaviour change)
-** TODO 1.1 Extract mesh, assembly and solve from =ninja= [0/5]
-- [ ] Move mesh construction, FEM assembly and the CG solve behind a
-      core-free API (DEM + initial wind in, Φ and u/v/w out), like
-      =SolveDemOnGpu=.
-- [ ] Keep the native path calling the extracted code.
-- [ ] Add tests: byte-identical output on the existing mass-solver cfg tests.
-- [ ] Tests pass
+** IN-PROGRESS 1.1 Extract assembly, solve and velocity recovery from =ninja= [0/7]
+Design (2026-10-22):
+- =mass_fem.{h,cpp}= (no GDAL, no =ninja=, no =Mesh=):
+  - =MassGrid=: =ncols=, =nrows=, =nlayers= and node coordinates x/y/z, node
+    =n = col + ncols*(row + nrows*layer)= (the =Mesh= / =wn_3dArray= order,
+    so fields pass as plain pointers);
+  - =AssembleMass(grid, u0, v0, w0, alphaV, alphaH)= → =MassSystem= (upper
+    CSR =SK=, =col_ind=, =row_ptr=, =RHS=), Dirichlet rows applied;
+  - =RecoverVelocity(grid, phi, u0, v0, w0, alphaV, alphaH, u, v, w)=.
+  - The element math is the one-point quadrature hexahedron that =element=
+    uses (=NUMQPTV=1=: one point at the centre, weight 8), copied with the
+    same arithmetic order.
+- =mass_pcg.{h,cpp}=: the PCG from =ninja::solve()= with its BLAS helpers,
+  progress and cancel as callbacks.
+- =mass_grid_mesh.cpp=: =MassGrid::FromMesh(const Mesh&)= (like
+  =rans_grid_mesh.cpp=), the only part that sees =Mesh=.
+- =ninja::discretize()= keeps the stability → =alphaVfield= step and calls
+  =AssembleMass=; =setBoundaryConditions()= folds into it;
+  =computeUVWField()= calls =RecoverVelocity=; =solve()= calls the PCG.
+- Note: assembly sums with =omp atomic= and velocity recovery merges
+  per-thread sums in a =critical= section, so the last bits depend on
+  thread timing. Compare runs at =num_threads = 1= for byte identity, and
+  with a tolerance otherwise.
+- [X] =mass_fem= (grid, assembly with BCs, velocity recovery).
+      =discretize()= now calls =AssembleMass=, =setBoundaryConditions()= is
+      gone (folded in), =computeUVWField()= calls =RecoverVelocity=; −600
+      lines in =ninja.cpp=. A folded element (=DETJ <= 0=) used to throw
+      inside an OpenMP loop (=std::terminate=); it now throws after the loop.
+- [ ] =mass_pcg= (PCG, Jacobi/SSOR, callbacks); =ninja::solve()= calls it.
+- [-] Builds without core headers: =mass_fem.cpp= compiles with only the
+      standard library, natively and with =em++= (=mass_pcg= to do).
+- [X] Add tests: =autotest/test_mass_fem.cpp=, 7 cases: unit-cube
+      stiffness and divergence RHS against hand values, uniform flow over
+      sloped terrain has no source, CSR pattern and boundary rows, Φ = 0
+      keeps u₀, linear Φ gives the exact gradient on sloped terrain, folded
+      element throws. Mutation checks: RZ from αH, no BCs, w recovered with
+      αH, RHS without the volume: each caught by exactly its test.
+- [X] Tests pass: 7/7; full ctest 166/169 (the 3 failures are NOMADS/UCAR
+      downloads). CLI output (ASCII and the double-precision volume VTK) is
+      byte-identical to the pre-change binary at 1 thread on coarse and fine
+      Big Butte; at 8 threads, fine is identical too. Assembly 0.029 s vs
+      0.035 s before (fine, 8 threads).
 - [ ] Documentation updates
 
 * Phase 2: GPU solve (native Dawn)
@@ -285,3 +320,17 @@ Multicolour SSOR or a shallow geometric multigrid V-cycle.
   does it need df64 residuals? (2.3)
 - Should the browser production path be C++/WASM or =cljs-webgpu=? Decide
   after 3.1, with the jessie-fire-simulation side.
+
+* Inbox
+Found while working; not part of the current task.
+** TODO Duplicate gradient smoothing in =wn_3dScalarField.cpp=
+=wn_3dScalarField::ComputeGradient= (around line 514) repeats the
+inverse-distance "stress smoothing" now in =RecoverVelocity=. Could call a
+shared helper from =mass_fem=.
+** TODO Run-to-run nondeterminism in the mass solver with threads
+Assembly sums with =omp atomic= and velocity recovery merges per-thread
+sums in a =critical= section, so multi-threaded results can differ in the
+last bits between runs (not seen on Big Butte fine). A deterministic
+gather (as in the GPU kernels) would fix it.
+** TODO Solver comment says "2-norm of residual"; it is relative to ‖b‖
+=ninja.cpp= (=stop_tol=): the test is ‖r‖₂/‖b‖₂ ≤ 0.1.

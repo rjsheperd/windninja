@@ -57,12 +57,7 @@ ninja::ninja()
     endWriteOut=0.0;
 
     //Pointers to dynamically allocated memory
-    DIAG=NULL;
     PHI=NULL;
-    RHS=NULL;
-    SK=NULL;
-    row_ptr=NULL;
-    col_ind=NULL;
     uDiurnal=NULL;
     vDiurnal=NULL;
     wDiurnal=NULL;
@@ -140,12 +135,7 @@ ninja::ninja(const ninja &rhs)
     endWriteOut=0.0;
 
     //Pointers to dynamically allocated memory
-    DIAG=NULL;
     PHI=NULL;
-    RHS=NULL;
-    SK=NULL;
-    row_ptr=NULL;
-    col_ind=NULL;
     uDiurnal=NULL;
     vDiurnal=NULL;
     wDiurnal=NULL;
@@ -215,12 +205,7 @@ ninja &ninja::operator=(const ninja &rhs)
         endWriteOut=0.0;
 
         //Pointers to dynamically allocated memory
-        DIAG=NULL;
         PHI=NULL;
-        RHS=NULL;
-        SK=NULL;
-        row_ptr=NULL;
-        col_ind=NULL;
         uDiurnal=NULL;
         vDiurnal=NULL;
         wDiurnal=NULL;
@@ -410,16 +395,10 @@ do
 
         checkCancel();
 
-/*  ----------------------------------------*/
-/*  SET BOUNDARY CONDITIONS                 */
-/*  ----------------------------------------*/
-
-		//set boundary conditions
-		setBoundaryConditions();
-
 		//#define WRITE_A_B
 		#ifdef WRITE_A_B	//used for debugging...
-			 write_A_and_b(1000, SK, col_ind, row_ptr, RHS);
+			 write_A_and_b(1000, massSystem.SK.data(), massSystem.col_ind.data(),
+			               massSystem.row_ptr.data(), massSystem.RHS.data());
 		#endif
 
 		#ifdef _OPENMP
@@ -441,8 +420,10 @@ do
 
 		//if the CG solver diverges, try the minres solver
 
-		if(solve(SK, RHS, PHI, row_ptr, col_ind, mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
-		    if(solveMinres(SK, RHS, PHI, row_ptr, col_ind, mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
+		if(solve(massSystem.SK.data(), massSystem.RHS.data(), PHI,
+		          massSystem.row_ptr.data(), massSystem.col_ind.data(), mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
+		    if(solveMinres(massSystem.SK.data(), massSystem.RHS.data(), PHI,
+		          massSystem.row_ptr.data(), massSystem.col_ind.data(), mesh.NUMNP, MAXITS, print_iters, stop_tol)==false)
 			throw std::runtime_error("Solver returned false.");
 
 		#ifdef _OPENMP
@@ -451,27 +432,7 @@ do
 
 		checkCancel();
 
-		 if(SK)
-		 {
-			delete[] SK;
-			SK=NULL;
-		 }
-
-		 if(col_ind)
-		 {
-			delete[] col_ind;
-			col_ind=NULL;
-		 }
-		 if(row_ptr)
-		 {
-			delete[] row_ptr;
-			row_ptr=NULL;
-		 }
-		 if(RHS)
-		 {
-			delete[] RHS;
-			RHS=NULL;
-		 }
+		 massSystem = MassSystem();   //free the system
 
 /*  ----------------------------------------*/
 /*  COMPUTE UVW WIND FIELD                   */
@@ -1530,169 +1491,8 @@ void ninja::discretize()
 	if(PHI == NULL)
 		PHI=new double[mesh.NUMNP];
 
-     int interrows=input.dem.get_nRows()-2;
-     int intercols=input.dem.get_nCols()-2;
-     int interlayers=mesh.nlayers-2;
-	 int i, ii, j, jj, k, kk, l;
-                         //NZND is the # of nonzero elements in the SK stiffness array that are stored
-     int NZND=(8*8)+(intercols*4+interrows*4+interlayers*4)*12+(intercols*interlayers*2+interrows*interlayers*2+intercols*interrows*2)*18+(intercols*interrows*interlayers)*27;
-
-     NZND = (NZND - mesh.NUMNP)/2 + mesh.NUMNP;	//this is because we will only store the upper half of the SK matrix since it's symmetric
-
-	 SK = new double[NZND];	//This is the final global stiffness matrix in Compressed Row Storage (CRS) and symmetric 
-	 //SK = new taucs_double[NZND];
-
-	 col_ind=new int[NZND];      //This holds the global column number of the corresponding element in the CRS storage
-	 row_ptr=new int[mesh.NUMNP+1];     //This holds the element number in the SK array (CRS) of the first non-zero entry for the global row (the "+1" is so we can use the last entry to quit loops; ie. so we know how many non-zero elements are in the last node)
-	 RHS=new double[mesh.NUMNP];       //This is the final right hand side (RHS) matrix
-
-     int type;                     //This is the type of node (corner, edge, side, internal)
-     int temp,temp1;
-
-     #pragma omp parallel for default(shared) private(i)
-	 for(i=0;i<mesh.NUMNP;i++)
-     {
-          PHI[i]=0.;
-          RHS[i]=0.;
-          row_ptr[i]=0;
-     }
-
-	 #pragma omp parallel for default(shared) private(i)
-     for(i=0;i<NZND;i++)
-     {
-          col_ind[i]=0;
-          SK[i]=0.;
-     }
-
-	 int row, col;
-
-     //Set up Compressed Row Storage (CRS) format (only store upper triangular SK matrix)
-     temp=0;        //temp stores the location (in the SK and col_ind arrays) where the first non-zero element for the current row is located
-	 for(k=0;k<mesh.nlayers;k++)
-     {
-          for(i=0;i<input.dem.get_nRows();i++)
-          {
-               for(j=0;j<input.dem.get_nCols();j++)     //Looping over all nodes using i,j,k notation
-               {
-				   type=mesh.get_node_type(i,j,k);
-                    if(type==0)         //internal node
-                    {
-                         row = k*input.dem.get_nCols()*input.dem.get_nRows()+i*input.dem.get_nCols()+j;
-						 row_ptr[row]=temp;
-                         temp1=temp;
-                         for(kk=-1;kk<2;kk++)
-                         {
-                              for(ii=-1;ii<2;ii++)
-                              {
-                                   for(jj=-1;jj<2;jj++)
-                                   {
-                                       col = (k+kk)*input.dem.get_nCols()*input.dem.get_nRows()+(i+ii)*input.dem.get_nCols()+(j+jj);
-                                       if(col >= row)	//only do if we're on the upper triangular part of SK
-									   {
-                                           col_ind[temp1]=col;
-                                           temp1++;
-                                       }
-                                   }
-                              }
-                         }
-                         //temp=temp+27;
-			             temp=temp1;
-                    }else if(type==1)   //face node
-                    {
-                         row = k*input.dem.get_nCols()*input.dem.get_nRows()+i*input.dem.get_nCols()+j;
-						 row_ptr[row]=temp;
-						 temp1=temp;
-                         for(kk=-1;kk<2;kk++)
-                         {
-                              for(ii=-1;ii<2;ii++)
-                              {
-                                   for(jj=-1;jj<2;jj++)
-                                   {
-                                        if(((i+ii)<0)||((i+ii)>(input.dem.get_nRows()-1)))
-                                             continue;
-                                        if(((j+jj)<0)||((j+jj)>(input.dem.get_nCols()-1)))
-                                             continue;
-                                        if(((k+kk)<0)||((k+kk)>(mesh.nlayers-1)))
-                                             continue;
-
-                                        col = (k+kk)*input.dem.get_nCols()*input.dem.get_nRows()+(i+ii)*input.dem.get_nCols()+(j+jj);
-                                        if(col >= row)	//only do if we're on the upper triangular part of SK
-                                        {
-                                            col_ind[temp1]=col;
-                                            temp1++;
-                                        }
-                                   }
-                              }
-                         }
-                         //temp=temp+18;
-			             temp=temp1;
-                    }else if(type==2)   //edge node
-                    {
-                         row = k*input.dem.get_nCols()*input.dem.get_nRows()+i*input.dem.get_nCols()+j;
-						 row_ptr[row]=temp;
-						 temp1=temp;
-                         for(kk=-1;kk<2;kk++)
-                         {
-                              for(ii=-1;ii<2;ii++)
-                              {
-                                   for(jj=-1;jj<2;jj++)
-                                   {
-                                        if(((i+ii)<0)||((i+ii)>(input.dem.get_nRows()-1)))
-                                             continue;
-                                        if(((j+jj)<0)||((j+jj)>(input.dem.get_nCols()-1)))
-                                             continue;
-                                        if(((k+kk)<0)||((k+kk)>(mesh.nlayers-1)))
-                                             continue;
-
-                                        col = (k+kk)*input.dem.get_nCols()*input.dem.get_nRows()+(i+ii)*input.dem.get_nCols()+(j+jj);
-                                        if(col >= row)	//only do if we're on the upper triangular part of SK
-                                        {
-                                            col_ind[temp1]=col;
-                                            temp1++;
-                                        }
-                                   }
-                              }
-                         }
-                         //temp=temp+12;
-			             temp=temp1;
-                    }else if(type==3)   //corner node
-                    {
-                         row = k*input.dem.get_nCols()*input.dem.get_nRows()+i*input.dem.get_nCols()+j;
-						 row_ptr[row]=temp;
-						 temp1=temp;
-                         for(kk=-1;kk<2;kk++)
-                         {
-                              for(ii=-1;ii<2;ii++)
-                              {
-                                   for(jj=-1;jj<2;jj++)
-                                   {
-                                        if(((i+ii)<0)||((i+ii)>(input.dem.get_nRows()-1)))
-                                             continue;
-                                        if(((j+jj)<0)||((j+jj)>(input.dem.get_nCols()-1)))
-                                             continue;
-                                        if(((k+kk)<0)||((k+kk)>(mesh.nlayers-1)))
-                                             continue;
-
-					                    col = (k+kk)*input.dem.get_nCols()*input.dem.get_nRows()+(i+ii)*input.dem.get_nCols()+(j+jj);
-                                        if(col >= row)	//only do if we're on the upper triangular part of SK
-                                        {
-                                            col_ind[temp1]=col;
-                                            temp1++;
-                                        }
-                                   }
-                              }
-                         }
-                         //temp=temp+8;
-			             temp=temp1;
-                    }
-                    else
-			             throw std::logic_error("Error arranging SK array.  Exiting...");
-               }
-          }
-     }
-     row_ptr[mesh.NUMNP]=temp;     //Set last value of row_ptr, so we can use "row_ptr+1" to use to index to in loops
-
-	 checkCancel();
+	for(int i=0;i<mesh.NUMNP;i++)
+		PHI[i]=0.;
 
     CPLDebug("STABILITY", "input.initializationMethod = %i\n", input.initializationMethod);
     CPLDebug("STABILITY", "input.stabilityFlag = %i\n", input.stabilityFlag);
@@ -1816,208 +1616,11 @@ void ninja::discretize()
 
     CPLDebug("STABILITY", "alphaVfield(0,0,0) = %lf\n", alphaVfield(0,0,0));
 
-#pragma omp parallel default(shared) private(i,j,k,l)
-	 {
-		 element elem(&mesh);
-		 int pos;  
-         double alphaV; //used for summing over nodal points below
-
-#pragma omp for
-		 for(i=0;i<mesh.NUMEL;i++)                    //Start loop over elements
-		 {
-			 /*-----------------------------------------------------*/
-			 /*      NO SURFACE QUADRATURE NEEDED SINCE NONE OF     */
-			 /*      THE BOUNDARY CONDITIONS HAVE A NON-ZERO FLUX   */
-			 /*      SPECIFICATION:                                 */
-			 /*      Flow through =>  Phi = 0                       */
-			 /*      Ground       =>  normal flux = 0               */
-			 /*-----------------------------------------------------*/
-
-			 //elem.computeElementStiffnessMatrix(i, u0, v0, w0, alpha);
-
-			 //Given the above parameters, function computes the element stiffness matrix
-
-			 if(elem.SFV == NULL)
-				 elem.initializeQuadPtArrays();
-
-			 for(j=0;j<mesh.NNPE;j++)
-			 {
-				 elem.QE[j]=0.0;
-				 for(int k=0;k<mesh.NNPE;k++)
-					 elem.S[j*mesh.NNPE+k]=0.0;
-
-			 }
-			 //Begin quadrature for current element
-
-			 elem.node0=mesh.get_node0(i);  //get the global nodal number of local node 0 of element i
-
-
-			 for(j=0;j<elem.NUMQPTV;j++)             //Start loop over quadrature points in the element
-			 {
-				 elem.computeJacobianQuadraturePoint(j, i);
-
-				 //Calculate the coefficient H here and the alpha-squared term in front of the second partial of z in governing equation (we are still on element i, quadrature point j)
-				 //
-				 //           d u0   d v0   d w0
-				 //     H = ( ---- + ---- + ---- )
-				 //           d x    d y    d z
-				 //
-				 //                and
-                 //
-                 //                     1                          1
-                 //     Rx = Ry =  ------------          Rz = ------------
-                 //                 2*alphaH^2                 2*alphaV^2
-
-
-				 elem.HVJ=0.0;
-
-				 alphaV = 0; //used for summing over the nodes in the element, reset to 0 each time through loop 
-
-				 for(k=0;k<mesh.NNPE;k++)          //Start loop over nodes in the element
-				 {
-					 elem.NPK=mesh.get_global_node(k, i);            //NPK is the global nodal number
-
-					 elem.HVJ=elem.HVJ+((elem.DNDX[k]*u0(elem.NPK))+(elem.DNDY[k]*v0(elem.NPK))+(elem.DNDZ[k]*w0(elem.NPK)));
-
-					 alphaV=alphaV+elem.SFV[0*mesh.NNPE*elem.NUMQPTV+k*elem.NUMQPTV+j]*alphaVfield(elem.NPK);
-				 }                             //End loop over nodes in the element
-
-				 elem.RX = 1.0/(2.0*alphaH*alphaH);
-				 elem.RY = 1.0/(2.0*alphaH*alphaH);
-				 elem.RZ = 1.0/(2.0*alphaV*alphaV);
-				 elem.DV=elem.DETJ;                      //DV is the DV for the volume integration (could be eliminated and just use DETJ everywhere)
-
-				 if(elem.NUMQPTV==27)
-				 {
-					 if(j<=7)
-					 {
-						 elem.WT=elem.WT1;
-					 }else if(j<=19)
-					 {
-						 elem.WT=elem.WT2;
-					 }else if(j<=25)
-					 {
-						 elem.WT=elem.WT3;
-					 }else
-					 {
-						 elem.WT=elem.WT4;
-					 }
-				 }
-
-				 //Create element stiffness matrix---------------------------------------------
-				 for(k=0;k<mesh.NNPE;k++)          //Start loop over nodes in the element
-				 {
-					 elem.QE[k] = elem.QE[k] + elem.WT * elem.SFV[0*mesh.NNPE*elem.NUMQPTV + k*elem.NUMQPTV + j] * elem.HVJ * elem.DV;
-					 for(l=0;l<mesh.NNPE;l++)
-					 {
-                        elem.S[k*mesh.NNPE+l]=elem.S[k*mesh.NNPE+l]+elem.WT*(elem.DNDX[k]*elem.RX*elem.DNDX[l] + elem.DNDY[k]*elem.RY*elem.DNDY[l] + elem.DNDZ[k]*elem.RZ*elem.DNDZ[l])*elem.DV;
-					 }
-				 }                            //End loop over nodes in the element
-			 }                                  //End loop over quadrature points in the element
-
-			 //Place completed element matrix in global SK and Q matrices
-
-			 for(j=0;j<mesh.NNPE;j++)                          //Start loop over nodes in the element (also, it is the row # in S[])
-			 {
-				 elem.NPK=mesh.get_global_node(j, i);            //elem.NPK is the global row number of the element stiffness matrix
-
-#pragma omp atomic
-				 RHS[elem.NPK] += elem.QE[j];
-
-				 for(k=0;k<mesh.NNPE;k++)           //k is the local column number in S[]
-				 {
-					 elem.KNP=mesh.get_global_node(k, i);
-
-					 if(elem.KNP >= elem.NPK)	//do only if we're on the upper triangular region of SK[]
-					 {
-						 pos=-1;                  //pos is the position # in SK[] to place S[j*mesh.NNPE+k]
-						 l=0;                     //l increments through col_ind[] starting from where row_ptr[] says until we find the column number we're looking for
-						 do
-						 {
-							 if(col_ind[row_ptr[elem.NPK]+l]==elem.KNP)   //Check if we're at the correct position
-								 pos=row_ptr[elem.NPK]+l;           //If so, save that position in pos
-							 l++;
-						 }while(pos<0);
-
-#pragma omp atomic
-						 SK[pos] += elem.S[j*mesh.NNPE+k];     //Here is the final global stiffness matrix in symmetric storage
-					 }
-				 }
-
-			 }                             //End loop over nodes in the element
-		 }                                  //End loop over elements
-	 }		//End parallel region
+    //build the system, boundary conditions included
+    massSystem = AssembleMass(MassGrid::FromMesh(mesh), &u0(0), &v0(0), &w0(0),
+                              &alphaVfield(0), alphaH);
 
      stb.alphaField.deallocate();
-}
-
-/**Sets up boundary conditions for the simulation.
- *
- */
-void ninja::setBoundaryConditions()
-{
-     //Specify known values of PHI
-     //This is done by replacing the particular node equation (row) with all zeros except a "1" on the diagonal of SK[].
-     //Then the corresponding row in RHS[] is replaced with the value of the known PHI.
-     //The other nodes that are "connected" to the known node need to have their equations adjusted accordingly.
-     //This is done by moving the term with the known value to the RHS.
-
-	 int NPK, KNP;
-	 int i, j, k, l;
-
-
-	  bool *isBoundaryNode;
-	  isBoundaryNode=new bool[mesh.NUMNP];       //flag to specify if it's a boundary node
-
-	  #pragma omp parallel default(shared) private(i,j,k,l,NPK,KNP)
-	  {
-	  #pragma omp for
-	  for(k=0;k<mesh.nlayers;k++)
-      {
-           for(i=0;i<input.dem.get_nRows();i++)
-           {
-                for(j=0;j<input.dem.get_nCols();j++)          //loop over nodes using i,j,k notation
-                {
-					if(j==0||j==(input.dem.get_nCols()-1)||i==0||i==(input.dem.get_nRows()-1)||k==(mesh.nlayers-1))  //Check the node to see if it is a boundary node
-						isBoundaryNode[k*input.dem.get_nCols()*input.dem.get_nRows()+i*input.dem.get_nCols()+j]=true;
-					else
-						isBoundaryNode[k*input.dem.get_nCols()*input.dem.get_nRows()+i*input.dem.get_nCols()+j]=false;
-				}
-		   }
-	  }
-	  #pragma omp for
-      for(k=0;k<mesh.nlayers;k++)
-      {
-           for(i=0;i<input.dem.get_nRows();i++)
-           {
-                for(j=0;j<input.dem.get_nCols();j++)          //loop over nodes using i,j,k notation
-                {
-                     NPK=k*input.dem.get_nCols()*input.dem.get_nRows()+i*input.dem.get_nCols()+j;            //NPK is the global row number (also the node # we're on)
-                     for(l=row_ptr[NPK];l<row_ptr[NPK+1];l++)     //loop through all non-zero elements for row NPK
-                     {
-                          KNP=col_ind[l];       //KNP is the global column number we're on
-						  if(isBoundaryNode[KNP]==true)
-							  SK[l]=0.;              //Set the value on the known PHI's column to zero
-						  if(isBoundaryNode[NPK]==true)
-						  {
-							  if(KNP==NPK)        //Check if we're at the diagonal
-								SK[l]=1.;         //If so, set the value to 1
-							  else
-								SK[l]=0.;              //Set the value on the known PHI's row to zero
-						  }
-                     }
-                     if(isBoundaryNode[NPK]==true)
-						RHS[NPK]=0.;    //Phi is zero on "flow through boundaries"
-                }
-           }
-      }
-	  }	//end parallel region
-	  if(isBoundaryNode)
-	  {
-		delete[] isBoundaryNode;
-		isBoundaryNode=NULL;
-	  }
-
 }
 
 /**
@@ -2042,177 +1645,12 @@ void ninja::setBoundaryConditions()
  */
 void ninja::computeUVWField()
 {
-
-     /*-----------------------------------------------------*/
-     /*      Calculate u,v, and w from derivatives of PHI   */
-     /*                     1         d PHI                 */
-     /*     u =  u  +  -----------  * ----                  */
-     /*           0     2*alphaH^2     dx                   */
-     /*                                                     */
-     /*                     1         d PHI                 */
-     /*     v =  v  +  -----------  * ----                  */
-     /*           0     2*alphaH^2     dy                   */
-     /*                                                     */
-     /*                     1         d PHI                 */
-     /*     w =  w  +  -----------  * ----                  */
-     /*           0     2*alphaV^2     dz                   */
-     /*                                                     */
-     /*     Since the derivatives cannot be directly        */
-     /*     calculated because they are located at the      */
-     /*     nodal points(the derivatives across element     */
-     /*     boundaries are discontinuous), another method   */
-     /*     must be used.  The method used here is that     */
-     /*     used in Thompson's book on page 228 called      */
-     /*     "stress smoothing".  It is basically an inverse-*/
-     /*     distance weighted average from the gauss points */
-     /*     of the surrounding cells.                       */
-     /*-----------------------------------------------------*/
-
-	 int i, j, k;
-
 	 u.allocate(&mesh);           //u is positive toward East
 	 v.allocate(&mesh);           //v is positive toward North
 	 w.allocate(&mesh);           //w is positive up
-	 if(DIAG == NULL)
-		 DIAG=new double[mesh.nlayers*input.dem.get_nRows()*input.dem.get_nCols()];        //DIAG is the sum of the weights at each nodal point; eventually, dPHI/dx, etc. are divided by this value to get the "smoothed" (or averaged) value of dPHI/dx at each node point
 
-	 for(i=0;i<mesh.NUMNP;i++)                         //Initialize u,v, and w
-     {
-          u(i)=0.;
-          v(i)=0.;
-          w(i)=0.;
-	    DIAG[i]=0.;
-     }
-
-	#pragma omp parallel default(shared) private(i,j,k)
-	{
-
-	 element elem(&mesh);
-
-     double DPHIDX, DPHIDY, DPHIDZ;
-	 double XJ, YJ, ZJ;
-     double wght, XK, YK, ZK;
-	 double *uScratch, *vScratch, *wScratch, *DIAGScratch;
-	 uScratch=NULL;
-	 vScratch=NULL;
-	 wScratch=NULL;
-	 DIAGScratch=NULL;
-
-	 uScratch=new double[mesh.nlayers*input.dem.get_nRows()*input.dem.get_nCols()];
-	 vScratch=new double[mesh.nlayers*input.dem.get_nRows()*input.dem.get_nCols()];
-	 wScratch=new double[mesh.nlayers*input.dem.get_nRows()*input.dem.get_nCols()];
-	 DIAGScratch=new double[mesh.nlayers*input.dem.get_nRows()*input.dem.get_nCols()];
-
-     for(i=0;i<mesh.NUMNP;i++)                         //Initialize scratch u,v, and w
-     {
-          uScratch[i]=0.;
-          vScratch[i]=0.;
-          wScratch[i]=0.;
-	      DIAGScratch[i]=0.;
-     }
-
-	 #pragma omp for
-     for(i=0;i<mesh.NUMEL;i++)                  //Start loop over elements
-     {
-          elem.node0 = mesh.get_node0(i);  //get the global node number of local node 0 of element i
-          for(j=0;j<elem.NUMQPTV;j++)             //Start loop over quadrature points in the element
-          {
-
-			   DPHIDX=0.0;     //Set DPHI/DX, etc. to zero for the new quad point
-               DPHIDY=0.0;
-               DPHIDZ=0.0;
-
-			   elem.computeJacobianQuadraturePoint(j, i, XJ, YJ, ZJ);
-
-               //Calculate dN/dx, dN/dy, dN/dz (Remember we're using the transpose of the inverse!)
-               for(k=0;k<mesh.NNPE;k++)
-               {
-                    elem.NPK=mesh.get_global_node(k, i);            //NPK is the global node number
-
-                    DPHIDX=DPHIDX+elem.DNDX[k]*PHI[elem.NPK];       //Calculate the DPHI/DX, etc. for the quad point we are on
-                    DPHIDY=DPHIDY+elem.DNDY[k]*PHI[elem.NPK];
-                    DPHIDZ=DPHIDZ+elem.DNDZ[k]*PHI[elem.NPK];
-               }
-
-               //Now we know DPHI/DX, etc. for quad point j.  We will distribute this inverse distance weighted average to each nodal point for the cell we're on
-               for(k=0;k<mesh.NNPE;k++)          //Start loop over nodes in the element
-               {                            //Calculate the Jacobian at the quad point
-                    elem.NPK=mesh.get_global_node(k, i);            //NPK is the global nodal number
-
-                    XK=mesh.XORD(elem.NPK);            //Coodinates of the nodal point
-                    YK=mesh.YORD(elem.NPK);
-                    ZK=mesh.ZORD(elem.NPK);
-
-                    wght=std::pow((XK-XJ),2)+std::pow((YK-YJ),2)+std::pow((ZK-ZJ),2);
-                    wght=1.0/(std::sqrt(wght));
-//c				    #pragma omp critical
-				    {
-                    uScratch[elem.NPK]=uScratch[elem.NPK]+wght*DPHIDX;   //Here we store the summing values of DPHI/DX, etc. in the u,v,w arrays for later use (to actually calculate u,v,w)
-                    vScratch[elem.NPK]=vScratch[elem.NPK]+wght*DPHIDY;
-                    wScratch[elem.NPK]=wScratch[elem.NPK]+wght*DPHIDZ;
-                    DIAGScratch[elem.NPK]=DIAGScratch[elem.NPK]+wght;     //Store the sum of the weights for the node
-					}
-
-               }                             //End loop over nodes in the element
-
-
-          }                                  //End loop over quadrature points in the element
-     }                                       //End loop over elements
-
-	 #pragma omp critical
-	 {
-     for(i=0;i<mesh.NUMNP;i++)
-     {
-          u(i) += uScratch[i];      //Dividing by the DIAG[NPK] gives the value of DPHI/DX, etc. (still stored in the u,v,w arrays)
-          v(i) += vScratch[i];
-          w(i) += wScratch[i];
-		  DIAG[i] += DIAGScratch[i];
-	 }
-	 } //end critical
-
-	 if(uScratch)
-	 {
-		delete[] uScratch;
-		uScratch=NULL;
-	 }
-	 if(vScratch)
-	 {
-		delete[] vScratch;
-		vScratch=NULL;
-	 }
-	 if(wScratch)
-	 {
-		delete[] wScratch;
-		wScratch=NULL;
-	 }
-	 if(DIAGScratch)
-	 {
-		delete[] DIAGScratch;
-		DIAGScratch=NULL;
-	 }
-
-     #pragma omp barrier
-
-     double alphaV = 1.0;
-
-     #pragma omp for
-
-     for(i=0;i<mesh.NUMNP;i++)
-     {
-          u(i)=u(i)/DIAG[i];      //Dividing by the DIAG[NPK] gives the value of DPHI/DX, etc. (still stored in the u,v,w arrays)
-          v(i)=v(i)/DIAG[i];
-          w(i)=w(i)/DIAG[i];
-
-          //Finally, calculate u,v,w
-          alphaV = alphaVfield(i); //set alphaV for stability
-
-		  u(i)=u0(i)+1.0/(2.0*alphaH*alphaH)*u(i);         //Remember, dPHI/dx is stored in u
-		  v(i)=v0(i)+1.0/(2.0*alphaH*alphaH)*v(i);
-		  w(i)=w0(i)+1.0/(2.0*alphaV*alphaV)*w(i);
-
-
-     }
-     }		//end parallel section
+     RecoverVelocity(MassGrid::FromMesh(mesh), PHI, &u0(0), &v0(0), &w0(0),
+                     &alphaVfield(0), alphaH, &u(0), &v(0), &w(0));
 
      alphaVfield.deallocate();
 
@@ -3545,22 +2983,7 @@ void ninja::deleteDynamicMemory()
 	{	delete[] PHI;
 		PHI=NULL;
 	}
-	if(SK)
-	{	delete[] SK;
-		SK=NULL;
-	}
-	if(col_ind)
-	{	delete[] col_ind;
-		col_ind=NULL;
-	}
-	if(row_ptr)
-	{	delete[] row_ptr;
-		row_ptr=NULL;
-	}
-	if(RHS)
-	{	delete[] RHS;
-		RHS=NULL;
-	}
+	massSystem = MassSystem();
 	//if(u)
 	//{	delete[] u;
 	//	u=NULL;
@@ -3573,10 +2996,6 @@ void ninja::deleteDynamicMemory()
 	//{	delete[] w;
 	//	w=NULL;
 	//}
-	if(DIAG)
-	{	delete[] DIAG;
-		DIAG=NULL;
-	}
 	if(outputSpeedArray)
 	{	delete[] outputSpeedArray;
 		outputSpeedArray = NULL;
